@@ -5,6 +5,7 @@ import cookieSession from 'cookie-session';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import bcrypt from 'bcrypt';
 dotenv.config();
 
 const app = express();
@@ -218,11 +219,19 @@ async function initDb() {
     try {
         const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
         const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin1234';
+        // Hash default admin password before storing
+        let hashedAdminPassword = null;
+        try {
+            hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
+        } catch (e) {
+            console.error('Failed to hash default admin password:', e);
+            hashedAdminPassword = adminPassword; // fallback to plaintext (will be attempted to migrate on login)
+        }
         const res = await pool.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
         if (res.rows.length === 0) {
             await pool.query(
                 'INSERT INTO users (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6)',
-                ['System', 'Administrator', adminEmail, adminPassword, 'Admin', 'Active']
+                ['System', 'Administrator', adminEmail, hashedAdminPassword, 'Admin', 'Active']
             );
             console.log('Default admin user created:', adminEmail);
         } else {
@@ -230,8 +239,14 @@ async function initDb() {
             try {
                 const existing = res.rows[0];
                 if (!existing.password || String(existing.password).trim() === '') {
-                    await pool.query('UPDATE users SET password = $1 WHERE id = $2', [adminPassword, existing.id]);
-                    console.log('Default admin user existed with empty password; password was set from env for:', adminEmail);
+                    try {
+                        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashedAdminPassword, existing.id]);
+                        console.log('Default admin user existed with empty password; password was set (hashed) from env for:', adminEmail);
+                    } catch (ue) {
+                        console.error('Failed to update existing admin password with hashed value:', ue);
+                        // fallback to plain update
+                        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [adminPassword, existing.id]);
+                    }
                 }
             } catch (e) {
                 console.error('Failed to ensure default admin password:', e);
@@ -691,12 +706,45 @@ app.post('/auth/login', async (req, res) => {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
             const user = result.rows[0];
-            // In dev mode we store plaintext password from init; compare directly
-            if (user.password !== password) {
+            // Verify password using bcrypt. If the stored password is plaintext, allow fallback and migrate to hashed.
+            let passwordMatches = false;
+            try {
+                if (user.password) {
+                    passwordMatches = await bcrypt.compare(password, user.password);
+                }
+            } catch (e) {
+                console.warn('bcrypt compare failed, will attempt plaintext fallback', e);
+                passwordMatches = false;
+            }
+
+            // Fallback: if stored password was plaintext and matches, migrate it to a bcrypt hash
+            if (!passwordMatches && user.password === password) {
+                try {
+                    const newHash = await bcrypt.hash(password, 10);
+                    await pool.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
+                    passwordMatches = true;
+                    console.log('Migrated user password to bcrypt hash for user id', user.id);
+                } catch (e) {
+                    console.error('Failed to migrate plaintext password to hash for user id', user.id, e);
+                }
+            }
+
+            if (!passwordMatches) {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
+
             req.session.userId = user.id;
-            return res.json(user);
+            // Return sanitized user object (omit password)
+            const safeUser = {
+                id: user.id,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                email: user.email,
+                role: user.role,
+                status: user.status,
+                profileImage: user.profile_image || null
+            };
+            return res.json(safeUser);
         }
 
         // Fallback: role-based demo login (keeps old behavior)
@@ -929,20 +977,32 @@ app.get('/api/users', async (req, res) => {
 app.post('/api/users', async (req, res) => {
     const { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId, profileImage } = req.body;
     try {
+        // If password provided, hash it before persisting
+        let hashedPassword = null;
+        if (password) {
+            try {
+                hashedPassword = await bcrypt.hash(password, 10);
+            } catch (e) {
+                console.error('Failed to hash provided password for user:', e);
+                // fallback to storing plaintext (not ideal) if hashing fails
+                hashedPassword = password;
+            }
+        }
+
         if (id) {
             const result = await pool.query(
                 'UPDATE users SET first_name=$1, last_name=$2, email=$3, role=$4, status=$5, password=$6, facility_id=$7, profile_image=$8 WHERE id=$9 RETURNING *',
-                [firstName, lastName, email, role, status, password || null, facilityId || null, profileImage || null, id]
+                [firstName, lastName, email, role, status, hashedPassword || null, facilityId || null, profileImage || null, id]
             );
             const u = result.rows[0];
-            res.json({ ...u, firstName: u.first_name, lastName: u.last_name });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
         } else {
             const result = await pool.query(
                 'INSERT INTO users (first_name, last_name, email, role, status, password, facility_id, profile_image) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-                [firstName, lastName, email, role, status, password || null, facilityId || null, profileImage || null]
+                [firstName, lastName, email, role, status, hashedPassword || null, facilityId || null, profileImage || null]
             );
             const u = result.rows[0];
-            res.json({ ...u, firstName: u.first_name, lastName: u.last_name });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
         }
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });

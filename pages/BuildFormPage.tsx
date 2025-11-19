@@ -119,7 +119,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700">Required</label>
-          <div className="mt-1 min-h-[38px]">
+          <div className="mt-1 min-h-[38px] flex items-center">
             <label className="inline-flex items-center">
               <input type="checkbox" checked={!!question.required} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { required: e.target.checked })} className="mr-2" />
               <span className="text-sm text-gray-700">This question is required</span>
@@ -566,7 +566,7 @@ const BuildFormPage: React.FC = () => {
 
       <Modal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} title="Bulk Import Questions" footer={<Button onClick={() => setIsImportModalOpen(false)}>Close</Button>}>
         <div className="space-y-4 text-sm text-gray-700">
-          <p>Upload an Excel file (.xlsx) to bulk-create questions. The sheet should include a header row. Supported columns (case-insensitive):</p>
+          <p>Upload an Excel file (.xlsx) or CSV to bulk-create questions. The sheet should include a header row. Supported columns (case-insensitive):</p>
           <ul className="list-disc ml-6">
             <li><strong>Question</strong> (required) — question text.</li>
             <li><strong>Type</strong> — one of: textbox, textarea, number, date, time, dropdown, radio, checkbox, file.</li>
@@ -575,8 +575,16 @@ const BuildFormPage: React.FC = () => {
             <li><strong>Required</strong> — "true" or "false" (optional). Marks the question as mandatory when true.</li>
             <li><strong>ColumnSize</strong> — numeric; recommended values: 12 (full), 6 (half), 4 (third), 3 (quarter). Default is 12.</li>
           </ul>
+          <a
+            href="/form_template.csv"
+            download
+            className="inline-block mb-2 text-primary-600 hover:underline text-sm font-medium"
+            style={{ marginTop: 8 }}
+          >
+            Download sample template (CSV)
+          </a>
           <p className="text-xs text-gray-500">When importing, questions will be added to the currently active page and the first section of that page. You can edit page/section assignments after import.</p>
-          <input type="file" accept=".xlsx" onChange={handleFileImport} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
+          <input type="file" accept=".xlsx,.csv" onChange={handleFileImport} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
           <div className="text-xs text-gray-500">Notes: empty rows are ignored. For option values, prefer <code>value:label</code> to ensure consistent values. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
         </div>
       </Modal>

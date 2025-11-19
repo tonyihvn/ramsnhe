@@ -84,11 +84,29 @@ const ActivitiesPage: React.FC = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                     {canEdit && (
                       <>
+
+                        {/* Show Edit Form Builder button if form exists, else Build Form */}
                         {(() => {
                           const hasForm = Boolean(activity.formDefinition && Array.isArray(activity.formDefinition.pages) && activity.formDefinition.pages.some(p => p.sections && p.sections.some(s => (s.questions || []).length > 0)));
-                          return (
-                            <button onClick={() => navigate(`/activities/build/${activity.id}`)} className="text-indigo-600 hover:text-indigo-900" title={hasForm ? 'Edit Form' : 'Build Form'}>
-                              <DocumentTextIcon className="h-5 w-5" />
+                          return hasForm ? (
+                            <button
+                              onClick={() => navigate(`/activities/build/${activity.id}`)}
+                              className="text-indigo-600 hover:text-indigo-900"
+                              title="Edit Form"
+                            >
+                              <span className="inline-flex items-center">
+                                <DocumentTextIcon className="h-5 w-5 mr-1" /> Edit Form
+                              </span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => navigate(`/activities/build/${activity.id}`)}
+                              className="text-green-600 hover:text-green-900"
+                              title="Build Form"
+                            >
+                              <span className="inline-flex items-center">
+                                <DocumentTextIcon className="h-5 w-5 mr-1" /> Build Form
+                              </span>
                             </button>
                           );
                         })()}

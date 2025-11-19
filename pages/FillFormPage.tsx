@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
 import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport } from '../types';
 import Card from '../components/ui/Card';
@@ -115,6 +115,9 @@ const FillFormPage: React.FC = () => {
     const { getActivity, saveReport, currentUser, facilities, users } = useMockData();
     const activity = getActivity(activityId || '');
     const formDef: FormDefinition | undefined = activity?.formDefinition;
+
+    // Redirect to login if not authenticated
+    if (!currentUser) return <Navigate to="/login" replace />;
 
     const [answers, setAnswers] = useState<Record<string, any>>({});
     const [formSubmitted, setFormSubmitted] = useState(false);
@@ -304,9 +307,11 @@ const FillFormPage: React.FC = () => {
     };
 
     if (!activity) return <div>Activity not found.</div>;
-    if (!formDef || formDef.pages.length === 0) return <div className="p-6">This activity does not have a form built for it yet. Please contact the administrator.</div>;
+    if (!formDef || !Array.isArray(formDef.pages) || formDef.pages.length === 0) {
+        return <div className="p-6">This activity does not have a form built for it yet. Please contact the administrator.</div>;
+    }
 
-    const currentPage = formDef.pages[activePageIndex];
+    const currentPage = formDef.pages[activePageIndex] || formDef.pages[0];
 
     return (
         <div className="space-y-6">
