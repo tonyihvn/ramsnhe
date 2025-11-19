@@ -1,0 +1,162 @@
+
+import React, { useState } from 'react';
+import Card from '../components/ui/Card';
+import { useMockData } from '../hooks/useMockData';
+import Button from '../components/ui/Button';
+import Modal from '../components/ui/Modal';
+import MInput from '../components/ui/MInput';
+import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { User } from '../types';
+
+const UsersPage: React.FC = () => {
+  const { users, saveUser, deleteUser, currentUser, facilities } = useMockData();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [currentUserEdit, setCurrentUserEdit] = useState<Partial<User>>({});
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+
+  const canEdit = currentUser?.role === 'Admin';
+
+  const openModal = (u?: User) => {
+    setAvatarFile(null);
+    setAvatarPreview(u?.profileImage || null);
+    setCurrentUserEdit(u || { firstName: '', lastName: '', email: '', role: 'Data Collector', status: 'Active', password: '', facilityId: undefined });
+    setIsModalOpen(true);
+  };
+
+  const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+
+  const handleSave = async () => {
+    if (!currentUserEdit.firstName || !currentUserEdit.email) {
+      alert('Name and Email are required.');
+      return;
+    }
+
+    const toSave = { ...currentUserEdit } as Partial<User>;
+    if (avatarFile) {
+      try {
+        const dataUrl = await readFileAsDataUrl(avatarFile);
+        toSave.profileImage = dataUrl;
+      } catch (e) {
+        console.error('Failed to read avatar file', e);
+      }
+    } else if (avatarPreview) {
+      // if preview exists but no new file, keep existing
+      toSave.profileImage = avatarPreview;
+    }
+
+    saveUser(toSave as User);
+    setIsModalOpen(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-gray-800">Users</h1>
+        {canEdit && <Button onClick={() => openModal()} leftIcon={<PlusIcon className="h-5 w-5" />}>New User</Button>}
+      </div>
+      <Card>
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              {canEdit && <th className="relative px-6 py-3"><span className="sr-only">Actions</span></th>}
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {users.map((user) => (
+              <tr key={user.id}>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="text-sm font-medium text-gray-900">{user.firstName} {user.lastName}</div>
+                  <div className="text-sm text-gray-500">{user.email}</div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.role}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${user.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    {user.status}
+                  </span>
+                </td>
+                {canEdit && (
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                    <button onClick={() => openModal(user)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
+                    <button onClick={() => { if (confirm('Delete user?')) deleteUser(user.id) }} className="text-red-600 hover:text-red-900"><TrashIcon className="h-5 w-5" /></button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={currentUserEdit.id ? "Edit User" : "New User"}
+        footer={
+          <>
+            <Button onClick={handleSave} className="ml-3">Save</Button>
+            <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <MInput label="First Name" type="text" value={currentUserEdit.firstName || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, firstName: v })} />
+            <MInput label="Last Name" type="text" value={currentUserEdit.lastName || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, lastName: v })} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Profile Image</label>
+            {avatarPreview && (
+              <div className="mb-2">
+                <img src={avatarPreview} alt="avatar-preview" className="h-16 w-16 rounded-full object-cover" />
+              </div>
+            )}
+            <MInput label="Upload Image" type="file" onChange={(files: FileList | string) => {
+              // MInput returns FileList for file inputs
+              if (files && typeof files !== 'string' && (files as FileList).length > 0) {
+                const f = (files as FileList)[0];
+                setAvatarFile(f);
+                const reader = new FileReader();
+                reader.onload = () => setAvatarPreview(String(reader.result));
+                reader.readAsDataURL(f);
+              } else {
+                setAvatarFile(null);
+                setAvatarPreview(null);
+              }
+            }} />
+          </div>
+          <div>
+            <MInput label="Email" type="email" value={currentUserEdit.email || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, email: v })} />
+          </div>
+          <div>
+            <MInput label="Phone" type="text" value={currentUserEdit.phoneNumber || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, phoneNumber: v })} />
+          </div>
+          <div>
+            <MInput label="Password" type="password" value={currentUserEdit.password || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, password: v })} />
+          </div>
+          <div>
+            <MInput label="Role" type="select" value={currentUserEdit.role} onChange={v => setCurrentUserEdit({ ...currentUserEdit, role: v })}
+              options={[{ value: 'Admin', label: 'Admin' }, { value: 'Form Builder', label: 'Form Builder' }, { value: 'Data Collector', label: 'Data Collector' }, { value: 'Viewer', label: 'Viewer' }, { value: 'Responder', label: 'Responder' }]} />
+          </div>
+          <div>
+            <MInput label="Facility (optional)" type="select" value={currentUserEdit.facilityId || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, facilityId: v ? Number(v) : undefined })}
+              options={[{ value: '', label: 'None' }, ...(facilities.map(f => ({ value: f.id, label: f.name })))]} />
+          </div>
+          <div>
+            <MInput label="Status" type="select" value={currentUserEdit.status} onChange={v => setCurrentUserEdit({ ...currentUserEdit, status: v })}
+              options={[{ value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }]} />
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
+export default UsersPage;

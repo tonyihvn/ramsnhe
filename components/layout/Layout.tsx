@@ -1,0 +1,29 @@
+
+import React, { useState } from 'react';
+import Sidebar from './Sidebar';
+import Header from './Header';
+
+interface LayoutProps {
+  children: React.ReactNode;
+}
+
+const Layout: React.FC<LayoutProps> = ({ children }) => {
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Compute left offset for content based on sidebar width
+  const contentMarginClass = collapsed ? 'md:ml-20' : 'md:ml-64';
+
+  return (
+    <div className="flex h-screen bg-gray-100">
+      <Sidebar collapsed={collapsed} />
+      <div className={`flex-1 flex flex-col overflow-hidden ${contentMarginClass}`}>
+        <Header collapsed={collapsed} onToggleSidebar={() => setCollapsed(c => !c)} />
+        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-4 md:p-6 lg:p-8">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+};
+
+export default Layout;

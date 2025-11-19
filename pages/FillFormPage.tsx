@@ -1,0 +1,443 @@
+import React, { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useMockData } from '../hooks/useMockData';
+import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport } from '../types';
+import Card from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import MInput from '../components/ui/MInput';
+import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import * as XLSX from 'xlsx';
+
+const RenderQuestion = ({ question, value, onChange }: { question: Question, value: any, onChange: (value: any) => void }) => {
+    switch (question.answerType) {
+        case AnswerType.TEXT:
+            return <MInput label={question.questionText} type="text" value={value || ''} onChange={onChange} />;
+        case AnswerType.TEXTAREA:
+            return <MInput label={question.questionText} type="textarea" value={value || ''} onChange={onChange} rows={4} />;
+        case AnswerType.NUMBER:
+            return <MInput label={question.questionText} type="number" value={value || ''} onChange={onChange} />;
+        case AnswerType.DATE:
+            return <MInput label={question.questionText} type="date" value={value || ''} onChange={onChange} />;
+        case AnswerType.TIME:
+            return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} />;
+        case AnswerType.DROPDOWN:
+            return (
+                <MInput
+                    label={question.questionText}
+                    type="select"
+                    value={value || ''}
+                    onChange={onChange}
+                    options={(question.options || []).map(o => ({ value: o.value as any, label: o.label }))}
+                    placeholder="Select..."
+                />
+            );
+        case AnswerType.RADIO:
+            return (
+                <div>
+                    {question.options?.map((opt, idx) => (
+                        <MInput key={idx} type="radio" name={question.id} label={opt.label} value={value === opt.value} onChange={(v) => onChange(opt.value)} />
+                    ))}
+                </div>
+            );
+        case AnswerType.CHECKBOX:
+            const currentVals = Array.isArray(value) ? value : [];
+            const handleCheck = (val: string, checked: boolean) => {
+                if (checked) onChange([...currentVals, val]);
+                else onChange(currentVals.filter((v: string) => v !== val));
+            };
+            return (
+                <div>
+                    {question.options?.map((opt, idx) => (
+                        <MInput key={idx} type="checkbox" name={`${question.id}-${idx}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} />
+                    ))}
+                </div>
+            );
+        case AnswerType.FILE:
+            const allowed = question.metadata && Array.isArray(question.metadata.allowedFileTypes) ? question.metadata.allowedFileTypes.join(',') : undefined;
+            const fileVal = value;
+            const handleFile = (files: FileList | null) => {
+                const f = files?.[0] || null;
+                if (!f) return onChange(null);
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const dataUrl = ev.target?.result as string;
+                    onChange({ filename: f.name, mimeType: f.type, dataUrl });
+                };
+                reader.readAsDataURL(f);
+            };
+            return (
+                <div>
+                    <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} />
+                    {fileVal && fileVal.dataUrl && (
+                        <div className="mt-2">
+                            <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
+                            {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && (
+                                <img src={fileVal.dataUrl} alt={fileVal.filename} className="mt-2 max-h-36 border rounded" />
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        default:
+            return <p className="text-sm text-gray-500">Not supported in this preview</p>;
+    }
+};
+
+import DataTable from '../components/ui/DataTable';
+
+const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (updatedFile: UploadedFile) => void }) => {
+    if (!file.data || file.data.length === 0) {
+        return <p className="text-gray-500">No data to display for {file.fileName}.</p>;
+    }
+    const set = new Set<string>();
+    file.data.forEach(r => Object.keys(r).forEach(k => set.add(k)));
+    const headers = Array.from(set);
+
+    const columns = headers.map(h => ({ key: h, label: h, editable: true }));
+
+    const handleCellEdit = (rowIndex: number, key: string, newValue: any) => {
+        const newData = [...file.data];
+        newData[rowIndex] = { ...newData[rowIndex], [key]: newValue };
+        onUpdate({ ...file, data: newData });
+    };
+
+    return (
+        <div>
+            <h4 className="font-semibold text-lg mb-2">{file.fileName}</h4>
+            <DataTable columns={columns} data={file.data} onCellEdit={handleCellEdit} />
+        </div>
+    );
+};
+
+const FillFormPage: React.FC = () => {
+    const { activityId } = useParams<{ activityId: string }>();
+    const history = useNavigate();
+    const { getActivity, saveReport, currentUser, facilities, users } = useMockData();
+    const activity = getActivity(activityId || '');
+    const formDef: FormDefinition | undefined = activity?.formDefinition;
+
+    const [answers, setAnswers] = useState<Record<string, any>>({});
+    const [formSubmitted, setFormSubmitted] = useState(false);
+    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+    const [activePageIndex, setActivePageIndex] = useState(0);
+
+    const handleAnswerChange = (questionId: string, value: any) => {
+        setAnswers(prev => ({ ...prev, [questionId]: value }));
+    };
+
+    // Helpers for computed fields
+    const parseDate = (v: any): Date | null => {
+        if (!v) return null;
+        if (v instanceof Date) return v;
+        const s = String(v);
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return null;
+        return d;
+    };
+
+    const age = (v: any): number | null => {
+        const d = parseDate(v);
+        if (!d) return null;
+        const now = new Date();
+        let yrs = now.getFullYear() - d.getFullYear();
+        const m = now.getMonth() - d.getMonth();
+        if (m < 0 || (m === 0 && now.getDate() < d.getDate())) yrs--;
+        return yrs;
+    };
+
+    const diffDays = (a: any, b: any): number | null => {
+        const da = parseDate(a);
+        const db = parseDate(b);
+        if (!da || !db) return null;
+        const diff = Math.round((da.getTime() - db.getTime()) / (1000 * 60 * 60 * 24));
+        return diff;
+    };
+
+    const evaluateFormula = (formula: string, fieldMap: Record<string, any>) => {
+        if (!formula || typeof formula !== 'string') return null;
+        try {
+            const varNames = Object.keys(fieldMap || {});
+            const args = varNames.map(n => {
+                const v = fieldMap[n];
+                // try to coerce numeric strings to numbers
+                if (typeof v === 'string' && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
+                return v;
+            });
+            // Provide helpers: age, parseDate, diffDays
+            // Build function: function(...vars, age, parseDate, diffDays) { return <formula>; }
+            // eslint-disable-next-line no-new-func
+            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ return null; }`);
+            return fn(...args, age, parseDate, diffDays);
+        } catch (err) {
+            console.error('Error evaluating formula', formula, err);
+            return null;
+        }
+    };
+
+    // Recompute computed fields whenever answers change
+    React.useEffect(() => {
+        if (!formDef) return;
+        // build fieldName -> value map from current answers
+        const fieldMap: Record<string, any> = {};
+        formDef.pages.forEach(p => p.sections.forEach(s => s.questions.forEach(q => {
+            if (q.fieldName) {
+                fieldMap[q.fieldName] = answers[q.id];
+            }
+        })));
+
+        // compute values for computed questions
+        let updated: Record<string, any> | null = null;
+        formDef.pages.forEach(p => p.sections.forEach(s => s.questions.forEach(q => {
+            if (q.answerType === AnswerType.COMPUTED) {
+                const formula = q.metadata && q.metadata.computedFormula;
+                if (formula) {
+                    const result = evaluateFormula(String(formula), fieldMap);
+                    // set into updated map by question id if changed
+                    if (result !== answers[q.id]) {
+                        if (!updated) updated = { ...answers };
+                        updated[q.id] = result;
+                        // also update fieldMap so dependent computed fields can use it
+                        if (q.fieldName) fieldMap[q.fieldName] = result;
+                    }
+                }
+            }
+        })));
+
+        if (updated) {
+            setAnswers(updated);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [answers, formDef]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        // Validate required fields
+        const missing: string[] = [];
+        if (formDef) {
+            for (const p of formDef.pages) {
+                for (const s of p.sections) {
+                    for (const q of s.questions) {
+                        if (q.required) {
+                            const val = answers[q.id];
+                            if (val === undefined || val === null || (typeof val === 'string' && val.trim() === '') || (Array.isArray(val) && val.length === 0)) {
+                                missing.push(q.questionText || q.id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (missing.length > 0) {
+            alert('Please answer required questions before proceeding:\n' + missing.join('\n'));
+            return;
+        }
+        setFormSubmitted(true);
+        window.scrollTo(0, 0);
+    };
+
+    const [selectedFacilityId, setSelectedFacilityId] = useState<number | undefined>(currentUser?.facilityId || undefined);
+    const [selectedUserId, setSelectedUserId] = useState<number | undefined>(currentUser?.id || undefined);
+
+    const handleFinalize = () => {
+        // Enforce required linking field based on activity.responseType
+        const respType = (activity.responseType || '').toString().toLowerCase();
+        if (respType === 'facility' && !selectedFacilityId) {
+            alert('This activity requires a Facility to be selected before finalizing.');
+            return;
+        }
+        if (respType === 'user' && !selectedUserId) {
+            alert('This activity requires a User to be selected before finalizing.');
+            return;
+        }
+
+        const report: ActivityReport = {
+            id: `rpt-${Date.now()}`,
+            activityId: activityId!,
+            userId: selectedUserId || currentUser?.id,
+            facilityId: selectedFacilityId || currentUser?.facilityId,
+            dataCollectionLevel: currentUser?.role === 'Data Collector' ? 'Facility' : 'User',
+            status: 'Completed',
+            preparedBy: currentUser?.id || 'unknown',
+            answers: answers,
+            uploadedFiles: uploadedFiles,
+            submissionDate: new Date().toISOString(),
+        }
+        saveReport(report);
+        alert('Data successfully submitted!');
+        history('/reports');
+    }
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files) return;
+
+        Array.from(files).forEach((file: File) => {
+            const reader = new FileReader();
+
+            reader.onload = (evt) => {
+                try {
+                    const bstr = evt.target?.result;
+                    const wb = XLSX.read(bstr, { type: 'array' });
+                    // Grab first sheet
+                    const wsname = wb.SheetNames[0];
+                    const ws = wb.Sheets[wsname];
+                    // Convert to JSON
+                    const data = XLSX.utils.sheet_to_json(ws);
+
+                    setUploadedFiles(prev => [...prev, {
+                        id: `file-${Date.now()}-${file.name}`,
+                        fileName: file.name,
+                        data: data as Record<string, any>[]
+                    }]);
+                } catch (err) {
+                    console.error("Error parsing file", err);
+                    alert(`Could not parse ${file.name}. Please ensure it is a valid Excel or CSV file.`);
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+    };
+
+    const handleFileUpdate = (updatedFile: UploadedFile) => {
+        setUploadedFiles(files => files.map(f => f.id === updatedFile.id ? updatedFile : f));
+    };
+
+    if (!activity) return <div>Activity not found.</div>;
+    if (!formDef || formDef.pages.length === 0) return <div className="p-6">This activity does not have a form built for it yet. Please contact the administrator.</div>;
+
+    const currentPage = formDef.pages[activePageIndex];
+
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center space-x-4">
+                <button onClick={() => history('/activities')} className="text-gray-500 hover:text-gray-700">
+                    <ArrowLeftIcon className="h-6 w-6" />
+                </button>
+                <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
+            </div>
+
+            {!formSubmitted ? (
+                <Card>
+                    <form onSubmit={handleSubmit}>
+                        <div className="border-b border-gray-200">
+                            <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
+                                {formDef.pages.map((page, index) => (
+                                    <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === activePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
+                                        {page.name}
+                                    </button>
+                                ))}
+                            </nav>
+                        </div>
+
+                        <div className="mt-6 space-y-8">
+                            {currentPage.sections.map(section => (
+                                <div key={section.id} className="bg-gray-50 p-4 rounded-md">
+                                    <h3 className="text-lg font-medium text-gray-900 border-b pb-2 border-gray-200">{section.name}</h3>
+                                    <div className="mt-4 grid grid-cols-12 gap-6">
+                                        {section.questions.map(q => {
+                                            let colClass = 'col-span-12';
+                                            if (q.columnSize === 12) colClass = 'col-span-12';
+                                            else if (q.columnSize === 6) colClass = 'md:col-span-6 col-span-12';
+                                            else if (q.columnSize === 4) colClass = 'md:col-span-4 col-span-12';
+                                            else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
+                                            else colClass = 'col-span-12';
+                                            return (
+                                                <div key={q.id} className={colClass}>
+                                                    <label className="block text-sm font-medium text-gray-700">{q.questionText} {q.required && <span className="text-red-500">*</span>}</label>
+                                                    {q.questionHelper && <p className="text-xs text-gray-500 mt-1">{q.questionHelper}</p>}
+                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="mt-8 pt-5 border-t border-gray-200">
+                            <div className="flex justify-end space-x-3">
+                                {activePageIndex > 0 && (
+                                    <Button variant="secondary" onClick={() => setActivePageIndex(p => p - 1)}>Previous Page</Button>
+                                )}
+                                {activePageIndex < formDef.pages.length - 1 ? (
+                                    <Button onClick={() => setActivePageIndex(p => p + 1)}>Next Page</Button>
+                                ) : (
+                                    <Button type="submit">Next: Upload Files</Button>
+                                )}
+                            </div>
+                        </div>
+                    </form>
+                </Card>
+            ) : (
+                <Card title="Step 2: Upload Supporting Files & Review" action={<Button onClick={handleFinalize}>Finalize Submission</Button>}>
+                    <div className="space-y-6">
+                        <div className="bg-blue-50 p-4 rounded-md">
+                            <h3 className="text-sm font-medium text-blue-800">Form Data Saved</h3>
+                            <p className="text-sm text-blue-700 mt-1">Your responses have been captured. You can now upload Excel or CSV files related to this activity. You can edit the data in the table below before final submission.</p>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Upload Files</label>
+                            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+                                <div className="space-y-1 text-center">
+                                    <div className="flex text-sm text-gray-600 justify-center">
+                                        <label htmlFor="file-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary-500">
+                                            <span>Upload CSV or Excel</span>
+                                            <input id="file-upload" name="file-upload" type="file" className="sr-only" multiple accept=".csv, .xlsx, .xls" onChange={handleFileUpload} />
+                                        </label>
+                                    </div>
+                                    <p className="text-xs text-gray-500">Supports .xlsx, .xls, .csv</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Link Entity</label>
+                                    <p className="text-xs text-gray-500 mb-2">Select the facility or user this response should be linked to (required for some activities).</p>
+                                    {String(activity.responseType || '').toLowerCase() === 'facility' ? (
+                                        <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                                            <option value="">Select facility...</option>
+                                            {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                                        </select>
+                                    ) : String(activity.responseType || '').toLowerCase() === 'user' ? (
+                                        <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                                            <option value="">Select user...</option>
+                                            {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
+                                        </select>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                                                <option value="">(Optional) Select facility...</option>
+                                                {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                                            </select>
+                                            <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                                                <option value="">(Optional) Select user...</option>
+                                                {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
+                                            </select>
+                                        </div>
+                                    )}
+                                </div>
+                                <div>
+                                    {uploadedFiles.map(file => (
+                                        <Card key={file.id} className="border border-gray-200 mb-4">
+                                            <EditableTable file={file} onUpdate={handleFileUpdate} />
+                                        </Card>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between border-t pt-4">
+                            <Button variant="secondary" onClick={() => setFormSubmitted(false)}>Back to Form</Button>
+                        </div>
+                    </div>
+                </Card>
+            )}
+        </div>
+    );
+};
+
+export default FillFormPage;
