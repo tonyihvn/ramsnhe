@@ -16,25 +16,26 @@ const navigation = [
 
 const Sidebar: React.FC<{ collapsed?: boolean }> = ({ collapsed = false }) => {
   const location = useLocation();
-
   const sidebarWidthClass = collapsed ? 'md:w-20' : 'md:w-64';
-
   const { settings } = useTheme();
 
   return (
-    <div className={`app-sidebar hidden md:flex ${sidebarWidthClass} md:flex-col md:fixed md:inset-y-0 transition-all bg-white z-20`} style={{ backgroundColor: '#ffffff' }}>
-      <div className="app-sidebar-inner flex flex-col flex-grow pt-5 overflow-y-auto border-r border-gray-200 h-full" style={{ backgroundColor: '#ffffff' }}>
-        <div className="flex items-center flex-shrink-0 px-4 space-x-3">
-          {settings.logoDataUrl ? (
-            <img src={settings.logoDataUrl} alt="logo" className="h-10 w-10 object-contain" />
+    <aside className={`app-sidebar hidden md:flex ${sidebarWidthClass} md:flex-col md:fixed md:inset-y-0 transition-all bg-white z-20`} style={{ backgroundColor: '#ffffff' }}>
+      <div className="app-sidebar-inner flex flex-col flex-grow overflow-y-auto border-r border-gray-200 h-full" style={{ backgroundColor: '#ffffff' }}>
+        <div className="flex flex-col items-center flex-shrink-0 px-4" style={{ paddingTop: 0, paddingBottom: 0, margin: 0 }}>
+          {settings?.logoDataUrl ? (
+            <img src={settings.logoDataUrl} alt="logo" className="object-contain block" style={{ width: 'var(--logo-width)', height: 'var(--logo-width)', margin: 0, padding: 0, display: 'block' }} />
           ) : (
-            <DocumentPlusIcon className="h-10 w-10 text-primary-600" />
+            <DocumentPlusIcon className="text-primary-600" style={{ width: 'var(--logo-width)', height: 'var(--logo-width)', margin: 0, padding: 0, display: 'block' }} />
           )}
-          {!collapsed && <div className="ml-2">
-            <div className="text-lg font-bold text-gray-800" style={{ color: 'var(--logo-color)' }}>{settings.logoText || 'DQAPlus'}</div>
-          </div>}
+          {!collapsed && (
+            <div style={{ marginTop: 0, padding: 0, textAlign: 'center' }}>
+              <div className="font-bold text-gray-800" style={{ color: 'var(--logo-color)', fontSize: 'var(--app-font-size)', margin: 0, padding: 0 }}>{settings?.logoText || ''}</div>
+            </div>
+          )}
         </div>
-        <div className="mt-5 flex-1 flex flex-col">
+
+        <div className="mt-0 flex-1 flex flex-col">
           <nav className="flex-1 px-2 pb-4 space-y-1">
             {navigation.map((item) => {
               const isActive = location.pathname.startsWith(item.href);
@@ -47,11 +48,7 @@ const Sidebar: React.FC<{ collapsed?: boolean }> = ({ collapsed = false }) => {
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                     }`}
                 >
-                  <item.icon
-                    className={`flex-shrink-0 h-6 w-6 ${isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'
-                      }`}
-                    aria-hidden="true"
-                  />
+                  <item.icon className={`flex-shrink-0 h-6 w-6 ${isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'}`} aria-hidden="true" />
                   {!collapsed && <span className="ml-3">{item.name}</span>}
                 </Link>
               );
@@ -59,7 +56,7 @@ const Sidebar: React.FC<{ collapsed?: boolean }> = ({ collapsed = false }) => {
           </nav>
         </div>
       </div>
-    </div>
+    </aside>
   );
 };
 

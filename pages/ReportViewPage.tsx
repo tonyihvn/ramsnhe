@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
+import ConversationPanel from '../components/ui/ConversationPanel';
 
 const ReportViewPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>();
@@ -115,19 +116,24 @@ const ReportViewPage: React.FC = () => {
                 const pageName = q.pageName || q.page_name || '';
                 const sectionName = q.sectionName || q.section_name || '';
                 return (
-                <tr key={a.id}>
-                  <td className="px-4 py-2 text-sm">{pageName}</td>
-                  <td className="px-4 py-2 text-sm">{sectionName}</td>
-                  <td className="px-4 py-2 text-sm">{questionText}</td>
-                  <td className="px-4 py-2 text-sm">{typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value)}</td>
-                  <td className="px-4 py-2 text-sm">{a.reviewers_comment || '—'}</td>
-                  <td className="px-4 py-2 text-sm">{a.quality_improvement_followup || '—'}</td>
-                </tr>
-              )})}
+                  <tr key={a.id}>
+                    <td className="px-4 py-2 text-sm">{pageName}</td>
+                    <td className="px-4 py-2 text-sm">{sectionName}</td>
+                    <td className="px-4 py-2 text-sm">{questionText}</td>
+                    <td className="px-4 py-2 text-sm">{typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value)}</td>
+                    <td className="px-4 py-2 text-sm">{a.reviewers_comment || '—'}</td>
+                    <td className="px-4 py-2 text-sm">{a.quality_improvement_followup || '—'}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <div className="mt-6">
+        <ConversationPanel context={{ report, answers, uploadedDocs }} scope={`report:${report.id}`} />
+      </div>
 
       <Card>
         <div className="flex justify-between items-center">

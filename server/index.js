@@ -3,6 +3,8 @@ import { Pool } from 'pg';
 import cors from 'cors';
 import cookieSession from 'cookie-session';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 dotenv.config();
 
 const app = express();
@@ -94,7 +96,7 @@ async function initDb() {
             status TEXT,
             options JSONB,
             metadata JSONB,
-            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE TABLE IF NOT EXISTS answers (
@@ -138,6 +140,48 @@ async function initDb() {
         await pool.query(`ALTER TABLE answers ADD COLUMN IF NOT EXISTS quality_improvement_followup TEXT`);
         await pool.query(`ALTER TABLE answers ADD COLUMN IF NOT EXISTS score NUMERIC`);
         await pool.query(`ALTER TABLE questions ADD COLUMN IF NOT EXISTS required BOOLEAN`);
+        // Add profile_image to users
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image TEXT`);
+        // Create roles, permissions and settings tables
+        await pool.query(`CREATE TABLE IF NOT EXISTS roles (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT
+        )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS permissions (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT
+        )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS role_permissions (
+            role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+            permission_id INTEGER REFERENCES permissions(id) ON DELETE CASCADE,
+            PRIMARY KEY (role_id, permission_id)
+        )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS user_roles (
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+            PRIMARY KEY (user_id, role_id)
+        )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value JSONB
+        )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS llm_providers (
+            id SERIAL PRIMARY KEY,
+            provider_id TEXT,
+            name TEXT,
+            model TEXT,
+            config JSONB,
+            priority INTEGER
+        )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS rag_schemas (
+            id SERIAL PRIMARY KEY,
+            table_name TEXT,
+            schema JSONB,
+            sample_rows JSONB,
+            generated_at TIMESTAMP DEFAULT NOW()
+        )`);
         // Ensure activities has response_type and form_definition (sync with schema)
         await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS response_type TEXT`);
         await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS form_definition JSONB`);
@@ -181,11 +225,390 @@ async function initDb() {
                 ['System', 'Administrator', adminEmail, adminPassword, 'Admin', 'Active']
             );
             console.log('Default admin user created:', adminEmail);
+        } else {
+            // If user exists but password is empty or null, set it to the default admin password
+            try {
+                const existing = res.rows[0];
+                if (!existing.password || String(existing.password).trim() === '') {
+                    await pool.query('UPDATE users SET password = $1 WHERE id = $2', [adminPassword, existing.id]);
+                    console.log('Default admin user existed with empty password; password was set from env for:', adminEmail);
+                }
+            } catch (e) {
+                console.error('Failed to ensure default admin password:', e);
+            }
         }
     } catch (err) {
         console.error('Failed to ensure default admin user', err);
     }
+
+    // Ensure default admin user is assigned the Admin role in user_roles
+    try {
+        const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
+        const ures = await pool.query('SELECT id FROM users WHERE email = $1', [adminEmail]);
+        const rres = await pool.query("SELECT id FROM roles WHERE name = 'Admin'");
+        if (ures.rows.length > 0 && rres.rows.length > 0) {
+            const userId = ures.rows[0].id;
+            const roleId = rres.rows[0].id;
+            await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [userId, roleId]);
+            console.log('Assigned Admin role to default admin user');
+        }
+    } catch (err) {
+        console.error('Failed to assign Admin role to default admin user:', err);
+    }
+
+    // Seed default roles and permissions if missing
+    try {
+        const perms = [
+            ['manage_users', 'Create, update and delete users'],
+            ['manage_roles', 'Manage roles and permissions'],
+            ['manage_settings', 'Update system settings and LLM providers'],
+            ['edit_forms', 'Create and edit form definitions'],
+            ['submit_reports', 'Submit reports/responses'],
+            ['view_reports', 'View reports and dashboards'],
+            ['manage_llm', 'Manage LLM providers and RAG settings']
+        ];
+        for (const [name, desc] of perms) {
+            await pool.query('INSERT INTO permissions (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+        }
+
+        const roles = [
+            ['Admin', 'Full system administrator'],
+            ['Form Builder', 'Design and publish forms'],
+            ['Data Collector', 'Collect and submit data in the field'],
+            ['Reviewer', 'Review submitted reports and provide feedback'],
+            ['Viewer', 'Read-only access to reports and dashboards']
+        ];
+        for (const [name, desc] of roles) {
+            await pool.query('INSERT INTO roles (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+        }
+
+        // Map role to permissions
+        const rolePermMap = {
+            'Admin': ['manage_users', 'manage_roles', 'manage_settings', 'edit_forms', 'submit_reports', 'view_reports', 'manage_llm'],
+            'Form Builder': ['edit_forms', 'view_reports'],
+            'Data Collector': ['submit_reports', 'view_reports'],
+            'Reviewer': ['view_reports', 'manage_llm'],
+            'Viewer': ['view_reports']
+        };
+        for (const [roleName, permNames] of Object.entries(rolePermMap)) {
+            const r = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
+            if (r.rows.length === 0) continue;
+            const roleId = r.rows[0].id;
+            for (const pname of permNames) {
+                const p = await pool.query('SELECT id FROM permissions WHERE name = $1', [pname]);
+                if (p.rows.length === 0) continue;
+                const permId = p.rows[0].id;
+                await pool.query('INSERT INTO role_permissions (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [roleId, permId]);
+            }
+        }
+        console.log('Default roles and permissions seeded (if they were missing).');
+    } catch (err) {
+        console.error('Failed to seed roles/permissions:', err);
+    }
 }
+
+// Helper: require admin middleware
+async function requireAdmin(req, res, next) {
+    try {
+        if (!req.session || !req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
+        const r = await pool.query('SELECT role FROM users WHERE id = $1', [req.session.userId]);
+        if (r.rows.length === 0) return res.status(401).json({ error: 'Unauthorized' });
+        if (r.rows[0].role !== 'Admin') return res.status(403).json({ error: 'Forbidden - admin only' });
+        return next();
+    } catch (e) { console.error('requireAdmin error', e); return res.status(500).json({ error: 'Server error' }); }
+}
+
+// Admin: read .env DB-related settings
+app.get('/api/admin/env', requireAdmin, async (req, res) => {
+    try {
+        // Also attempt to read .env.local if present and merge values (env.local takes precedence)
+        const envPathLocal = path.resolve(process.cwd(), '.env.local');
+        let localMap = {};
+        try {
+            const raw = await fs.promises.readFile(envPathLocal, 'utf8');
+            raw.split(/\r?\n/).forEach(l => { const idx = l.indexOf('='); if (idx > -1) localMap[l.slice(0, idx)] = l.slice(idx + 1); });
+        } catch (e) { /* ignore missing */ }
+        const env = {
+            dbUser: localMap.DB_USER || process.env.DB_USER || '',
+            dbHost: localMap.DB_HOST || process.env.DB_HOST || '',
+            dbName: localMap.DB_NAME || process.env.DB_NAME || '',
+            dbPort: localMap.DB_PORT || process.env.DB_PORT || '',
+            dbPassword: localMap.DB_PASSWORD || process.env.DB_PASSWORD || ''
+        };
+        res.json(env);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to read env' }); }
+});
+
+// Admin: write DB env values to .env file (merges existing values)
+app.post('/api/admin/env', requireAdmin, async (req, res) => {
+    try {
+        const payload = req.body || {};
+        const envPath = path.resolve(process.cwd(), '.env');
+        let content = '';
+        try { content = await fs.promises.readFile(envPath, 'utf8'); } catch (e) { content = ''; }
+        const lines = content.split(/\r?\n/).filter(Boolean);
+        const map = {};
+        for (const l of lines) {
+            const idx = l.indexOf('='); if (idx > -1) { map[l.slice(0, idx)] = l.slice(idx + 1); }
+        }
+        if (payload.dbUser !== undefined) map['DB_USER'] = String(payload.dbUser);
+        if (payload.dbHost !== undefined) map['DB_HOST'] = String(payload.dbHost);
+        if (payload.dbName !== undefined) map['DB_NAME'] = String(payload.dbName);
+        if (payload.dbPort !== undefined) map['DB_PORT'] = String(payload.dbPort);
+        if (payload.dbPassword !== undefined) map['DB_PASSWORD'] = String(payload.dbPassword);
+        const out = Object.entries(map).map(([k, v]) => `${k}=${v}`).join('\n');
+        await fs.promises.writeFile(envPath, out, 'utf8');
+        // also update process.env (effective until restart)
+        process.env.DB_USER = map['DB_USER']; process.env.DB_HOST = map['DB_HOST']; process.env.DB_NAME = map['DB_NAME']; process.env.DB_PORT = map['DB_PORT']; process.env.DB_PASSWORD = map['DB_PASSWORD'];
+        // also write to .env.local for frontend defaults
+        try {
+            const localPath = path.resolve(process.cwd(), '.env.local');
+            await fs.promises.writeFile(localPath, out, 'utf8');
+        } catch (e) { console.error('Failed to write .env.local', e); }
+
+        // Attempt to generate RAG schemas for the target DB
+        (async () => {
+            try {
+                const targetConfig = {
+                    user: map['DB_USER'], host: map['DB_HOST'], database: map['DB_NAME'], password: map['DB_PASSWORD'], port: map['DB_PORT'] ? Number(map['DB_PORT']) : undefined
+                };
+                const Pool2 = require('pg').Pool;
+                const tempPool = new Pool2(targetConfig);
+                // get list of tables in public schema
+                const tablesRes = await tempPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'");
+                for (const r of tablesRes.rows) {
+                    const tname = r.table_name;
+                    // columns
+                    const colsRes = await tempPool.query('SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1', [tname]);
+                    const schema = colsRes.rows;
+                    // sample rows
+                    let sample = [];
+                    try {
+                        const sres = await tempPool.query(`SELECT * FROM "${tname}" LIMIT 5`);
+                        sample = sres.rows;
+                    } catch (e) { /* ignore sampling errors */ }
+                    // upsert into rag_schemas
+                    await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, schema, sample]);
+                }
+                await tempPool.end();
+                console.log('RAG schemas generated/updated based on provided DB settings');
+            } catch (e) { console.error('Failed to generate RAG schemas:', e); }
+        })();
+        res.json({ success: true });
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to write env' }); }
+});
+
+// Admin: generic settings store (key/value JSON)
+app.get('/api/admin/settings', requireAdmin, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM settings');
+        const out = {};
+        for (const r of result.rows) out[r.key] = r.value;
+        res.json(out);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to fetch settings' }); }
+});
+
+app.post('/api/admin/settings', requireAdmin, async (req, res) => {
+    try {
+        const payload = req.body || {};
+        for (const [k, v] of Object.entries(payload)) {
+            await pool.query('INSERT INTO settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = $2', [k, v]);
+        }
+        res.json({ success: true });
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save settings' }); }
+});
+
+// Admin: detect local Ollama models (server-side probe to avoid CORS issues)
+app.get('/api/admin/detect-ollama', requireAdmin, async (req, res) => {
+    const endpoints = [
+        'http://127.0.0.1:11434/models',
+        'http://127.0.0.1:11434/list',
+        'http://127.0.0.1:11434/v1/models',
+        'http://127.0.0.1:11434/llms',
+        'http://localhost:11434/models',
+        'http://localhost:11434/list',
+        'http://localhost:11434/v1/models',
+        'http://[::1]:11434/models',
+        'https://127.0.0.1:11434/models',
+        'https://localhost:11434/models'
+    ];
+    try {
+        for (const url of endpoints) {
+            try {
+                const r = await fetch(url, { method: 'GET' });
+                if (!r.ok) continue;
+                const j = await r.json();
+                let found = [];
+                if (Array.isArray(j)) found = j.map(m => m.name || m.id || m.model || String(m));
+                else if (j.models && Array.isArray(j.models)) found = j.models.map(m => m.name || m.id || m.model || String(m));
+                else if (j.model) found = [j.model];
+                if (found.length) return res.json({ ok: true, models: found, url });
+            } catch (e) {
+                // try next
+            }
+        }
+        return res.status(404).json({ ok: false, models: [] });
+    } catch (e) {
+        console.error('detect-ollama error', e);
+        return res.status(500).json({ ok: false, error: String(e) });
+    }
+});
+
+// Admin: test DB connection for provided config (used by Settings "Test Connection")
+app.post('/api/admin/test-db', requireAdmin, async (req, res) => {
+    try {
+        const { dbHost, dbPort, dbUser, dbPassword, dbName } = req.body || {};
+        if (!dbHost || !dbPort || !dbUser || !dbName) return res.status(400).json({ ok: false, error: 'Missing parameters (dbHost, dbPort, dbUser, dbName required)' });
+        const Pool2 = require('pg').Pool;
+        const tempPool = new Pool2({ host: dbHost, port: Number(dbPort), user: dbUser, password: dbPassword, database: dbName, connectionTimeoutMillis: 3000 });
+        try {
+            await tempPool.query('SELECT 1');
+            await tempPool.end();
+            return res.json({ ok: true });
+        } catch (err) {
+            await tempPool.end().catch(() => { });
+            return res.status(500).json({ ok: false, error: String(err.message || err) });
+        }
+    } catch (e) { console.error('test-db error', e); return res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// Admin: manual seed roles & permissions endpoint (idempotent)
+app.post('/api/admin/seed-roles', requireAdmin, async (req, res) => {
+    try {
+        // Re-run seeding logic from initDb (simple approach)
+        const perms = [
+            ['manage_users', 'Create, update and delete users'],
+            ['manage_roles', 'Manage roles and permissions'],
+            ['manage_settings', 'Update system settings and LLM providers'],
+            ['edit_forms', 'Create and edit form definitions'],
+            ['submit_reports', 'Submit reports/responses'],
+            ['view_reports', 'View reports and dashboards'],
+            ['manage_llm', 'Manage LLM providers and RAG settings']
+        ];
+        for (const [name, desc] of perms) {
+            await pool.query('INSERT INTO permissions (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+        }
+        const roles = [
+            ['Admin', 'Full system administrator'],
+            ['Form Builder', 'Design and publish forms'],
+            ['Data Collector', 'Collect and submit data in the field'],
+            ['Reviewer', 'Review submitted reports and provide feedback'],
+            ['Viewer', 'Read-only access to reports and dashboards']
+        ];
+        for (const [name, desc] of roles) {
+            await pool.query('INSERT INTO roles (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+        }
+        const rolePermMap = {
+            'Admin': ['manage_users', 'manage_roles', 'manage_settings', 'edit_forms', 'submit_reports', 'view_reports', 'manage_llm'],
+            'Form Builder': ['edit_forms', 'view_reports'],
+            'Data Collector': ['submit_reports', 'view_reports'],
+            'Reviewer': ['view_reports', 'manage_llm'],
+            'Viewer': ['view_reports']
+        };
+        for (const [roleName, permNames] of Object.entries(rolePermMap)) {
+            const r = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
+            if (r.rows.length === 0) continue;
+            const roleId = r.rows[0].id;
+            for (const pname of permNames) {
+                const p = await pool.query('SELECT id FROM permissions WHERE name = $1', [pname]);
+                if (p.rows.length === 0) continue;
+                const permId = p.rows[0].id;
+                await pool.query('INSERT INTO role_permissions (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [roleId, permId]);
+            }
+        }
+        // Ensure default admin user is assigned Admin role
+        try {
+            const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
+            const ures = await pool.query('SELECT id FROM users WHERE email = $1', [adminEmail]);
+            const rres = await pool.query("SELECT id FROM roles WHERE name = 'Admin'");
+            if (ures.rows.length > 0 && rres.rows.length > 0) {
+                const userId = ures.rows[0].id;
+                const roleId = rres.rows[0].id;
+                await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [userId, roleId]);
+            }
+        } catch (e) { console.error('Failed to assign Admin role during seed-roles:', e); }
+        res.json({ ok: true });
+    } catch (e) { console.error('seed-roles error', e); res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// Admin: CRUD for llm_providers
+app.get('/api/admin/llm_providers', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM llm_providers ORDER BY priority ASC');
+        res.json(r.rows);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list llm providers' }); }
+});
+
+app.post('/api/admin/llm_providers', requireAdmin, async (req, res) => {
+    try {
+        const { id, provider_id, name, model, config, priority } = req.body;
+        if (id) {
+            const r = await pool.query('UPDATE llm_providers SET provider_id=$1, name=$2, model=$3, config=$4, priority=$5 WHERE id=$6 RETURNING *', [provider_id, name, model, config || {}, priority || 0, id]);
+            return res.json(r.rows[0]);
+        }
+        const r = await pool.query('INSERT INTO llm_providers (provider_id, name, model, config, priority) VALUES ($1,$2,$3,$4,$5) RETURNING *', [provider_id, name, model, config || {}, priority || 0]);
+        res.json(r.rows[0]);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save provider' }); }
+});
+
+// Roles & Permissions management endpoints
+app.get('/api/admin/roles', requireAdmin, async (req, res) => {
+    try { const r = await pool.query('SELECT * FROM roles ORDER BY id ASC'); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list roles' }); }
+});
+app.post('/api/admin/roles', requireAdmin, async (req, res) => {
+    try { const { id, name, description } = req.body; if (id) { const r = await pool.query('UPDATE roles SET name=$1, description=$2 WHERE id=$3 RETURNING *', [name, description, id]); return res.json(r.rows[0]); } const r = await pool.query('INSERT INTO roles (name, description) VALUES ($1,$2) RETURNING *', [name, description]); res.json(r.rows[0]); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save role' }); }
+});
+
+app.get('/api/admin/permissions', requireAdmin, async (req, res) => {
+    try { const r = await pool.query('SELECT * FROM permissions ORDER BY id ASC'); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list permissions' }); }
+});
+app.post('/api/admin/permissions', requireAdmin, async (req, res) => {
+    try { const { id, name, description } = req.body; if (id) { const r = await pool.query('UPDATE permissions SET name=$1, description=$2 WHERE id=$3 RETURNING *', [name, description, id]); return res.json(r.rows[0]); } const r = await pool.query('INSERT INTO permissions (name, description) VALUES ($1,$2) RETURNING *', [name, description]); res.json(r.rows[0]); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save permission' }); }
+});
+
+app.post('/api/admin/roles/assign', requireAdmin, async (req, res) => {
+    try { const { userId, roleId } = req.body; await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign role' }); }
+});
+
+app.post('/api/admin/roles/unassign', requireAdmin, async (req, res) => {
+    try { const { userId, roleId } = req.body; await pool.query('DELETE FROM user_roles WHERE user_id=$1 AND role_id=$2', [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unassign role' }); }
+});
+
+app.get('/api/admin/user_roles', requireAdmin, async (req, res) => {
+    try { const userId = req.query.userId; if (!userId) return res.status(400).json({ error: 'Missing userId' }); const r = await pool.query('SELECT ur.role_id, r.name FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [userId]); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list user roles' }); }
+});
+
+app.post('/api/admin/role_permissions', requireAdmin, async (req, res) => {
+    try { const { roleId, permissionId } = req.body; await pool.query('INSERT INTO role_permissions (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [roleId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign permission to role' }); }
+});
+
+// Remove a permission from a role
+app.post('/api/admin/role_permissions/remove', requireAdmin, async (req, res) => {
+    try { const { roleId, permissionId } = req.body; await pool.query('DELETE FROM role_permissions WHERE role_id=$1 AND permission_id=$2', [roleId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to remove permission from role' }); }
+});
+
+// List permissions assigned to a role
+app.get('/api/admin/role_permissions', requireAdmin, async (req, res) => {
+    try {
+        const roleId = req.query.roleId;
+        if (!roleId) return res.status(400).json({ error: 'Missing roleId' });
+        const r = await pool.query('SELECT p.* FROM role_permissions rp JOIN permissions p ON rp.permission_id = p.id WHERE rp.role_id = $1 ORDER BY p.id', [roleId]);
+        res.json(r.rows);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list role permissions' }); }
+});
+
+// Roles with their permissions (convenience endpoint)
+app.get('/api/admin/roles_with_perms', requireAdmin, async (req, res) => {
+    try {
+        const rolesRes = await pool.query('SELECT * FROM roles ORDER BY id');
+        const out = [];
+        for (const r of rolesRes.rows) {
+            const permsRes = await pool.query('SELECT p.* FROM role_permissions rp JOIN permissions p ON rp.permission_id = p.id WHERE rp.role_id = $1 ORDER BY p.id', [r.id]);
+            out.push({ ...r, permissions: permsRes.rows });
+        }
+        res.json(out);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to fetch roles with permissions' }); }
+});
 
 // Sync questions from either a form-definition object or a flat questions array into the `questions` table
 async function syncQuestions(activityId, formDefOrQuestions) {
@@ -209,8 +632,10 @@ async function syncQuestions(activityId, formDefOrQuestions) {
                 const status = q.status || 'Active';
                 const options = q.options ? JSON.stringify(q.options) : null;
                 const metadata = q.metadata ? JSON.stringify(q.metadata) : null;
-                const createdBy = q.createdBy || q.created_by || null;
-                await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdBy]);
+                let createdBy = q.createdBy || q.created_by || null;
+                // coerce createdBy to integer id or null to avoid invalid input syntax errors
+                const createdByParam = (createdBy === null || createdBy === undefined) ? null : (Number.isInteger(Number(createdBy)) ? Number(createdBy) : null);
+                await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdByParam]);
             }
             return;
         }
@@ -232,8 +657,9 @@ async function syncQuestions(activityId, formDefOrQuestions) {
                     const status = q.status || 'Active';
                     const options = q.options ? JSON.stringify(q.options) : null;
                     const metadata = q.metadata ? JSON.stringify(q.metadata) : null;
-                    const createdBy = q.createdBy || null;
-                    await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdBy]);
+                    let createdBy = q.createdBy || null;
+                    const createdByParam = (createdBy === null || createdBy === undefined) ? null : (Number.isInteger(Number(createdBy)) ? Number(createdBy) : null);
+                    await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdByParam]);
                 }
             }
         }
@@ -312,7 +738,8 @@ app.get('/api/current_user', async (req, res) => {
                 email: u.email,
                 role: u.role,
                 status: u.status,
-                facilityId: u.facility_id
+                facilityId: u.facility_id,
+                profileImage: u.profile_image || null
             });
         } else {
             res.send(null);
@@ -374,7 +801,7 @@ app.get('/api/activities', async (req, res) => {
             startDate: row.start_date,
             endDate: row.end_date,
             responseType: row.response_type || row.responsetype || null,
-            // form_definition removed; questions are normalized in `questions` table
+            formDefinition: row.form_definition || null,
         }));
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
@@ -410,8 +837,36 @@ app.put('/api/activities/:id/form', async (req, res) => {
     try {
         // No form_definition column to update; sync the provided questions into questions table
         await syncQuestions(req.params.id, questions || []);
+        // Build a compact form_definition grouping by page_name and section_name
+        const pagesMap = {};
+        for (const q of (questions || [])) {
+            const page = q.pageName || q.page_name || q.page || 'Page 1';
+            const section = q.sectionName || q.section_name || q.section || 'Section 1';
+            pagesMap[page] = pagesMap[page] || {};
+            pagesMap[page][section] = pagesMap[page][section] || [];
+            // keep necessary fields for formDefinition
+            pagesMap[page][section].push({
+                id: q.id,
+                questionText: q.questionText || q.question_text || q.text || null,
+                questionHelper: q.questionHelper || q.question_helper || null,
+                answerType: q.answerType || q.answer_type || null,
+                columnSize: q.columnSize || q.column_size || null,
+                required: q.required || false,
+                status: q.status || 'Active',
+                options: q.options || null,
+                metadata: q.metadata || null,
+                fieldName: q.fieldName || q.field_name || null
+            });
+        }
+        const pages = Object.entries(pagesMap).map(([pName, sectionsObj], idx) => ({
+            id: `page${idx + 1}`,
+            name: pName,
+            sections: Object.entries(sectionsObj).map(([sName, qs], sidx) => ({ id: `sec${sidx + 1}`, name: sName, questions: qs }))
+        }));
+        const formDefinition = { id: `fd-${req.params.id}`, activityId: Number(req.params.id), pages };
+        await pool.query('UPDATE activities SET form_definition = $1 WHERE id = $2', [formDefinition, req.params.id]);
         const updated = (await pool.query('SELECT * FROM activities WHERE id = $1', [req.params.id])).rows[0];
-        res.json(updated);
+        res.json({ ...updated, formDefinition: updated.form_definition });
     } catch (e) { res.status(500).send(e.message); }
 });
 
@@ -463,7 +918,8 @@ app.get('/api/users', async (req, res) => {
         const mapped = result.rows.map(r => ({
             ...r,
             firstName: r.first_name,
-            lastName: r.last_name
+            lastName: r.last_name,
+            profileImage: r.profile_image || null
         }));
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
@@ -471,19 +927,19 @@ app.get('/api/users', async (req, res) => {
 
 // Create or update user
 app.post('/api/users', async (req, res) => {
-    const { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId } = req.body;
+    const { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId, profileImage } = req.body;
     try {
         if (id) {
             const result = await pool.query(
-                'UPDATE users SET first_name=$1, last_name=$2, email=$3, role=$4, status=$5, password=$6, facility_id=$7 WHERE id=$8 RETURNING *',
-                [firstName, lastName, email, role, status, password || null, facilityId || null, id]
+                'UPDATE users SET first_name=$1, last_name=$2, email=$3, role=$4, status=$5, password=$6, facility_id=$7, profile_image=$8 WHERE id=$9 RETURNING *',
+                [firstName, lastName, email, role, status, password || null, facilityId || null, profileImage || null, id]
             );
             const u = result.rows[0];
             res.json({ ...u, firstName: u.first_name, lastName: u.last_name });
         } else {
             const result = await pool.query(
-                'INSERT INTO users (first_name, last_name, email, role, status, password, facility_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-                [firstName, lastName, email, role, status, password || null, facilityId || null]
+                'INSERT INTO users (first_name, last_name, email, role, status, password, facility_id, profile_image) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+                [firstName, lastName, email, role, status, password || null, facilityId || null, profileImage || null]
             );
             const u = result.rows[0];
             res.json({ ...u, firstName: u.first_name, lastName: u.last_name });

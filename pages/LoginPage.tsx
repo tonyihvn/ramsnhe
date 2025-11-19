@@ -3,11 +3,13 @@ import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
 import { UserCircleIcon } from '@heroicons/react/24/outline';
+import { useTheme } from '../hooks/useTheme';
 
 const LoginPage: React.FC = () => {
   const { login } = useMockData();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const { settings } = useTheme();
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -24,7 +26,7 @@ const LoginPage: React.FC = () => {
             </svg>
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Sign in to IntelliForm
+            Sign in to {settings?.logoText || ''}
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
             Enter your email and password to sign in.
@@ -32,8 +34,8 @@ const LoginPage: React.FC = () => {
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
-            <MInput id="email" name="email" type="email" label="Email" value={email} onChange={v => setEmail(v)} placeholder="Email address" />
-            <MInput id="password" name="password" type="password" label="Password" value={password} onChange={v => setPassword(v)} placeholder="Password" />
+            <MInput id="email" name="email" type="email" label="Email" value={email} onChange={v => setEmail(v)} placeholder="Email address" class="active" />
+            <MInput id="password" name="password" type="password" label="Password" value={password} onChange={v => setPassword(v)} placeholder="Password" class="active" />
           </div>
 
           <div>

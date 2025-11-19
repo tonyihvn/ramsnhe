@@ -10,6 +10,8 @@ type ThemeSettings = {
     navbarBg?: string;
     logoDataUrl?: string | null;
     logoText?: string;
+    fontSize?: string;
+    logoWidth?: string;
 };
 
 const DEFAULT: ThemeSettings = {
@@ -22,6 +24,8 @@ const DEFAULT: ThemeSettings = {
     , navbarBg: '#ffffff',
     logoDataUrl: null,
     logoText: 'DQAPlus'
+    , fontSize: '14px'
+    , logoWidth: '100%'
 };
 
 const STORAGE_KEY = 'intelliform_theme_settings_v1';
@@ -51,7 +55,11 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         root.style.setProperty('--logo-color', settings.logoColor);
         root.style.setProperty('--app-text-color', settings.textColor);
         root.style.setProperty('--app-font-family', settings.fontFamily);
+        root.style.setProperty('--app-font-size', (settings as any).fontSize || '14px');
+        root.style.setProperty('--logo-width', (settings as any).logoWidth || '40px');
         root.style.setProperty('--navbar-bg', settings.navbarBg || '#ffffff');
+        // Apply absolute font-size to root so most elements scale if they don't reference the CSS var
+        try { root.style.fontSize = (settings as any).fontSize || '14px'; } catch (e) { }
         if (settings.logoDataUrl) root.style.setProperty('--logo-image', `url(${settings.logoDataUrl})`);
         root.dataset.logoText = settings.logoText || '';
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (e) { }

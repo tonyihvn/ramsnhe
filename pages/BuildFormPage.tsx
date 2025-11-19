@@ -65,17 +65,6 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700">Field Name (machine-friendly)</label>
-          <input type="text" value={question.fieldName || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { fieldName: e.target.value })} className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.fieldName ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`} />
-          <p className="text-xs text-gray-500 mt-1">Used in computed formulas and exports. Use letters, numbers and underscores only.</p>
-          {errors?.fieldName && (
-            <p className="mt-1 text-xs text-red-600 flex items-center">
-              <ExclamationCircleIcon className="h-3 w-3 mr-1" />
-              {errors.fieldName}
-            </p>
-          )}
-        </div>
-        <div>
           <label className="block text-sm font-medium text-gray-700">
             Question Text <span className="text-red-500">*</span>
           </label>
@@ -105,6 +94,17 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
           )}
         </div>
         <div>
+          <label className="block text-sm font-medium text-gray-700">Field Name (machine-friendly)</label>
+          <input type="text" value={question.fieldName || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { fieldName: e.target.value })} className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.fieldName ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`} />
+          <p className="text-xs text-gray-500 mt-1">Used in computed formulas and exports. Use letters, numbers and underscores only.</p>
+          {errors?.fieldName && (
+            <p className="mt-1 text-xs text-red-600 flex items-center">
+              <ExclamationCircleIcon className="h-3 w-3 mr-1" />
+              {errors.fieldName}
+            </p>
+          )}
+        </div>
+        <div>
           <label className="block text-sm font-medium text-gray-700">Helper Text</label>
           <input type="text" value={question.questionHelper || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { questionHelper: e.target.value })} className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md" />
         </div>
@@ -119,7 +119,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700">Required</label>
-          <div className="mt-1">
+          <div className="mt-1 min-h-[38px]">
             <label className="inline-flex items-center">
               <input type="checkbox" checked={!!question.required} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { required: e.target.checked })} className="mr-2" />
               <span className="text-sm text-gray-700">This question is required</span>
@@ -195,7 +195,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 const BuildFormPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
-  const { getActivity, getFormDefinition, saveFormDefinition } = useMockData();
+  const { getActivity, getFormDefinition, saveFormDefinition, currentUser } = useMockData();
   const [activity, setActivity] = useState(getActivity(activityId || ''));
   const [formDef, setFormDef] = useState<FormDefinition | undefined>(getFormDefinition(activityId || ''));
   const [isSaved, setIsSaved] = useState<boolean>(false);
@@ -361,7 +361,7 @@ const BuildFormPage: React.FC = () => {
       columnSize: 12,
       required: false,
       status: 'Active',
-      createdBy: 'user1',
+      createdBy: currentUser?.id ?? null,
       fieldName: makeFieldName('New Question') + `_${Date.now()}`,
       options: (type === AnswerType.DROPDOWN || type === AnswerType.RADIO || type === AnswerType.CHECKBOX) ? [{ label: 'Option 1', value: '1' }] : undefined,
       metadata: (type === AnswerType.FILE) ? { allowedFileTypes: ['image/*', '.pdf'] } : undefined,
@@ -422,7 +422,7 @@ const BuildFormPage: React.FC = () => {
           columnSize: Number(row['ColumnSize'] || row['columnSize'] || 12),
           required: String(row['Required'] || row['required'] || '').toLowerCase() === 'true',
           status: 'Active',
-          createdBy: 'import',
+          createdBy: null,
           fieldName: makeFieldName(row['Question'] || row['question'] || `q_${Math.random().toString(36).substr(2, 4)}`),
           options: row['Options'] ? String(row['Options']).split(',').map((o: string) => {
             const parts = String(o).split(':').map(p => p.trim());
@@ -460,7 +460,7 @@ const BuildFormPage: React.FC = () => {
             <ArrowLeftIcon className="h-6 w-6" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">Form Builder</h1>
+            <h1 className="text-2xl font-bold text-gray-800">{isSaved ? 'Edit Form' : 'Form Builder'}</h1>
             <p className="text-sm text-gray-500">{activity.title}</p>
           </div>
         </div>

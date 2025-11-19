@@ -30,6 +30,14 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void }> = 
     <header className="relative bg-white shadow-sm z-10">
       <div className="px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
+          {/* Mobile: show centered logo above menu row */}
+          <div className="md:hidden absolute left-0 right-0 top-0 flex items-center justify-center py-1">
+            {settings.logoDataUrl ? (
+              <img src={settings.logoDataUrl} alt="logo" style={{ height: 'var(--logo-width)', maxHeight: 48, objectFit: 'contain' }} />
+            ) : (
+              <div style={{ color: 'var(--logo-color)', fontWeight: 700, fontSize: 'var(--app-font-size)' }}>{settings.logoText}</div>
+            )}
+          </div>
           <div className="flex items-center space-x-4">
             <button onClick={onToggleSidebar} className="p-2 rounded-md text-gray-600 hover:bg-gray-100 md:hidden">
               <Bars3Icon className="h-6 w-6" />

@@ -4,6 +4,7 @@ import { useMockData } from '../hooks/useMockData';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
+import RichTextEditor from '../components/ui/RichTextEditor';
 import { PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { Activity } from '../types';
 
@@ -86,7 +87,7 @@ const ActivitiesPage: React.FC = () => {
                         {(() => {
                           const hasForm = Boolean(activity.formDefinition && Array.isArray(activity.formDefinition.pages) && activity.formDefinition.pages.some(p => p.sections && p.sections.some(s => (s.questions || []).length > 0)));
                           return (
-                            <button onClick={() => navigate(`/activities/build/${activity.id}`)} className="text-indigo-600 hover:text-indigo-900" title={hasForm ? 'Update Form' : 'Build Form'}>
+                            <button onClick={() => navigate(`/activities/build/${activity.id}`)} className="text-indigo-600 hover:text-indigo-900" title={hasForm ? 'Edit Form' : 'Build Form'}>
                               <DocumentTextIcon className="h-5 w-5" />
                             </button>
                           );
@@ -146,8 +147,7 @@ const ActivitiesPage: React.FC = () => {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Details</label>
-            <textarea className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-              value={currentActivity.details || ''} onChange={(e) => setCurrentActivity({ ...currentActivity, details: e.target.value })} />
+            <RichTextEditor value={currentActivity.details || ''} onChange={(html) => setCurrentActivity({ ...currentActivity, details: html })} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
