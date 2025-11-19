@@ -1,6 +1,8 @@
-Question,Type,Helper Text,Options,Required,ColumnSize
-What is your name?,textbox,, ,true,12
-What is your age?,number,, ,true,6
-Gender,dropdown,,1:Male,2:Female,3:Other,true,6
-Date of Birth,date,, ,false,6
-Comments,textarea,, ,false,12
+Question,Type,Helper Text,Options,Required,ColumnSize,field_name,calculation
+What is your name?,textbox,,,true,12,,
+What is your age?,number,,,true,6,age,
+Gender,dropdown,,Nigeria:FCT|Togo:Lome,true,6,,
+Date of Birth,date,,,false,6,,
+Score,number,,,false,6,score,
+Total Score,computed,,,false,6,total_score,age+score*2
+Comments,textarea,,,false,12,,

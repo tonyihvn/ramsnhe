@@ -55,6 +55,17 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
         <div className="flex items-center space-x-2">
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-200 px-2 py-0.5 rounded">{question.answerType}</span>
           {question.required && <span className="ml-2 text-xs font-semibold text-red-600 bg-red-100 px-2 py-0.5 rounded">Required</span>}
+          {/* Group Name Input */}
+          <div className="ml-4 flex items-center gap-1">
+            <label className="text-xs text-gray-500">Group:</label>
+            <input
+              type="text"
+              className="border px-1 py-0.5 rounded text-xs w-24"
+              value={question.questionGroup || ''}
+              onChange={e => updateQuestion(pIdx, sIdx, qIdx, { questionGroup: e.target.value })}
+              placeholder="Group name"
+            />
+          </div>
           <div className="flex flex-col">
             <button type="button" onClick={() => moveQuestion(pIdx, sIdx, qIdx, 'up')} disabled={isFirst} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowUpIcon className="h-4 w-4" /></button>
             <button type="button" onClick={() => moveQuestion(pIdx, sIdx, qIdx, 'down')} disabled={isLast} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowDownIcon className="h-4 w-4" /></button>
@@ -187,6 +198,42 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
           }} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300" />
         </div>
       )}
+      {/* Display reviewers_comment Checkbox, label, and score */}
+      <div className="mt-4 flex flex-col gap-2">
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            id={`reviewers_comment_${question.id}`}
+            checked={!!(question.metadata && question.metadata.displayReviewersComment)}
+            onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), displayReviewersComment: e.target.checked } })}
+          />
+          <span className="text-xs text-gray-700">Display reviewer comment field</span>
+        </label>
+        {question.metadata && question.metadata.displayReviewersComment && (
+          <div className="flex items-center gap-2 mt-2">
+            <label className="text-xs text-gray-500">Reviewer Comment Label:</label>
+            <input
+              type="text"
+              className="border px-1 py-0.5 rounded text-xs w-40"
+              value={question.metadata.reviewerCommentLabel || "Reviewer's Comment"}
+              onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...question.metadata, reviewerCommentLabel: e.target.value } })}
+              placeholder="Reviewer's Comment"
+            />
+          </div>
+        )}
+        {/* Score box always visible */}
+        <div className="flex items-center gap-2 mt-2">
+          <label className="text-xs text-gray-500">Score:</label>
+          <input
+            type="number"
+            className="border px-1 py-0.5 rounded text-xs w-20"
+            value={question.metadata && question.metadata.score !== undefined ? question.metadata.score : ''}
+            onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...question.metadata, score: e.target.value === '' ? undefined : Number(e.target.value) } })}
+            placeholder="Score"
+            min={0}
+          />
+        </div>
+      </div>
     </div>
   );
 };
@@ -411,24 +458,41 @@ const BuildFormPage: React.FC = () => {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const newQuestions: Question[] = data.map((row: any) => ({
-          id: `q${Math.random().toString(36).substr(2, 9)}`,
-          activityId: activityId || '',
-          pageName: formDef.pages[activePageIndex].name,
-          sectionName: formDef.pages[activePageIndex].sections[0].name, // Default to first section of active page
-          questionText: row['Question'] || row['question'] || 'Untitled',
-          questionHelper: row['Helper Text'] || row['HelperText'] || row['helper'] || undefined,
-          answerType: (row['Type'] && Object.values(AnswerType).includes(row['Type'])) ? row['Type'] as AnswerType : (row['type'] && Object.values(AnswerType).includes(row['type'])) ? row['type'] as AnswerType : AnswerType.TEXT,
-          columnSize: Number(row['ColumnSize'] || row['columnSize'] || 12),
-          required: String(row['Required'] || row['required'] || '').toLowerCase() === 'true',
-          status: 'Active',
-          createdBy: null,
-          fieldName: makeFieldName(row['Question'] || row['question'] || `q_${Math.random().toString(36).substr(2, 4)}`),
-          options: row['Options'] ? String(row['Options']).split(',').map((o: string) => {
-            const parts = String(o).split(':').map(p => p.trim());
-            return { label: parts[1] || parts[0], value: parts[0] };
-          }) : undefined
-        }));
+        const newQuestions: Question[] = data.map((row: any) => {
+          const answerType = (row['Type'] && Object.values(AnswerType).includes(row['Type'])) ? row['Type'] as AnswerType : (row['type'] && Object.values(AnswerType).includes(row['type'])) ? row['type'] as AnswerType : AnswerType.TEXT;
+          // Parse options: Nigeria:FCT|Togo:Lome
+          let options = undefined;
+          if (row['Options'] && [AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(answerType)) {
+            options = String(row['Options'])
+              .split('|')
+              .map((o: string) => {
+                const parts = o.split(':');
+                return { value: (parts[0] || '').trim(), label: (parts[1] || parts[0] || '').trim() };
+              });
+          }
+          // Computed fields: use field_name and calculation columns
+          let fieldName = row['field_name'] || row['Field Name'] || row['FieldName'] || makeFieldName(row['Question'] || row['question'] || `q_${Math.random().toString(36).substr(2, 4)}`);
+          let metadata = undefined;
+          if (answerType === AnswerType.COMPUTED) {
+            metadata = { computedFormula: row['calculation'] || row['Calculation'] || '' };
+          }
+          return {
+            id: `q${Math.random().toString(36).substr(2, 9)}`,
+            activityId: activityId || '',
+            pageName: formDef.pages[activePageIndex].name,
+            sectionName: formDef.pages[activePageIndex].sections[0].name,
+            questionText: row['Question'] || row['question'] || 'Untitled',
+            questionHelper: row['Helper Text'] || row['HelperText'] || row['helper'] || undefined,
+            answerType,
+            columnSize: Number(row['ColumnSize'] || row['columnSize'] || 12),
+            required: String(row['Required'] || row['required'] || '').toLowerCase() === 'true',
+            status: 'Active',
+            createdBy: null,
+            fieldName,
+            options,
+            metadata
+          };
+        });
 
         if (newQuestions.length > 0) {
           const newFormDef = { ...formDef };
@@ -569,11 +633,13 @@ const BuildFormPage: React.FC = () => {
           <p>Upload an Excel file (.xlsx) or CSV to bulk-create questions. The sheet should include a header row. Supported columns (case-insensitive):</p>
           <ul className="list-disc ml-6">
             <li><strong>Question</strong> (required) — question text.</li>
-            <li><strong>Type</strong> — one of: textbox, textarea, number, date, time, dropdown, radio, checkbox, file.</li>
+            <li><strong>Type</strong> — one of: textbox, textarea, number, date, time, dropdown, radio, checkbox, file, computed.</li>
             <li><strong>Helper Text</strong> — optional helper or hint text.</li>
-            <li><strong>Options</strong> — for dropdown/radio/checkbox; comma-separated. Each option may be either <code>value:label</code> or just <code>label</code>. Example: <code>1:Yes,0:No,Maybe</code></li>
+            <li><strong>Options</strong> — for dropdown/radio/checkbox; use <code>value:label|value:label</code> (pipe-separated). Example: <code>Nigeria:FCT|Togo:Lome</code></li>
             <li><strong>Required</strong> — "true" or "false" (optional). Marks the question as mandatory when true.</li>
             <li><strong>ColumnSize</strong> — numeric; recommended values: 12 (full), 6 (half), 4 (third), 3 (quarter). Default is 12.</li>
+            <li><strong>field_name</strong> — (for computed only) non-spaced field name to reference in formulas.</li>
+            <li><strong>calculation</strong> — (for computed only) mathematical formula using field names, obeying BODMAS. Example: <code>age + score * 2</code></li>
           </ul>
           <a
             href="/form_template.csv"
@@ -585,7 +651,7 @@ const BuildFormPage: React.FC = () => {
           </a>
           <p className="text-xs text-gray-500">When importing, questions will be added to the currently active page and the first section of that page. You can edit page/section assignments after import.</p>
           <input type="file" accept=".xlsx,.csv" onChange={handleFileImport} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
-          <div className="text-xs text-gray-500">Notes: empty rows are ignored. For option values, prefer <code>value:label</code> to ensure consistent values. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
+          <div className="text-xs text-gray-500">Notes: empty rows are ignored. For option values, use <code>value:label|value:label</code> (pipe-separated). For computed fields, provide <code>field_name</code> and <code>calculation</code> columns. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
         </div>
       </Modal>
 

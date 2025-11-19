@@ -20,15 +20,31 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
     const rootRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
-        // Initialize selects when options or value change
+        // Initialize selects and datepickers when options, value, or type change
         try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const M = require('materialize-css');
             if (rootRef.current) {
+                // Initialize selects
                 const selects = rootRef.current.querySelectorAll('select');
                 selects.forEach((s) => {
                     // @ts-ignore
                     M.FormSelect.init(s);
+                });
+                // Initialize datepickers
+                const datepickers = rootRef.current.querySelectorAll('input.datepicker');
+                datepickers.forEach((d) => {
+                    // @ts-ignore
+                    M.Datepicker.init(d, {
+                        format: 'yyyy-mm-dd',
+                        autoClose: true,
+                        showClearBtn: true,
+                        defaultDate: value ? new Date(value) : undefined,
+                        setDefaultDate: !!value,
+                        onSelect: (date: Date) => {
+                            if (onChange) onChange(date.toISOString().slice(0, 10));
+                        },
+                    });
                 });
             }
             // update text fields so labels float
@@ -36,7 +52,7 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
         } catch (err) {
             // no-op
         }
-    }, [options, value]);
+    }, [options, value, type]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         if (!onChange) return;
@@ -101,6 +117,14 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
     }
 
     // default input
+    if (type === 'date') {
+        return (
+            <div ref={rootRef} className={`input-field ${className || ''}`}>
+                <input id={inputId} type="text" value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="datepicker validate" />
+                {label && <label htmlFor={inputId}>{label}{required ? '*' : ''}</label>}
+            </div>
+        );
+    }
     return (
         <div ref={rootRef} className={`input-field ${className || ''}`}>
             <input id={inputId} type={type} value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="validate" />

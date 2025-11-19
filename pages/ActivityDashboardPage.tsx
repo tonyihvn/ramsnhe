@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import DataTable from '../components/ui/DataTable';
 import { Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -42,17 +43,30 @@ const ActivityDashboardPage: React.FC = () => {
 
   const { activity, questions, reports, answersByQuestion, uploadedDocs } = data;
 
+  // Utility to strip HTML tags
+  function stripHtml(html) {
+    if (!html) return '';
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    return div.textContent || div.innerText || '';
+  }
+
   const handleDownloadPdf = () => {
     // Simple client-side PDF/print: open print dialog for the dashboard
     window.print();
   };
 
+  const standaloneUrl = `${window.location.origin}/standalone-form/${activity.id}`;
   return (
     <div className="space-y-6 pb-20">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">{activity.title} — Collected Data</h1>
-          <p className="text-sm text-gray-500">{activity.details}</p>
+          <p className="text-sm text-gray-500">{stripHtml(activity.details)}</p>
+          <div className="mt-2">
+            <span className="text-xs text-gray-600">Shareable Form Link: </span>
+            <a href={standaloneUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 underline break-all">{standaloneUrl}</a>
+          </div>
         </div>
         <div className="space-x-2">
           <Button onClick={() => navigate('/activities')} variant="secondary">Back</Button>
@@ -111,28 +125,26 @@ const ActivityDashboardPage: React.FC = () => {
 
       <Card>
         <h2 className="text-lg font-semibold mb-2">All Collected Reports</h2>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50"><tr>
-              <th className="px-4 py-2 text-left">Report ID</th>
-              <th className="px-4 py-2 text-left">Submitted</th>
-              <th className="px-4 py-2 text-left">Facility</th>
-              <th className="px-4 py-2 text-left">User</th>
-              <th className="px-4 py-2 text-left">Status</th>
-            </tr></thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {reports.map((r: any) => (
-                <tr key={r.id} className="cursor-pointer hover:bg-gray-50" onClick={() => navigate(`/reports/${r.id}`)}>
-                  <td className="px-4 py-2 text-sm">{r.id}</td>
-                  <td className="px-4 py-2 text-sm">{new Date(r.submission_date).toLocaleString()}</td>
-                  <td className="px-4 py-2 text-sm">{r.facility_id || '—'}</td>
-                  <td className="px-4 py-2 text-sm">{r.user_id || '—'}</td>
-                  <td className="px-4 py-2 text-sm">{r.status || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* DataTable with column-level filter */}
+        {(() => {
+          const columns = [
+            { key: 'id', label: 'Report ID' },
+            { key: 'submission_date', label: 'Submitted' },
+            { key: 'facility_id', label: 'Facility' },
+            { key: 'user_id', label: 'User' },
+            { key: 'status', label: 'Status' },
+            { key: 'reviewers_report', label: "Reviewer's Report" },
+          ];
+          const data = reports.map((r: any) => ({
+            id: r.id,
+            submission_date: new Date(r.submission_date).toLocaleString(),
+            facility_id: r.facility_id || '—',
+            user_id: r.user_id || '—',
+            status: r.status || '—',
+            reviewers_report: stripHtml(r.reviewers_report),
+          }));
+          return <DataTable columns={columns} data={data} onCellEdit={undefined} />;
+        })()}
       </Card>
 
       <Card>

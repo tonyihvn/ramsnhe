@@ -1,3 +1,63 @@
+// API: Get all submissions for an activity (Power BI friendly)
+app.get('/api/activity/:activityId/submissions', async (req, res) => {
+    const { activityId } = req.params;
+    try {
+        const { rows } = await pool.query(
+            `SELECT ar.*, u.first_name, u.last_name, u.email, f.name as facility_name
+             FROM activity_reports ar
+             LEFT JOIN users u ON ar.user_id = u.id
+             LEFT JOIN facilities f ON ar.facility_id = f.id
+             WHERE ar.activity_id = $1
+             ORDER BY ar.submission_date DESC`,
+            [activityId]
+        );
+        res.json(rows);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Failed to fetch submissions' });
+    }
+});
+
+// API: Get a single submission for an activity by user or facility
+app.get('/api/activity/:activityId/submission', async (req, res) => {
+    const { activityId } = req.params;
+    const { userId, facilityId } = req.query;
+    try {
+        let where = 'ar.activity_id = $1';
+        const params = [activityId];
+        if (userId) { where += ' AND ar.user_id = $2'; params.push(userId); }
+        if (facilityId) { where += userId ? ' AND ar.facility_id = $3' : ' AND ar.facility_id = $2'; params.push(facilityId); }
+        const { rows } = await pool.query(
+            `SELECT ar.*, u.first_name, u.last_name, u.email, f.name as facility_name
+             FROM activity_reports ar
+             LEFT JOIN users u ON ar.user_id = u.id
+             LEFT JOIN facilities f ON ar.facility_id = f.id
+             WHERE ${where}
+             ORDER BY ar.submission_date DESC
+             LIMIT 1`,
+            params
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
+        res.json(rows[0]);
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Failed to fetch submission' });
+    }
+});
+// LLM SQL generation endpoint (mock or connect to your LLM logic)
+app.post('/api/llm/generate_sql', async (req, res) => {
+    try {
+        const { prompt } = req.body;
+        if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+        // TODO: Replace this mock with your LLM integration logic
+        // Example: call Ollama, OpenAI, or your FastAPI chroma service here
+        // For now, just echo a fake SQL
+        return res.json({ sql: `-- SQL generated for prompt: ${prompt}\nSELECT * FROM my_table WHERE ...;` });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Failed to generate SQL' });
+    }
+});
 import express from 'express';
 import { Pool } from 'pg';
 import cors from 'cors';

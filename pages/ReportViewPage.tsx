@@ -99,36 +99,29 @@ const ReportViewPage: React.FC = () => {
 
       <Card>
         <h2 className="text-lg font-semibold mb-2">Submitted Answers</h2>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50"><tr>
-              <th className="px-4 py-2 text-left">Page</th>
-              <th className="px-4 py-2 text-left">Section</th>
-              <th className="px-4 py-2 text-left">Question</th>
-              <th className="px-4 py-2 text-left">Answer</th>
-              <th className="px-4 py-2 text-left">Reviewer Comment</th>
-              <th className="px-4 py-2 text-left">Followup</th>
-            </tr></thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {answers.map(a => {
-                const q = questions.find((x: any) => String(x.id) === String(a.question_id)) || {};
-                const questionText = q.questionText || q.question_text || a.question_id;
-                const pageName = q.pageName || q.page_name || '';
-                const sectionName = q.sectionName || q.section_name || '';
-                return (
-                  <tr key={a.id}>
-                    <td className="px-4 py-2 text-sm">{pageName}</td>
-                    <td className="px-4 py-2 text-sm">{sectionName}</td>
-                    <td className="px-4 py-2 text-sm">{questionText}</td>
-                    <td className="px-4 py-2 text-sm">{typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value)}</td>
-                    <td className="px-4 py-2 text-sm">{a.reviewers_comment || '—'}</td>
-                    <td className="px-4 py-2 text-sm">{a.quality_improvement_followup || '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        {/* DataTable with column-level filter */}
+        {(() => {
+          const columns = [
+            { key: 'page', label: 'Page' },
+            { key: 'section', label: 'Section' },
+            { key: 'question', label: 'Question' },
+            { key: 'answer', label: 'Answer' },
+            { key: 'reviewers_comment', label: 'Reviewer Comment' },
+            { key: 'quality_improvement_followup', label: 'Followup' },
+          ];
+          const data = answers.map(a => {
+            const q = questions.find((x: any) => String(x.id) === String(a.question_id)) || {};
+            return {
+              page: q.pageName || q.page_name || '',
+              section: q.sectionName || q.section_name || '',
+              question: q.questionText || q.question_text || a.question_id,
+              answer: typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value),
+              reviewers_comment: a.reviewers_comment || '—',
+              quality_improvement_followup: a.quality_improvement_followup || '—',
+            };
+          });
+          return <DataTable columns={columns} data={data} />;
+        })()}
       </Card>
 
       <div className="mt-6">
@@ -141,35 +134,92 @@ const ReportViewPage: React.FC = () => {
           <input className="border p-2 rounded" placeholder="Search files/columns" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         {uploadedDocs.length === 0 && <div className="text-sm text-gray-500">No uploaded files.</div>}
-        {uploadedDocs.map(d => {
-          const rows = Array.isArray(d.file_content) ? d.file_content : [];
-          const colsSet = new Set<string>();
-          rows.forEach((r: any) => { if (r && typeof r === 'object') Object.keys(r).forEach(k => colsSet.add(k)); });
-          const cols = Array.from(colsSet).map(c => ({ key: c, label: c, editable: true }));
-          const handleCellEdit = async (rowIndex: number, key: string, newValue: any) => {
-            try {
-              const res = await fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ rowIndex, colKey: key, newValue }) });
-              if (res.ok) {
-                const json = await res.json();
-                setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content } : x));
-              } else {
-                console.error('Failed to save cell', await res.text());
-              }
-            } catch (e) { console.error(e); }
-          };
-
-          return (
-            <div key={d.id} className="mt-4">
-              <div className="flex justify-between items-center mb-2">
-                <div>
-                  <div className="font-medium">{d.filename || 'Uploaded file'}</div>
-                  <div className="text-xs text-gray-500">Uploaded: {new Date(d.created_at).toLocaleString()}</div>
+        {/* Only show uploaded files for this report's facility/user */}
+        {(() => {
+          if (!report) return null;
+          const activityResponseType = (report.response_type || report.responseType || '').toLowerCase();
+          let filterKey = null, filterVal = null;
+          if (activityResponseType === 'facility') {
+            filterKey = 'facility_id'; filterVal = report.facility_id || report.facilityId;
+          } else if (activityResponseType === 'user') {
+            filterKey = 'user_id'; filterVal = report.user_id || report.userId;
+          }
+          const filteredDocs = uploadedDocs.filter((d: any) => {
+            if (!filterKey) return true;
+            return String(d[filterKey]) === String(filterVal);
+          });
+          return filteredDocs.map(d => {
+            const rows = Array.isArray(d.file_content) ? d.file_content : [];
+            const colsSet = new Set<string>();
+            rows.forEach((r: any) => { if (r && typeof r === 'object') Object.keys(r).forEach(k => colsSet.add(k)); });
+            const cols = Array.from(colsSet).map(c => ({ key: c, label: c, editable: true }));
+            const handleCellEdit = async (rowIndex: number, key: string, newValue: any) => {
+              try {
+                const res = await fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ rowIndex, colKey: key, newValue }) });
+                if (res.ok) {
+                  const json = await res.json();
+                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content } : x));
+                } else {
+                  console.error('Failed to save cell', await res.text());
+                }
+              } catch (e) { console.error(e); }
+            };
+            // Excel download handler
+            const handleDownloadExcel = () => {
+              import('xlsx').then(XLSX => {
+                const ws = XLSX.utils.json_to_sheet(rows);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+                XLSX.writeFile(wb, d.filename ? d.filename.replace(/\.[^.]+$/, '') + '.xlsx' : 'uploaded_file.xlsx');
+              });
+            };
+            // Add Row handler: infer types from first row or column names
+            const handleAddRow = () => {
+              const typeRow = rows[0] || {};
+              const newRow: Record<string, any> = {};
+              cols.forEach(col => {
+                const val = typeRow[col.key];
+                if (val === null || val === undefined || val === '') {
+                  newRow[col.key] = '';
+                } else if (typeof val === 'number') {
+                  newRow[col.key] = 0;
+                } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+                  newRow[col.key] = new Date().toISOString().slice(0, 10);
+                } else {
+                  newRow[col.key] = '';
+                }
+              });
+              const updatedRows = [...rows, newRow];
+              setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: updatedRows } : x));
+              fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ file_content: updatedRows })
+              }).then(async res => {
+                if (res.ok) {
+                  const json = await res.json();
+                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content } : x));
+                }
+              });
+            };
+            return (
+              <div key={d.id} className="mt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <div>
+                    <div className="font-medium">{d.filename || 'Uploaded file'}</div>
+                    <div className="text-xs text-gray-500">Uploaded: {new Date(d.created_at).toLocaleString()}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={handleAddRow}>Add Row</Button>
+                    <Button size="sm" variant="secondary" onClick={handleDownloadExcel}>Download to Excel</Button>
+                  </div>
                 </div>
+                <DataTable columns={cols} data={rows} onCellEdit={handleCellEdit} />
               </div>
-              <DataTable columns={cols} data={rows} onCellEdit={handleCellEdit} />
-            </div>
-          );
-        })}
+            );
+          });
+        })()}
       </Card>
     </div>
   );

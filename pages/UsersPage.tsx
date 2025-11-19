@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Card from '../components/ui/Card';
 import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
@@ -10,6 +10,15 @@ import { User } from '../types';
 
 const UsersPage: React.FC = () => {
   const { users, saveUser, deleteUser, currentUser, facilities } = useMockData();
+  const [allRoles, setAllRoles] = useState<{ id: number, name: string }[]>([]);
+  const [allPermissions, setAllPermissions] = useState<{ id: number, name: string }[]>([]);
+  useEffect(() => {
+    // Fetch roles and permissions from backend
+    fetch('/api/admin/roles', { credentials: 'include' })
+      .then(r => r.json()).then(setAllRoles).catch(() => setAllRoles([]));
+    fetch('/api/admin/permissions', { credentials: 'include' })
+      .then(r => r.json()).then(setAllPermissions).catch(() => setAllPermissions([]));
+  }, []);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentUserEdit, setCurrentUserEdit] = useState<Partial<User>>({});
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -20,7 +29,11 @@ const UsersPage: React.FC = () => {
   const openModal = (u?: User) => {
     setAvatarFile(null);
     setAvatarPreview(u?.profileImage || null);
-    setCurrentUserEdit(u || { firstName: '', lastName: '', email: '', role: 'Data Collector', status: 'Active', password: '', facilityId: undefined });
+    setCurrentUserEdit({
+      ...u,
+      assignedRoles: u?.assignedRoles || [],
+      assignedPermissions: u?.assignedPermissions || [],
+    } as any || { firstName: '', lastName: '', email: '', role: 'Data Collector', status: 'Active', password: '', facilityId: undefined, assignedRoles: [], assignedPermissions: [] });
     setIsModalOpen(true);
   };
 
@@ -50,7 +63,27 @@ const UsersPage: React.FC = () => {
       toSave.profileImage = avatarPreview;
     }
 
-    saveUser(toSave as User);
+    // Save roles/permissions assignments
+    const { assignedRoles, assignedPermissions, ...userData } = toSave as any;
+    saveUser(userData as User);
+    // Assign roles
+    if (assignedRoles && assignedRoles.length > 0) {
+      fetch('/api/admin/roles/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ userId: userData.id, roleIds: assignedRoles })
+      });
+    }
+    // Assign permissions
+    if (assignedPermissions && assignedPermissions.length > 0) {
+      fetch('/api/admin/permissions/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ userId: userData.id, permissionIds: assignedPermissions })
+      });
+    }
     setIsModalOpen(false);
   };
 
@@ -161,6 +194,48 @@ const UsersPage: React.FC = () => {
           <div>
             <MInput label="Role" type="select" value={currentUserEdit.role} onChange={v => setCurrentUserEdit({ ...currentUserEdit, role: v })}
               options={[{ value: 'Admin', label: 'Admin' }, { value: 'Form Builder', label: 'Form Builder' }, { value: 'Data Collector', label: 'Data Collector' }, { value: 'Viewer', label: 'Viewer' }, { value: 'Responder', label: 'Responder' }]} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign Roles</label>
+            <div className="flex flex-wrap gap-2">
+              {allRoles.map(r => (
+                <label key={r.id} className="inline-flex items-center text-xs">
+                  <input type="checkbox" checked={currentUserEdit.assignedRoles?.includes(r.id)}
+                    onChange={e => {
+                      const checked = e.target.checked;
+                      setCurrentUserEdit((prev: any) => ({
+                        ...prev,
+                        assignedRoles: checked
+                          ? [...(prev.assignedRoles || []), r.id]
+                          : (prev.assignedRoles || []).filter((id: number) => id !== r.id)
+                      }));
+                    }}
+                  />
+                  <span className="ml-1">{r.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign Permissions</label>
+            <div className="flex flex-wrap gap-2">
+              {allPermissions.map(p => (
+                <label key={p.id} className="inline-flex items-center text-xs">
+                  <input type="checkbox" checked={currentUserEdit.assignedPermissions?.includes(p.id)}
+                    onChange={e => {
+                      const checked = e.target.checked;
+                      setCurrentUserEdit((prev: any) => ({
+                        ...prev,
+                        assignedPermissions: checked
+                          ? [...(prev.assignedPermissions || []), p.id]
+                          : (prev.assignedPermissions || []).filter((id: number) => id !== p.id)
+                      }));
+                    }}
+                  />
+                  <span className="ml-1">{p.name}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div>
             <MInput label="Facility (optional)" type="select" value={currentUserEdit.facilityId || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, facilityId: v ? Number(v) : undefined })}

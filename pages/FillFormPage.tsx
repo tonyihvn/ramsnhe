@@ -68,18 +68,25 @@ const RenderQuestion = ({ question, value, onChange }: { question: Question, val
             return (
                 <div>
                     <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} />
-                    {fileVal && fileVal.dataUrl && (
+                    {fileVal && fileVal.dataUrl && fileVal.dataUrl !== '' && (
                         <div className="mt-2">
                             <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
-                            {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && (
+                            {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && fileVal.dataUrl && (
                                 <img src={fileVal.dataUrl} alt={fileVal.filename} className="mt-2 max-h-36 border rounded" />
                             )}
                         </div>
                     )}
                 </div>
             );
+        case AnswerType.COMPUTED:
+            // Show computed/calculated value as read-only output
+            return (
+                <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
+                    <span className="font-semibold">{question.questionText}:</span> <span>{value === undefined || value === null || value === '' ? <span className="italic text-gray-400">(no value)</span> : value}</span>
+                </div>
+            );
         default:
-            return <p className="text-sm text-gray-500">Not supported in this preview</p>;
+            return <p className="text-sm text-gray-500">Not supported</p>;
     }
 };
 
@@ -109,15 +116,21 @@ const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (upda
     );
 };
 
-const FillFormPage: React.FC = () => {
-    const { activityId } = useParams<{ activityId: string }>();
+interface FillFormPageProps {
+    activityIdOverride?: string;
+    standaloneMode?: boolean;
+}
+
+const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standaloneMode }) => {
+    const { activityId: activityIdParam } = useParams<{ activityId: string }>();
     const history = useNavigate();
+    const activityId = activityIdOverride || activityIdParam;
     const { getActivity, saveReport, currentUser, facilities, users } = useMockData();
     const activity = getActivity(activityId || '');
     const formDef: FormDefinition | undefined = activity?.formDefinition;
 
     // Redirect to login if not authenticated
-    if (!currentUser) return <Navigate to="/login" replace />;
+    if (!currentUser && !standaloneMode) return <Navigate to="/login" replace />;
 
     const [answers, setAnswers] = useState<Record<string, any>>({});
     const [formSubmitted, setFormSubmitted] = useState(false);
@@ -177,7 +190,7 @@ const FillFormPage: React.FC = () => {
         }
     };
 
-    // Recompute computed fields whenever answers change
+    // Recompute computed fields only when formDef changes or answers for non-computed fields change
     React.useEffect(() => {
         if (!formDef) return;
         // build fieldName -> value map from current answers
@@ -209,8 +222,14 @@ const FillFormPage: React.FC = () => {
         if (updated) {
             setAnswers(updated);
         }
+        // Only run when formDef changes or non-computed answers change
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [answers, formDef]);
+    }, [formDef, JSON.stringify(Object.fromEntries(Object.entries(answers).filter(([k]) => {
+        // Only include non-computed question answers in dependency
+        if (!formDef) return true;
+        for (const p of formDef.pages) for (const s of p.sections) for (const q of s.questions) if (q.id === k && q.answerType === AnswerType.COMPUTED) return false;
+        return true;
+    })))]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -315,12 +334,19 @@ const FillFormPage: React.FC = () => {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center space-x-4">
-                <button onClick={() => history('/activities')} className="text-gray-500 hover:text-gray-700">
-                    <ArrowLeftIcon className="h-6 w-6" />
-                </button>
-                <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
-            </div>
+            {!standaloneMode && (
+                <div className="flex items-center space-x-4">
+                    <button onClick={() => history('/activities')} className="text-gray-500 hover:text-gray-700">
+                        <ArrowLeftIcon className="h-6 w-6" />
+                    </button>
+                    <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
+                </div>
+            )}
+            {standaloneMode && (
+                <div className="flex items-center justify-center">
+                    <h1 className="text-2xl font-bold text-gray-800">{activity.title}</h1>
+                </div>
+            )}
 
             {!formSubmitted ? (
                 <Card>
@@ -352,6 +378,19 @@ const FillFormPage: React.FC = () => {
                                                     <label className="block text-sm font-medium text-gray-700">{q.questionText} {q.required && <span className="text-red-500">*</span>}</label>
                                                     {q.questionHelper && <p className="text-xs text-gray-500 mt-1">{q.questionHelper}</p>}
                                                     <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} />
+                                                    {/* Show reviewer comment field below if enabled */}
+                                                    {q.metadata && q.metadata.displayReviewersComment && (
+                                                        <div className="mt-2">
+                                                            <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
+                                                            <MInput
+                                                                type="textarea"
+                                                                value={answers[`${q.id}_reviewers_comment`] || ''}
+                                                                onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)}
+                                                                rows={2}
+                                                                placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
+                                                            />
+                                                        </div>
+                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -363,10 +402,10 @@ const FillFormPage: React.FC = () => {
                         <div className="mt-8 pt-5 border-t border-gray-200">
                             <div className="flex justify-end space-x-3">
                                 {activePageIndex > 0 && (
-                                    <Button variant="secondary" onClick={() => setActivePageIndex(p => p - 1)}>Previous Page</Button>
+                                    <Button variant="secondary" onClick={e => { e.preventDefault(); setActivePageIndex(p => p - 1); }}>Previous Page</Button>
                                 )}
                                 {activePageIndex < formDef.pages.length - 1 ? (
-                                    <Button onClick={() => setActivePageIndex(p => p + 1)}>Next Page</Button>
+                                    <Button onClick={e => { e.preventDefault(); setActivePageIndex(p => Math.min(p + 1, formDef.pages.length - 1)); }}>Next Page</Button>
                                 ) : (
                                     <Button type="submit">Next: Upload Files</Button>
                                 )}

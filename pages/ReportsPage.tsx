@@ -73,10 +73,24 @@ const ReportsPage: React.FC = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getUserName(report.userId)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(report.submissionDate).toLocaleDateString()}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.uploadedFiles?.length || 0} Files</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium flex flex-col gap-1 items-end">
                     <button className="text-primary-600 hover:text-primary-900 flex items-center" onClick={() => navigate(`/reports/${report.id}`)}>
                       <EyeIcon className="h-5 w-5 mr-1" /> View
                     </button>
+                    <button className="text-blue-600 hover:text-blue-900 flex items-center text-xs" onClick={() => {
+                      // Find activity to get responseType
+                      const activity = activities.find(a => a.id === report.activityId);
+                      if (!activity) return;
+                      // If Facility level, go to fill form for that activity/facility
+                      if ((activity.responseType || '').toLowerCase() === 'facility') {
+                        navigate(`/fill-form/${report.activityId}?facilityId=${report.facilityId}`);
+                      } else if ((activity.responseType || '').toLowerCase() === 'user') {
+                        navigate(`/fill-form/${report.activityId}?userId=${report.userId}`);
+                      } else {
+                        navigate(`/fill-form/${report.activityId}`);
+                      }
+                    }}>Edit Report Form</button>
+                    <button className="text-red-600 hover:text-red-900 flex items-center text-xs" onClick={() => alert('Delete Report coming soon')}>Delete</button>
                   </td>
                 </tr>
               ))}
