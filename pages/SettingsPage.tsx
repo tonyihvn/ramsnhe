@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useTheme } from '../hooks/useTheme';
+import { appRoutes } from '../appRoutes';
 
 const LLMSettingsForm: React.FC = () => {
     const { settings, setSettings } = useTheme();
@@ -367,15 +368,41 @@ const PermissionsList: React.FC = () => {
     const [list, setList] = useState<any[]>([]);
     const [name, setName] = useState('');
     const [desc, setDesc] = useState('');
+    const [manualEntry, setManualEntry] = useState(false);
     useEffect(() => { (async () => { try { const r = await fetch('/api/admin/permissions', { credentials: 'include' }); if (r.ok) setList(await r.json()); } catch (e) { } })(); }, []);
-    const save = async (id?: number) => { try { const payload = id ? { id, name, description: desc } : { name, description: desc }; const r = await fetch('/api/admin/permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (r.ok) setList(await (await fetch('/api/admin/permissions', { credentials: 'include' })).json()); } catch (e) { alert('Failed'); } };
+    const save = async (id?: number) => { try { const payload = id ? { id, name, description: desc } : { name, description: desc }; const r = await fetch('/api/admin/permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (r.ok) setList(await (await fetch('/api/admin/permissions', { credentials: 'include' })).json()); setName(''); setDesc(''); setManualEntry(false); } catch (e) { alert('Failed'); } };
+
+    // Build dropdown options from appRoutes and existing permission names
+    const routeOptions = appRoutes || [];
+
     return (
         <div>
             <div className="space-y-2">
                 {list.map(r => <div key={r.id} className="p-2 border rounded"><div className="font-medium">{r.name}</div><div className="text-xs text-gray-500">{r.description}</div></div>)}
             </div>
             <div className="mt-3 grid grid-cols-1 gap-2">
-                <input className="p-2 border rounded" placeholder="Permission name" value={name} onChange={e => setName(e.target.value)} />
+                {!manualEntry ? (
+                    <>
+                        <label className="text-xs text-gray-600">Choose a route or existing permission</label>
+                        <select className="p-2 border rounded" value={name} onChange={e => {
+                            const v = e.target.value;
+                            if (v === '_manual') { setManualEntry(true); setName(''); }
+                            else setName(v);
+                        }}>
+                            <option value="">-- select --</option>
+                            <optgroup label="Routes">
+                                {routeOptions.map(r => <option key={`route:${r.path}`} value={`route:${r.path}`}>{r.label || r.path}</option>)}
+                            </optgroup>
+                            <optgroup label="Existing Permissions">
+                                {list.map(p => <option key={`perm:${p.id}`} value={p.name}>{p.name}</option>)}
+                            </optgroup>
+                            <option value="_manual">Other (enter manually)</option>
+                        </select>
+                    </>
+                ) : (
+                    <input className="p-2 border rounded" placeholder="Permission name (custom)" value={name} onChange={e => setName(e.target.value)} />
+                )}
+
                 <input className="p-2 border rounded" placeholder="Description" value={desc} onChange={e => setDesc(e.target.value)} />
                 <div className="flex gap-2"><Button onClick={() => save()}>Create Permission</Button><Button variant="secondary" onClick={() => save(undefined)}>Save</Button></div>
             </div>

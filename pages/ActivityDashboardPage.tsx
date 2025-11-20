@@ -184,8 +184,8 @@ const ActivityDashboardPage: React.FC = () => {
           const data = reports.map((r: any) => ({
             id: r.id,
             submission_date: new Date(r.submission_date).toLocaleString(),
-            facility_id: r.facility_id || '—',
-            user_id: r.user_id || '—',
+            facility_id: (r.facility_id ? (facilitiesMap[String(r.facility_id)] || r.facility_id) : '—'),
+            user_id: (r.user_id ? (usersMap[String(r.user_id)] || r.user_id) : '—'),
             status: r.status || '—',
             reviewers_report: stripHtml(r.reviewers_report),
           }));
