@@ -394,6 +394,19 @@ const BuildFormPage: React.FC = () => {
     setActivePageIndex(formDef.pages.length);
   };
 
+  const deletePage = (pageIndex: number) => {
+    if (!formDef) return;
+    if ((formDef.pages || []).length <= 1) { alert('Cannot delete the last page.'); return; }
+    if (!confirm('Delete this page and all its sections/questions? This action cannot be undone.')) return;
+    const newPages = (formDef.pages || []).slice();
+    newPages.splice(pageIndex, 1);
+    const newFormDef = { ...formDef, pages: newPages };
+    updateFormDef(newFormDef);
+    // Adjust active page index safely
+    if (activePageIndex >= newPages.length) setActivePageIndex(Math.max(0, newPages.length - 1));
+    else if (pageIndex < activePageIndex) setActivePageIndex(activePageIndex - 1);
+  };
+
   const addSection = (pageIndex: number) => {
     if (!formDef) return;
     const newSection: FormSection = {
@@ -547,6 +560,11 @@ const BuildFormPage: React.FC = () => {
           if (showIfFromRow) {
             metadata = { ...(metadata || {}), showIf: String(showIfFromRow) };
           }
+          // parse new fields: score, reviewers_comment (boolean), group_name
+          const scoreVal = Number(row['score'] || row['Score'] || 0) || 0;
+          const reviewersCommentFlag = String(row['reviewers_comment'] || row['Reviewers_Comment'] || row['reviewersComment'] || '').toLowerCase() === 'true';
+          const groupName = row['group_name'] || row['Group Name'] || row['groupName'] || undefined;
+
           return {
             id: `q${Math.random().toString(36).substr(2, 9)}`,
             activityId: activityId || '',
@@ -561,7 +579,8 @@ const BuildFormPage: React.FC = () => {
             createdBy: null,
             fieldName,
             options,
-            metadata
+            metadata: { ...(metadata || {}), score: scoreVal, displayReviewersComment: reviewersCommentFlag },
+            questionGroup: groupName
           };
         });
         if (newQuestions.length > 0) {
@@ -604,6 +623,37 @@ const BuildFormPage: React.FC = () => {
     reader.readAsArrayBuffer(file);
   };
 
+  // Generate a sample Excel workbook (primary sheet + options sheet) and trigger download
+  const generateSampleTemplate = async () => {
+    try {
+      const wb = new ExcelJS.Workbook();
+      const sheet = wb.addWorksheet('questions');
+      // Header row (added: score, reviewers_comment, group_name)
+      sheet.addRow(['Question', 'Type', 'Helper Text', 'field_name', 'Required', 'ColumnSize', 'Page', 'Section', 'ShowIf', 'calculation', 'score', 'reviewers_comment', 'group_name']);
+      // Example row
+      sheet.addRow(['What is the program name?', 'textbox', 'Enter program title', 'program_name', 'true', 12, 'Main', 'General', '', '', 0, false, 'Programs']);
+
+      const opts = wb.addWorksheet('options');
+      opts.addRow(['name', 'value', 'label']);
+      opts.addRow(['program_type', 'gov', 'Government']);
+      opts.addRow(['program_type', 'ngo', 'NGO']);
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'form_template.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to generate template', e);
+      alert('Failed to generate sample template.');
+    }
+  };
+
 
   if (!activity || !formDef) return <div>Loading...</div>;
 
@@ -630,25 +680,29 @@ const BuildFormPage: React.FC = () => {
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-4 overflow-x-auto" aria-label="Tabs">
           {(formDef.pages || []).map((page, index) => (
-            <button
-              key={page.id}
-              onClick={() => setActivePageIndex(index)}
-              className={`${index === activePageIndex
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-            >
-              <input
-                type="text"
-                value={page.name}
-                onChange={(e) => {
-                  const newDef = { ...formDef };
-                  newDef.pages[index].name = e.target.value;
-                  updateFormDef(newDef);
-                }}
-                className="bg-transparent border-none focus:ring-0 p-0 font-medium text-sm w-24"
-              />
-            </button>
+            <div key={page.id} className="flex items-center space-x-2">
+              <button
+                onClick={() => setActivePageIndex(index)}
+                className={`${index === activePageIndex
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+              >
+                <input
+                  type="text"
+                  value={page.name}
+                  onChange={(e) => {
+                    const newDef = { ...formDef };
+                    newDef.pages[index].name = e.target.value;
+                    updateFormDef(newDef);
+                  }}
+                  className="bg-transparent border-none focus:ring-0 p-0 font-medium text-sm w-24"
+                />
+              </button>
+              <button title="Delete page" onClick={(ev) => { ev.stopPropagation(); deletePage(index); }} className="text-red-500 hover:text-red-700 p-1 rounded">
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            </div>
           ))}
           <button
             onClick={addPage}
@@ -719,32 +773,34 @@ const BuildFormPage: React.FC = () => {
         </Button>
       </div>
 
-      <Modal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} title="Bulk Import Questions" footer={<Button onClick={() => setIsImportModalOpen(false)}>Close</Button>}>
+      <Modal size="2xl" isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} title="Bulk Import Questions" footer={<Button onClick={() => setIsImportModalOpen(false)}>Close</Button>}>
         <div className="space-y-4 text-sm text-gray-700">
-          <p>Upload an Excel file (.xlsx) or CSV to bulk-create questions. The sheet should include a header row. Supported columns (case-insensitive):</p>
+          <p>Upload an Excel file (.xlsx) to bulk-create questions. The workbook should include a header row on the primary worksheet and an optional second worksheet named <strong>options</strong> to supply choices for selection fields. Supported columns on the primary sheet (case-insensitive):</p>
           <ul className="list-disc ml-6">
             <li><strong>Question</strong> (required) — question text.</li>
             <li><strong>Type</strong> — one of: textbox, textarea, number, date, time, dropdown, radio, checkbox, file, computed.</li>
             <li><strong>Helper Text</strong> — optional helper or hint text.</li>
-            <li><strong>Options</strong> — for dropdown/radio/checkbox; inline options may use <code>value:label|value:label</code> (pipe-separated). Example: <code>Nigeria:FCT|Togo:Lome</code>. Alternatively, provide a second worksheet named <strong>options</strong> with columns <code>name</code> (field_name), <code>value</code>, <code>label</code> to supply options for multiple fields centrally.</li>
+            <li><strong>Options</strong> — (DEPRECATED inline format) Options must be supplied via a separate worksheet named <strong>options</strong>. The <strong>options</strong> worksheet should contain the columns: <code>name</code> (the target question's <em>field_name</em>), <code>value</code>, and <code>label</code>. Add one row per option; multiple rows with the same <code>name</code> will attach multiple options to the same question. Example rows:
+              <div className="ml-4 mt-2">
+                <code>program_type,gov,Government</code><br />
+                <code>program_type,ngo,NGO</code>
+              </div>
+            </li>
             <li><strong>Required</strong> — "true" or "false" (optional). Marks the question as mandatory when true.</li>
             <li><strong>ColumnSize</strong> — numeric; recommended values: 12 (full), 6 (half), 4 (third), 3 (quarter). Default is 12.</li>
             <li><strong>field_name</strong> — (for computed only) non-spaced field name to reference in formulas.</li>
             <li><strong>calculation</strong> — (for computed only) mathematical formula using field names, obeying BODMAS. Example: <code>age + score * 2</code></li>
             <li><strong>Page</strong> — optional: name of the page (tab) to place the question on. If omitted, the currently active page is used.</li>
             <li><strong>Section</strong> — optional: name of the section inside the page to place the question. If omitted, the first section of the page is used.</li>
+            <li><strong>ShowIf</strong> — optional: visibility/conditional expression that controls whether the question is shown. Use the target question's <code>field_name</code> identifiers and a JavaScript-like expression. Examples: <code>age &gt; 18</code>, <code>facility === 'Nairobi' &amp;&amp; score &gt;= 50</code>, or <code>!!name</code>. If omitted or invalid, the question will be visible by default.</li>
+            <li><strong>score</strong> — optional numeric score assigned to the question (used for summary scoring). Default: 0.</li>
+            <li><strong>reviewers_comment</strong> — optional boolean (true/false). When true, a Reviewer's Comment textarea will be shown below the question for reviewers to add notes.</li>
+            <li><strong>group_name</strong> — optional: logical grouping name for this question (e.g., Programs, Demographics). Stored as the question's group and useful for reporting/aggregation.</li>
           </ul>
-          <a
-            href="/form_template.csv"
-            download
-            className="inline-block mb-2 text-primary-600 hover:underline text-sm font-medium"
-            style={{ marginTop: 8 }}
-          >
-            Download sample template (CSV)
-          </a>
+          <button onClick={generateSampleTemplate} className="inline-block mb-2 text-primary-600 hover:underline text-sm font-medium" style={{ marginTop: 8 }}>Download sample template (Excel .xlsx)</button>
           <p className="text-xs text-gray-500">When importing, if your sheet provides <strong>Page</strong> and/or <strong>Section</strong> columns those values will be used to place questions into matching pages and sections (new pages/sections will be created when necessary). If Page/Section are omitted, questions will be added to the currently active page and its first section. You can edit assignments after import.</p>
-          <input type="file" accept=".xlsx,.csv" onChange={handleFileImport} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
-          <div className="text-xs text-gray-500">Notes: empty rows are ignored. For option values, use <code>value:label|value:label</code> (pipe-separated). For computed fields, provide <code>field_name</code> and <code>calculation</code> columns. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
+          <input type="file" accept=".xlsx" onChange={handleFileImport} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
+          <div className="text-xs text-gray-500">Notes: empty rows are ignored. Options must be provided via the <strong>options</strong> worksheet (one option per row). For computed fields, provide <code>field_name</code> and <code>calculation</code> columns. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
         </div>
       </Modal>
 

@@ -403,8 +403,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                         else colClass = 'col-span-12';
                                                         return (
                                                             <div key={q.id} className={colClass}>
-                                                                <label className="block text-sm font-medium text-gray-700">{q.questionText} {q.required && <span className="text-red-500">*</span>}</label>
-                                                                {q.questionHelper && <p className="text-xs text-gray-500 mt-1">{q.questionHelper}</p>}
+                                                                {/* Render the question input; label is provided by the input component itself to avoid duplication */}
+                                                                {q.questionHelper && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
                                                                 <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} />
                                                                 {/* Show reviewer comment field below if enabled */}
                                                                 {q.metadata && q.metadata.displayReviewersComment && (
@@ -469,40 +469,42 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         </div>
 
                         <div className="space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Link Entity</label>
-                                    <p className="text-xs text-gray-500 mb-2">Select the facility or user this response should be linked to (required for some activities).</p>
-                                    {String(activity.responseType || '').toLowerCase() === 'facility' ? (
+
+                            <div>
+                                {uploadedFiles.map(file => (
+                                    <Card key={file.id} className="border border-gray-200 mb-4">
+                                        <EditableTable file={file} onUpdate={handleFileUpdate} />
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Link Entity</label>
+                                <p className="text-xs text-gray-500 mb-2">Select the facility or user this response should be linked to (required for some activities).</p>
+                                {String(activity.responseType || '').toLowerCase() === 'facility' ? (
+                                    <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                                        <option value="">Select facility...</option>
+                                        {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                                    </select>
+                                ) : String(activity.responseType || '').toLowerCase() === 'user' ? (
+                                    <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                                        <option value="">Select user...</option>
+                                        {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
+                                    </select>
+                                ) : (
+                                    <div className="space-y-2">
                                         <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                            <option value="">Select facility...</option>
+                                            <option value="">(Optional) Select facility...</option>
                                             {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                                         </select>
-                                    ) : String(activity.responseType || '').toLowerCase() === 'user' ? (
                                         <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                            <option value="">Select user...</option>
+                                            <option value="">(Optional) Select user...</option>
                                             {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
                                         </select>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                                <option value="">(Optional) Select facility...</option>
-                                                {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                                            </select>
-                                            <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                                <option value="">(Optional) Select user...</option>
-                                                {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
-                                            </select>
-                                        </div>
-                                    )}
-                                </div>
-                                <div>
-                                    {uploadedFiles.map(file => (
-                                        <Card key={file.id} className="border border-gray-200 mb-4">
-                                            <EditableTable file={file} onUpdate={handleFileUpdate} />
-                                        </Card>
-                                    ))}
-                                </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 

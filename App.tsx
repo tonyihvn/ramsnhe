@@ -15,6 +15,7 @@ import ProgramsPage from './pages/ProgramsPage';
 import LoginPage from './pages/LoginPage';
 import SettingsPage from './pages/SettingsPage';
 import ProfilePage from './pages/ProfilePage';
+import DocsPage from './pages/DocsPage';
 import { DataProvider, useMockData } from './hooks/useMockData';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -37,6 +38,8 @@ const AppRoutes = () => {
       <Route path="/activities/build/:activityId" element={<ProtectedRoute><Layout><BuildFormPage /></Layout></ProtectedRoute>} />
 
       <Route path="/activities/fill/:activityId" element={<ProtectedRoute><Layout><FillFormPage /></Layout></ProtectedRoute>} />
+      {/* Standalone form (no layout) for sharing/embedded use */}
+      <Route path="/standalone/fill/:activityId" element={<FillFormPage standaloneMode={true} />} />
 
       <Route path="/activities/dashboard/:activityId" element={<ProtectedRoute><Layout><ActivityDashboardPage /></Layout></ProtectedRoute>} />
       <Route path="/activities/:activityId/followups" element={<ProtectedRoute><Layout><QuestionFollowupPage /></Layout></ProtectedRoute>} />
@@ -47,6 +50,7 @@ const AppRoutes = () => {
       <Route path="/reports/:reportId" element={<ProtectedRoute><Layout><ReportViewPage /></Layout></ProtectedRoute>} />
 
       <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
+      <Route path="/docs" element={<ProtectedRoute><Layout><DocsPage /></Layout></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
 
       <Route path="/users" element={<ProtectedRoute><Layout><UsersPage /></Layout></ProtectedRoute>} />

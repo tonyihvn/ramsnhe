@@ -1,6 +1,6 @@
 -- Schema for Intelliform (reference)
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS dqai_users (
   id SERIAL PRIMARY KEY,
   first_name TEXT,
   last_name TEXT,
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS programs (
+CREATE TABLE IF NOT EXISTS dqai_programs (
   id SERIAL PRIMARY KEY,
   name TEXT,
   details TEXT,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS programs (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS facilities (
+CREATE TABLE IF NOT EXISTS dqai_facilities (
   id SERIAL PRIMARY KEY,
   name TEXT,
   state TEXT,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS facilities (
   category TEXT
 );
 
-CREATE TABLE IF NOT EXISTS activities (
+CREATE TABLE IF NOT EXISTS dqai_activities (
   id SERIAL PRIMARY KEY,
   title TEXT,
   subtitle TEXT,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS activities (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS activity_reports (
+CREATE TABLE IF NOT EXISTS dqai_activity_reports (
   id SERIAL PRIMARY KEY,
   activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS activity_reports (
 
 -- Questions and Answers: persisted form schema and per-report answers
 -- Questions: store page/section names and full question metadata
-CREATE TABLE IF NOT EXISTS questions (
+CREATE TABLE IF NOT EXISTS dqai_questions (
   id TEXT PRIMARY KEY,
   activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
   page_name TEXT,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS questions (
 );
  
 -- Answers: store each answer with references for querying and grouping
-CREATE TABLE IF NOT EXISTS answers (
+CREATE TABLE IF NOT EXISTS dqai_answers (
   id SERIAL PRIMARY KEY,
   report_id INTEGER REFERENCES activity_reports(id) ON DELETE CASCADE,
   activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS answers (
 );
 
 -- Uploaded documents (excel files) stored as JSONB content per activity/facility/user
-CREATE TABLE IF NOT EXISTS uploaded_docs (
+CREATE TABLE IF NOT EXISTS dqai_uploaded_docs (
   id SERIAL PRIMARY KEY,
   activity_id INTEGER REFERENCES activities(id) ON DELETE CASCADE,
   facility_id INTEGER REFERENCES facilities(id) ON DELETE SET NULL,

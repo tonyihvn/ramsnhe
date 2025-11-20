@@ -14,12 +14,43 @@ const ActivitiesPage: React.FC = () => {
   const location = useLocation();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<Partial<Activity>>({});
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [embedModalOpen, setEmbedModalOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string>('');
 
   const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Form Builder';
   const canCollect = currentUser?.role === 'Admin' || currentUser?.role === 'Data Collector';
 
   const getProgramName = (programId: string) => {
     return programs.find(p => p.id === programId)?.name || 'N/A';
+  };
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return '—';
+    // handle plain YYYY-MM-DD specially to avoid timezone shifts
+    const plainDateMatch = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    let d: Date;
+    if (plainDateMatch) {
+      const [y, m, day] = value.split('-').map(Number);
+      d = new Date(Date.UTC(y, m - 1, day));
+    } else {
+      d = new Date(value);
+    }
+    if (isNaN(d.getTime())) return String(value);
+    const dayNum = d.getUTCDate();
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const month = monthNames[d.getUTCMonth()];
+    const year = d.getUTCFullYear();
+    const suffix = (n: number) => {
+      if (n % 100 >= 11 && n % 100 <= 13) return 'th';
+      switch (n % 10) {
+        case 1: return 'st';
+        case 2: return 'nd';
+        case 3: return 'rd';
+        default: return 'th';
+      }
+    };
+    return `${dayNum}${suffix(dayNum)} ${month}, ${year}`;
   };
 
   // Optional filter from query string: ?programId=...
@@ -80,7 +111,7 @@ const ActivitiesPage: React.FC = () => {
                       {activity.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{activity.startDate} - {activity.endDate}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(activity.startDate)} - {formatDate(activity.endDate)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                     {canEdit && (
                       <>
@@ -121,6 +152,41 @@ const ActivitiesPage: React.FC = () => {
                         </button>
                       </>
                     )}
+                    {/* Share controls: Copy, QR, Embed - visible to editors and collectors */}
+                    <div className="inline-flex items-center space-x-2">
+                      <button
+                        onClick={() => {
+                          const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                          navigator.clipboard.writeText(full).then(() => alert('Link copied to clipboard'));
+                        }}
+                        className="text-gray-600 hover:text-gray-900"
+                        title="Copy standalone link"
+                      >
+                        Copy
+                      </button>
+                      <button
+                        onClick={() => {
+                          const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                          setShareUrl(full);
+                          setQrModalOpen(true);
+                        }}
+                        className="text-gray-600 hover:text-gray-900"
+                        title="Show QR code"
+                      >
+                        QR
+                      </button>
+                      <button
+                        onClick={() => {
+                          const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                          setShareUrl(full);
+                          setEmbedModalOpen(true);
+                        }}
+                        className="text-gray-600 hover:text-gray-900"
+                        title="Show embed iframe"
+                      >
+                        Embed
+                      </button>
+                    </div>
                     {canCollect && (
                       <button onClick={() => navigate(`/activities/fill/${activity.id}`)} className="text-green-600 hover:text-green-900" title="Start Data Collection">
                         <PlayIcon className="h-5 w-5" />
@@ -133,6 +199,33 @@ const ActivitiesPage: React.FC = () => {
           </table>
         </div>
       </Card>
+
+      {/* QR Modal */}
+      <Modal isOpen={qrModalOpen} onClose={() => setQrModalOpen(false)} title="QR Code">
+        <div className="text-center">
+          {shareUrl ? (
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`} alt="QR code" />
+          ) : (
+            <p>No URL</p>
+          )}
+          <div className="mt-4">
+            <button onClick={() => { navigator.clipboard.writeText(shareUrl); alert('Link copied to clipboard'); }} className="px-3 py-2 bg-gray-100 rounded">Copy Link</button>
+            <a className="ml-3 px-3 py-2 bg-blue-600 text-white rounded" href={shareUrl} target="_blank" rel="noreferrer">Open Link</a>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Embed Modal */}
+      <Modal isOpen={embedModalOpen} onClose={() => setEmbedModalOpen(false)} title="Embed Snippet">
+        <div>
+          <p className="text-sm text-gray-600">Copy the iframe snippet below and paste into your site. The snippet is shown as text and will not execute here.</p>
+          <pre className="mt-3 p-3 bg-gray-100 rounded text-sm overflow-auto">{`<iframe src="${shareUrl}" width="800" height="900"></iframe>`}</pre>
+          <div className="mt-3">
+            <button onClick={() => { navigator.clipboard.writeText(`<iframe src="${shareUrl}" width="800" height="900"></iframe>`); alert('Embed snippet copied'); }} className="px-3 py-2 bg-gray-100 rounded">Copy Snippet</button>
+            <a className="ml-3 px-3 py-2 bg-blue-600 text-white rounded" href={shareUrl} target="_blank" rel="noreferrer">Open Link</a>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={isModalOpen}

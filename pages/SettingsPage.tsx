@@ -575,6 +575,7 @@ const SettingsPage: React.FC = () => {
                             <label className="block text-sm font-medium text-gray-700">Preview Generated Rules</label>
                             <textarea className="mt-1 block w-full p-2 border rounded" rows={6} value={(settings as any).ragPreview || ''} onChange={e => setSettings({ ...(settings as any), ragPreview: e.target.value })} />
                         </div>
+                        <RagManager />
                     </div>
                 </Card>
             )}
@@ -719,3 +720,118 @@ const SettingsPage: React.FC = () => {
 };
 
 export default SettingsPage;
+
+const RagManager: React.FC = () => {
+    const [list, setList] = useState<any[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [editing, setEditing] = useState<any | null>(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const nameRef = useRef<HTMLInputElement | null>(null);
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            // try admin endpoint first
+            let r = await fetch('/api/admin/rag_schemas', { credentials: 'include' });
+            if (r.status === 401) {
+                // fallback to public listing
+                r = await fetch('/api/rag_schemas');
+            } else {
+                setIsAdmin(true);
+            }
+            if (r.ok) {
+                const data = await r.json();
+                setList(data || []);
+            }
+        } catch (e) { console.error('Failed to load rag schemas', e); }
+        setLoading(false);
+    };
+
+    useEffect(() => { load(); }, []);
+
+    useEffect(() => {
+        if (editing && nameRef.current) {
+            try { nameRef.current.focus(); } catch (e) { }
+        }
+    }, [editing]);
+
+    const startCreate = () => setEditing({ table_name: '', schema: [], sample_rows: [] });
+
+    const save = async () => {
+        if (!editing || !editing.table_name) return alert('Table name required');
+        try {
+            const payload = { ...editing };
+            // POST to admin endpoint (requires auth)
+            const r = await fetch('/api/admin/rag_schemas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+            if (r.status === 401) return alert('Unauthorized - please login as admin');
+            if (!r.ok) return alert('Save failed: ' + await r.text());
+            alert('Saved');
+            setEditing(null);
+            await load();
+        } catch (e) { alert('Save failed: ' + String(e)); }
+    };
+
+    const remove = async (id: any) => {
+        if (!confirm('Delete this RAG record?')) return;
+        try {
+            const r = await fetch('/api/admin/rag_schemas/' + id, { method: 'DELETE', credentials: 'include' });
+            if (r.status === 401) return alert('Unauthorized');
+            if (!r.ok) return alert('Delete failed: ' + await r.text());
+            await load();
+        } catch (e) { alert('Delete failed: ' + String(e)); }
+    };
+
+    return (
+        <div className="mt-4">
+            {/* Edit form appears above the list when focused */}
+            {editing && (
+                <div className="mb-4 p-3 border rounded bg-gray-50">
+                    <h4 className="font-medium mb-2">Edit RAG Record</h4>
+                    <div className="grid grid-cols-1 gap-2">
+                        <label className="text-sm">Table name</label>
+                        <input ref={nameRef} className="p-2 border rounded" value={editing.table_name} onChange={e => setEditing({ ...editing, table_name: e.target.value })} />
+                        <label className="text-sm">Schema (JSON array)</label>
+                        <textarea className="p-2 border rounded" rows={6} value={JSON.stringify(editing.schema || [], null, 2)} onChange={e => {
+                            try { setEditing({ ...editing, schema: JSON.parse(e.target.value) }); } catch (err) { /* ignore parse until save */ setEditing({ ...editing, schema: e.target.value as any }); }
+                        }} />
+                        <label className="text-sm">Sample rows (JSON array)</label>
+                        <textarea className="p-2 border rounded" rows={6} value={JSON.stringify(editing.sample_rows || [], null, 2)} onChange={e => {
+                            try { setEditing({ ...editing, sample_rows: JSON.parse(e.target.value) }); } catch (err) { setEditing({ ...editing, sample_rows: e.target.value as any }); }
+                        }} />
+                        <div className="flex gap-2">
+                            <Button onClick={async () => { await save(); }} >Save</Button>
+                            <Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="flex items-center justify-between">
+                <div className="font-medium">RAG Records</div>
+                <div className="flex gap-2">
+                    <Button onClick={load}>Refresh</Button>
+                    <Button variant="secondary" onClick={startCreate}>New</Button>
+                </div>
+            </div>
+            <div className="mt-3">
+                {loading && <div className="text-sm text-gray-500">Loading...</div>}
+                {!loading && list.length === 0 && <div className="text-sm text-gray-500">No RAG records found.</div>}
+                <div className="space-y-2 mt-2">
+                    {list.map(r => (
+                        <div key={r.id || r.table_name} className="p-2 border rounded flex items-start justify-between">
+                            <div>
+                                <div className="font-medium">{r.table_name}</div>
+                                <div className="text-xs text-gray-500">Columns: {(r.schema || []).map((c: any) => c.column_name || c.name).filter(Boolean).slice(0, 5).join(', ')}</div>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button onClick={() => alert(JSON.stringify(r.sample_rows || [], null, 2))}>Preview</Button>
+                                {isAdmin && <Button variant="secondary" onClick={() => setEditing(r)}>Edit</Button>}
+                                {isAdmin && <Button variant="danger" onClick={() => remove(r.id)}>Delete</Button>}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};

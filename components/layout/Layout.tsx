@@ -16,9 +16,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar collapsed={collapsed} />
-      <div className={`flex-1 flex flex-col overflow-hidden ${contentMarginClass}`}>
+      <div className={`flex-1 flex flex-col overflow-y-hidden ${contentMarginClass}`}>
         <Header collapsed={collapsed} onToggleSidebar={() => setCollapsed(c => !c)} />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-4 md:p-6 lg:p-8 mb-0 pb-0">
+        <main className="flex-1 overflow-x-auto overflow-y-auto bg-gray-100 p-4 md:p-6 lg:p-8 mb-0 pb-0">
           {children}
         </main>
       </div>

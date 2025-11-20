@@ -78,6 +78,7 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void }> = 
                       <button onClick={() => { setMenuOpen(false); navigate('/settings'); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</button>
                     )}
                     <button onClick={() => { setMenuOpen(false); navigate('/profile'); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Profile</button>
+                    <button onClick={() => { setMenuOpen(false); navigate('/docs'); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Docs</button>
                     <button onClick={() => { setMenuOpen(false); handleLogout(); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Logout</button>
                   </div>
                 </div>
