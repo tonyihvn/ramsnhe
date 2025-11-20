@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Button from './Button';
 
 type Message = { role: 'user' | 'assistant' | 'system'; text: string };
@@ -7,6 +7,8 @@ const ConversationPanel: React.FC<{ context?: any, scope?: string }> = ({ contex
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [sql, setSql] = useState('');
+  const [providers, setProviders] = useState<Array<any>>([]);
+  const [selectedProvider, setSelectedProvider] = useState<'auto' | string>('auto');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<any>(null);
 
@@ -17,14 +19,16 @@ const ConversationPanel: React.FC<{ context?: any, scope?: string }> = ({ contex
     setInput('');
     // Ask backend LLM to generate SQL (if endpoint exists)
     try {
-      const res = await fetch('/api/llm/generate_sql', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: input, context, scope })
-      });
+      const body: any = { prompt: input, context, scope };
+      if (selectedProvider && selectedProvider !== 'auto') body.providerId = selectedProvider;
+      const res = await fetch('/api/llm/generate_sql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) {
         const j = await res.json();
-        const assistantText = j.sql || j.text || 'No SQL generated.';
+        // Prefer the explanatory text (what the LLM understood and will do), then set the SQL editor to the returned SQL
+        let assistantText = j.text || j.explanation || (j.sql ? `Action to Be Taken:\n${j.sql}` : 'No SQL generated.');
+        if (j.providerUsed) assistantText = `(Provider: ${j.providerUsed})\n\n` + assistantText;
         setMessages(prev => [...prev, { role: 'assistant', text: assistantText }]);
-        setSql(assistantText);
+        setSql(j.sql || '');
       } else {
         const txt = await res.text();
         setMessages(prev => [...prev, { role: 'assistant', text: 'LLM endpoint error: ' + txt }]);
@@ -34,6 +38,18 @@ const ConversationPanel: React.FC<{ context?: any, scope?: string }> = ({ contex
       setMessages(prev => [...prev, { role: 'assistant', text: 'LLM service unreachable. Generated SQL can be entered manually.' }]);
     }
   };
+
+  useEffect(() => {
+    // try to fetch available providers (public endpoint may be disabled in production)
+    (async () => {
+      try {
+        const res = await fetch('/api/llm_providers');
+        if (!res.ok) return;
+        const j = await res.json();
+        if (Array.isArray(j)) setProviders(j);
+      } catch (e) { /* ignore */ }
+    })();
+  }, []);
 
   const runSql = async () => {
     if (!sql) { alert('Please provide SQL to run.'); return; }
@@ -71,7 +87,11 @@ const ConversationPanel: React.FC<{ context?: any, scope?: string }> = ({ contex
           ))}
         </div>
 
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex gap-2 items-center">
+          <select value={selectedProvider} onChange={e => setSelectedProvider(e.target.value as any)} className="p-2 border rounded text-sm">
+            <option value="auto">Automatic</option>
+            {providers.map(p => <option key={p.id} value={String(p.id)}>{p.name || p.provider_id}</option>)}
+          </select>
           <input value={input} onChange={e => setInput(e.target.value)} placeholder="Ask e.g. Show average score by facility" className="flex-1 p-2 border rounded" />
           <Button onClick={sendMessage} disabled={!input}>Ask</Button>
         </div>
@@ -94,7 +114,7 @@ const ConversationPanel: React.FC<{ context?: any, scope?: string }> = ({ contex
               <div className="overflow-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50"><tr>{Object.keys(result.rows[0] || {}).map(k => <th key={k} className="px-2 py-1 text-left">{k}</th>)}</tr></thead>
-                  <tbody>{result.rows.map((r: any, ri: number) => (<tr key={ri}>{Object.keys(result.rows[0]||{}).map((k)=> <td key={k} className="px-2 py-1">{String(r[k] ?? '')}</td>)}</tr>))}</tbody>
+                  <tbody>{result.rows.map((r: any, ri: number) => (<tr key={ri}>{Object.keys(result.rows[0] || {}).map((k) => <td key={k} className="px-2 py-1">{String(r[k] ?? '')}</td>)}</tr>))}</tbody>
                 </table>
               </div>
             )}

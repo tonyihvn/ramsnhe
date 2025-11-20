@@ -369,34 +369,63 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 <div key={section.id} className="bg-gray-50 p-4 rounded-md">
                                     <h3 className="text-lg font-medium text-gray-900 border-b pb-2 border-gray-200">{section.name}</h3>
                                     <div className="mt-4 grid grid-cols-12 gap-6">
-                                        {section.questions.map(q => {
-                                            let colClass = 'col-span-12';
-                                            if (q.columnSize === 12) colClass = 'col-span-12';
-                                            else if (q.columnSize === 6) colClass = 'md:col-span-6 col-span-12';
-                                            else if (q.columnSize === 4) colClass = 'md:col-span-4 col-span-12';
-                                            else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
-                                            else colClass = 'col-span-12';
-                                            return (
-                                                <div key={q.id} className={colClass}>
-                                                    <label className="block text-sm font-medium text-gray-700">{q.questionText} {q.required && <span className="text-red-500">*</span>}</label>
-                                                    {q.questionHelper && <p className="text-xs text-gray-500 mt-1">{q.questionHelper}</p>}
-                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} />
-                                                    {/* Show reviewer comment field below if enabled */}
-                                                    {q.metadata && q.metadata.displayReviewersComment && (
-                                                        <div className="mt-2">
-                                                            <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
-                                                            <MInput
-                                                                type="textarea"
-                                                                value={answers[`${q.id}_reviewers_comment`] || ''}
-                                                                onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)}
-                                                                rows={2}
-                                                                placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
-                                                            />
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                        {(() => {
+                                            // build fieldName -> value map for visibility/computed evaluation
+                                            const fieldMapLocal: Record<string, any> = {};
+                                            formDef.pages.forEach(p => p.sections.forEach(s => s.questions.forEach(qq => {
+                                                if (qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
+                                            })));
+
+                                            return section.questions.map(q => {
+                                                // evaluate visibility condition if present
+                                                let visible = true;
+                                                try {
+                                                    if (q.metadata && q.metadata.showIf) {
+                                                        const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
+                                                        visible = !!res;
+                                                    }
+                                                } catch (e) {
+                                                    console.error('Error evaluating showIf for question', q.id, e);
+                                                    visible = true;
+                                                }
+                                                if (!visible) return null;
+
+                                                // proceed to render question
+
+                                                // continue below
+                                                return (
+                                                    (() => {
+                                                        let colClass = 'col-span-12';
+                                                        if (q.columnSize === 12) colClass = 'col-span-12';
+                                                        else if (q.columnSize === 6) colClass = 'md:col-span-6 col-span-12';
+                                                        else if (q.columnSize === 4) colClass = 'md:col-span-4 col-span-12';
+                                                        else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
+                                                        else colClass = 'col-span-12';
+                                                        return (
+                                                            <div key={q.id} className={colClass}>
+                                                                <label className="block text-sm font-medium text-gray-700">{q.questionText} {q.required && <span className="text-red-500">*</span>}</label>
+                                                                {q.questionHelper && <p className="text-xs text-gray-500 mt-1">{q.questionHelper}</p>}
+                                                                <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} />
+                                                                {/* Show reviewer comment field below if enabled */}
+                                                                {q.metadata && q.metadata.displayReviewersComment && (
+                                                                    <div className="mt-2">
+                                                                        <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
+                                                                        <MInput
+                                                                            type="textarea"
+                                                                            value={answers[`${q.id}_reviewers_comment`] || ''}
+                                                                            onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)}
+                                                                            rows={2}
+                                                                            placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()
+                                                );
+                                            });
+                                        })()}
+
                                     </div>
                                 </div>
                             ))}

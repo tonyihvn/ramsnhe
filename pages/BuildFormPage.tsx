@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
 import { FormDefinition, FormPage, FormSection, Question, AnswerType } from '../types';
-import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import * as ExcelJS from 'exceljs';
@@ -34,6 +34,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 }) => {
   const hasOptions = [AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(question.answerType);
   const isFile = question.answerType === AnswerType.FILE;
+  const collapsed = !!(question.metadata && question.metadata.collapsed);
 
   const parsePastedOptions = (pasteData: string): { label: string; value: string }[] => {
     return pasteData
@@ -53,18 +54,27 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
     <div className={`bg-gray-50 p-4 my-2 rounded-lg border transition-all hover:shadow-md ${errors ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'}`}>
       <div className="flex justify-between items-start mb-2">
         <div className="flex items-center space-x-2">
+          <button type="button" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), collapsed: !collapsed } })} className="text-gray-500 hover:text-gray-700 p-1">
+            {collapsed ? <ChevronRightIcon className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />}
+          </button>
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-200 px-2 py-0.5 rounded">{question.answerType}</span>
           {question.required && <span className="ml-2 text-xs font-semibold text-red-600 bg-red-100 px-2 py-0.5 rounded">Required</span>}
-          {/* Group Name Input */}
-          <div className="ml-4 flex items-center gap-1">
-            <label className="text-xs text-gray-500">Group:</label>
-            <input
-              type="text"
-              className="border px-1 py-0.5 rounded text-xs w-24"
-              value={question.questionGroup || ''}
-              onChange={e => updateQuestion(pIdx, sIdx, qIdx, { questionGroup: e.target.value })}
-              placeholder="Group name"
-            />
+          {/* Group Name and Score Inputs */}
+          <div className="ml-4 flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500">Group:</label>
+              <input
+                type="text"
+                className="border px-1 py-0.5 rounded text-xs w-24"
+                value={question.questionGroup || ''}
+                onChange={e => updateQuestion(pIdx, sIdx, qIdx, { questionGroup: e.target.value })}
+                placeholder="Group name"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500">Score:</label>
+              <input type="number" min={0} className="border px-1 py-0.5 rounded text-xs w-20" value={question.metadata?.score ?? ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), score: e.target.value === '' ? undefined : Number(e.target.value) } })} />
+            </div>
           </div>
           <div className="flex flex-col">
             <button type="button" onClick={() => moveQuestion(pIdx, sIdx, qIdx, 'up')} disabled={isFirst} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowUpIcon className="h-4 w-4" /></button>
@@ -74,166 +84,177 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
         <Button variant='danger' size='sm' onClick={() => deleteQuestion(pIdx, sIdx, qIdx)}><TrashIcon className="h-4 w-4" /></Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Question Text <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={question.questionText}
-            onChange={e => {
-              const newText = e.target.value;
-              // Auto-suggest fieldName unless user has manually edited it.
-              const currentField = question.fieldName || '';
-              const suggestedFromOld = makeFieldName(question.questionText || '');
-              // If field is empty or still matches the auto-suggest from previous question text, update it.
-              if (!currentField || currentField === suggestedFromOld || currentField.startsWith(suggestedFromOld + '_')) {
-                const suggested = makeFieldName(newText);
-                updateQuestion(pIdx, sIdx, qIdx, { questionText: newText, fieldName: suggested });
-              } else {
-                updateQuestion(pIdx, sIdx, qIdx, { questionText: newText });
-              }
-            }}
-            className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.questionText ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`}
-          />
-          {errors?.questionText && (
-            <p className="mt-1 text-xs text-red-600 flex items-center">
-              <ExclamationCircleIcon className="h-3 w-3 mr-1" />
-              {errors.questionText}
-            </p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Field Name (machine-friendly)</label>
-          <input type="text" value={question.fieldName || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { fieldName: e.target.value })} className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.fieldName ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`} />
-          <p className="text-xs text-gray-500 mt-1">Used in computed formulas and exports. Use letters, numbers and underscores only.</p>
-          {errors?.fieldName && (
-            <p className="mt-1 text-xs text-red-600 flex items-center">
-              <ExclamationCircleIcon className="h-3 w-3 mr-1" />
-              {errors.fieldName}
-            </p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Helper Text</label>
-          <input type="text" value={question.questionHelper || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { questionHelper: e.target.value })} className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Column Width (12-grid)</label>
-          <select value={question.columnSize} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { columnSize: Number(e.target.value) })} className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
-            <option value={12}>12 — Full width</option>
-            <option value={6}>6 — Half width</option>
-            <option value={4}>4 — One third</option>
-            <option value={3}>3 — One quarter</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Required</label>
-          <div className="mt-1 min-h-[38px] flex items-center">
-            <label className="inline-flex items-center">
-              <input type="checkbox" checked={!!question.required} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { required: e.target.checked })} className="mr-2" />
-              <span className="text-sm text-gray-700">This question is required</span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {hasOptions && (
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-gray-700">
-            Options (Dropdown/Radio/Checkbox) <span className="text-red-500">*</span>
-          </label>
-          <p className="text-xs text-gray-500 mb-1">Paste from Excel (Value [tab] Label) to populate.</p>
-          <textarea
-            rows={3}
-            className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md font-mono text-xs ${errors?.options ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`}
-            placeholder="1	Option One&#10;2	Option Two"
-            onPaste={e => {
-              const pastedText = e.clipboardData.getData('text');
-              const options = parsePastedOptions(pastedText);
-              if (options.length > 0) {
-                e.preventDefault();
-                updateQuestion(pIdx, sIdx, qIdx, { options });
-              }
-            }}
-          />
-          {errors?.options && (
-            <p className="mt-1 text-xs text-red-600 flex items-center">
-              <ExclamationCircleIcon className="h-3 w-3 mr-1" />
-              {errors.options}
-            </p>
-          )}
-          <div className="mt-2">
-            <div className="mb-2 text-xs text-gray-600">Or create options manually:</div>
-            <div className="space-y-2">
-              {(question.options || []).map((o: any, i: number) => (
-                <div key={i} className="flex gap-2 items-center">
-                  <input className="border px-2 py-1 rounded w-1/2" value={o.label} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, label: e.target.value } : opt) })} />
-                  <input className="border px-2 py-1 rounded w-1/2" value={o.value} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, value: e.target.value } : opt) })} />
-                  <button className="text-red-500" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).filter((_: any, idx: number) => idx !== i) })}>Remove</button>
-                </div>
-              ))}
-              <div>
-                <button type="button" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: [...(question.options || []), { label: 'New Option', value: `${Date.now()}` }] })} className="text-sm text-primary-600">+ Add Option</button>
+      {!collapsed ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Question Text <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={question.questionText}
+                onChange={e => {
+                  const newText = e.target.value;
+                  // Auto-suggest fieldName unless user has manually edited it.
+                  const currentField = question.fieldName || '';
+                  const suggestedFromOld = makeFieldName(question.questionText || '');
+                  // If field is empty or still matches the auto-suggest from previous question text, update it.
+                  if (!currentField || currentField === suggestedFromOld || currentField.startsWith(suggestedFromOld + '_')) {
+                    const suggested = makeFieldName(newText);
+                    updateQuestion(pIdx, sIdx, qIdx, { questionText: newText, fieldName: suggested });
+                  } else {
+                    updateQuestion(pIdx, sIdx, qIdx, { questionText: newText });
+                  }
+                }}
+                className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.questionText ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`}
+              />
+              {errors?.questionText && (
+                <p className="mt-1 text-xs text-red-600 flex items-center">
+                  <ExclamationCircleIcon className="h-3 w-3 mr-1" />
+                  {errors.questionText}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Field Name (machine-friendly)</label>
+              <input type="text" value={question.fieldName || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { fieldName: e.target.value })} className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.fieldName ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`} />
+              <p className="text-xs text-gray-500 mt-1">Used in computed formulas and exports. Use letters, numbers and underscores only.</p>
+              {errors?.fieldName && (
+                <p className="mt-1 text-xs text-red-600 flex items-center">
+                  <ExclamationCircleIcon className="h-3 w-3 mr-1" />
+                  {errors.fieldName}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Helper Text</label>
+              <input type="text" value={question.questionHelper || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { questionHelper: e.target.value })} className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Column Width (12-grid)</label>
+              <select value={question.columnSize} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { columnSize: Number(e.target.value) })} className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+                <option value={12}>12 — Full width</option>
+                <option value={6}>6 — Half width</option>
+                <option value={4}>4 — One third</option>
+                <option value={3}>3 — One quarter</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Required</label>
+              <div className="mt-1 min-h-[38px] flex items-center">
+                <label className="inline-flex items-center">
+                  <input type="checkbox" checked={!!question.required} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { required: e.target.checked })} className="mr-2" />
+                  <span className="text-sm text-gray-700">This question is required</span>
+                </label>
               </div>
             </div>
           </div>
-        </div>
-      )}
-      {question.answerType === AnswerType.COMPUTED && (
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-gray-700">Computed Formula</label>
-          <p className="text-xs text-gray-500 mb-1">Enter a JavaScript-like expression using other field names as variables. Example: <code>field_a + field_b * 2</code>. Use only numbers for arithmetic. The result will be computed at fill-time.</p>
-          <textarea rows={3} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300 font-mono text-sm" value={(question.metadata && question.metadata.computedFormula) || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), computedFormula: e.target.value } })} />
-        </div>
-      )}
-      {isFile && (
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-gray-700">Allowed File Types</label>
-          <p className="text-xs text-gray-500 mb-1">Enter comma-separated MIME types or extensions (e.g. <code>image/*,application/pdf</code> or <code>.jpg,.png,.pdf</code>).</p>
-          <input type="text" value={(question.metadata && question.metadata.allowedFileTypes) ? (question.metadata.allowedFileTypes.join(',')) : ''} onChange={e => {
-            const vals = String(e.target.value).split(',').map(s => s.trim()).filter(Boolean);
-            updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), allowedFileTypes: vals } });
-          }} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300" />
-        </div>
-      )}
-      {/* Display reviewers_comment Checkbox, label, and score */}
-      <div className="mt-4 flex flex-col gap-2">
-        <label className="inline-flex items-center gap-2">
-          <input
-            type="checkbox"
-            id={`reviewers_comment_${question.id}`}
-            checked={!!(question.metadata && question.metadata.displayReviewersComment)}
-            onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), displayReviewersComment: e.target.checked } })}
-          />
-          <span className="text-xs text-gray-700">Display reviewer comment field</span>
-        </label>
-        {question.metadata && question.metadata.displayReviewersComment && (
-          <div className="flex items-center gap-2 mt-2">
-            <label className="text-xs text-gray-500">Reviewer Comment Label:</label>
-            <input
-              type="text"
-              className="border px-1 py-0.5 rounded text-xs w-40"
-              value={question.metadata.reviewerCommentLabel || "Reviewer's Comment"}
-              onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...question.metadata, reviewerCommentLabel: e.target.value } })}
-              placeholder="Reviewer's Comment"
-            />
+
+          {hasOptions && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">
+                Options (Dropdown/Radio/Checkbox) <span className="text-red-500">*</span>
+              </label>
+              <p className="text-xs text-gray-500 mb-1">Paste from Excel (Value [tab] Label) to populate.</p>
+              <textarea
+                rows={3}
+                className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md font-mono text-xs ${errors?.options ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`}
+                placeholder="1	Option One&#10;2	Option Two"
+                onPaste={e => {
+                  const pastedText = e.clipboardData.getData('text');
+                  const options = parsePastedOptions(pastedText);
+                  if (options.length > 0) {
+                    e.preventDefault();
+                    updateQuestion(pIdx, sIdx, qIdx, { options });
+                  }
+                }}
+              />
+              {errors?.options && (
+                <p className="mt-1 text-xs text-red-600 flex items-center">
+                  <ExclamationCircleIcon className="h-3 w-3 mr-1" />
+                  {errors.options}
+                </p>
+              )}
+              <div className="mt-2">
+                <div className="mb-2 text-xs text-gray-600">Or create options manually:</div>
+                <div className="space-y-2">
+                  {(question.options || []).map((o: any, i: number) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <input className="border px-2 py-1 rounded w-1/2" value={o.label} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, label: e.target.value } : opt) })} />
+                      <input className="border px-2 py-1 rounded w-1/2" value={o.value} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, value: e.target.value } : opt) })} />
+                      <button className="text-red-500" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).filter((_: any, idx: number) => idx !== i) })}>Remove</button>
+                    </div>
+                  ))}
+                  <div>
+                    <button type="button" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: [...(question.options || []), { label: 'New Option', value: `${Date.now()}` }] })} className="text-sm text-primary-600">+ Add Option</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {question.answerType === AnswerType.COMPUTED && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Computed Formula</label>
+              <p className="text-xs text-gray-500 mb-1">Enter a JavaScript-like expression using other field names as variables. Example: <code>field_a + field_b * 2</code>. Use only numbers for arithmetic. The result will be computed at fill-time.</p>
+              <textarea rows={3} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300 font-mono text-sm" value={(question.metadata && question.metadata.computedFormula) || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), computedFormula: e.target.value } })} />
+            </div>
+          )}
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700">Visibility Condition (Show If)</label>
+            <textarea rows={2} placeholder="e.g. age > 18" className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300 font-mono text-sm" value={(question.metadata && question.metadata.showIf) || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), showIf: e.target.value } })} />
           </div>
-        )}
-        {/* Score box always visible */}
-        <div className="flex items-center gap-2 mt-2">
-          <label className="text-xs text-gray-500">Score:</label>
-          <input
-            type="number"
-            className="border px-1 py-0.5 rounded text-xs w-20"
-            value={question.metadata && question.metadata.score !== undefined ? question.metadata.score : ''}
-            onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...question.metadata, score: e.target.value === '' ? undefined : Number(e.target.value) } })}
-            placeholder="Score"
-            min={0}
-          />
+
+          {isFile && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Allowed File Types</label>
+              <p className="text-xs text-gray-500 mb-1">Enter comma-separated MIME types or extensions (e.g. <code>image/*,application/pdf</code> or <code>.jpg,.png,.pdf</code>).</p>
+              <input type="text" value={(question.metadata && question.metadata.allowedFileTypes) ? (question.metadata.allowedFileTypes.join(',')) : ''} onChange={e => {
+                const vals = String(e.target.value).split(',').map(s => s.trim()).filter(Boolean);
+                updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), allowedFileTypes: vals } });
+              }} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300" />
+            </div>
+          )}
+
+          {/* Display reviewers_comment Checkbox and label */}
+          <div className="mt-4 flex flex-col gap-2">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                id={`reviewers_comment_${question.id}`}
+                checked={!!(question.metadata && question.metadata.displayReviewersComment)}
+                onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), displayReviewersComment: e.target.checked } })}
+              />
+              <span className="text-xs text-gray-700">Display reviewer comment field</span>
+            </label>
+            {question.metadata && question.metadata.displayReviewersComment && (
+              <div className="flex items-center gap-2 mt-2">
+                <label className="text-xs text-gray-500">Reviewer Comment Label:</label>
+                <input
+                  type="text"
+                  className="border px-1 py-0.5 rounded text-xs w-40"
+                  value={question.metadata.reviewerCommentLabel || "Reviewer's Comment"}
+                  onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...question.metadata, reviewerCommentLabel: e.target.value } })}
+                  placeholder="Reviewer's Comment"
+                />
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="py-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-gray-800">{question.questionText || '(no text)'}</div>
+              <div className="text-xs text-gray-500">{question.answerType}{question.required ? ' · Required' : ''}</div>
+            </div>
+            <div className="text-xs text-gray-500">Field: {question.fieldName || '-'}</div>
+          </div>
         </div>
-      </div>
+      )}
+      {/* Score moved to header */}
     </div>
   );
 };
@@ -456,6 +477,28 @@ const BuildFormPage: React.FC = () => {
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer as ArrayBuffer);
         const worksheet = workbook.worksheets[0];
+        // Read options from second sheet named 'options' (or second worksheet) if present
+        const optionsSheet = workbook.getWorksheet('options') || workbook.worksheets[1];
+        const optionsMap: Record<string, Array<{ value: string; label: string }>> = {};
+        if (optionsSheet) {
+          // Expect header row with columns: name, value, label (case-insensitive)
+          const optHeaders: string[] = [];
+          optionsSheet.getRow(1).eachCell((cell) => optHeaders.push(String(cell.value || '').toLowerCase()));
+          const nameIdx = optHeaders.findIndex(h => h === 'name' || h === 'field_name' || h === 'fieldname');
+          const valueIdx = optHeaders.findIndex(h => h === 'value');
+          const labelIdx = optHeaders.findIndex(h => h === 'label');
+          if (nameIdx !== -1 && valueIdx !== -1) {
+            optionsSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+              if (rowNumber === 1) return;
+              const name = String(row.getCell(nameIdx + 1).value || '').trim();
+              const value = String(row.getCell(valueIdx + 1).value || '').trim();
+              const label = labelIdx !== -1 ? String(row.getCell(labelIdx + 1).value || '').trim() : value;
+              if (!name) return;
+              if (!optionsMap[name]) optionsMap[name] = [];
+              optionsMap[name].push({ value, label });
+            });
+          }
+        }
         const data: any[] = [];
         const headers: string[] = [];
         worksheet.getRow(1).eachCell((cell) => headers.push(String(cell.value)));
@@ -469,27 +512,46 @@ const BuildFormPage: React.FC = () => {
         });
         const newQuestions: Question[] = data.map((row: any) => {
           const answerType = (row['Type'] && Object.values(AnswerType).includes(row['Type'])) ? row['Type'] as AnswerType : (row['type'] && Object.values(AnswerType).includes(row['type'])) ? row['type'] as AnswerType : AnswerType.TEXT;
-          // Parse options: Nigeria:FCT|Togo:Lome
-          let options = undefined;
-          if (row['Options'] && [AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(answerType)) {
-            options = String(row['Options'])
-              .split('|')
-              .map((o: string) => {
-                const parts = o.split(':');
-                return { value: (parts[0] || '').trim(), label: (parts[1] || parts[0] || '').trim() };
-              });
-          }
-          // Computed fields: use field_name and calculation columns
+          // Compute field name early (used for options lookup)
           let fieldName = row['field_name'] || row['Field Name'] || row['FieldName'] || makeFieldName(row['Question'] || row['question'] || `q_${Math.random().toString(36).substr(2, 4)}`);
-          let metadata = undefined;
+          // Page and Section if provided in the spreadsheet
+          const pageNameFromRow = row['Page'] || row['page'] || row['page_name'] || null;
+          const sectionNameFromRow = row['Section'] || row['section'] || row['section_name'] || null;
+          // Parse options: either from inline 'Options' column (value:label|value:label) or from second sheet 'options'
+          let options = undefined;
+          if ([AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(answerType)) {
+            if (row['Options']) {
+              options = String(row['Options'])
+                .split('|')
+                .map((o: string) => {
+                  const parts = o.split(':');
+                  return { value: (parts[0] || '').trim(), label: (parts[1] || parts[0] || '').trim() };
+                });
+            } else {
+              // try options sheet by field name
+              const lookupName = fieldName || (row['field_name'] || row['Field Name'] || row['FieldName']);
+              if (lookupName) {
+                const key = String(lookupName).trim();
+                if (optionsMap[key] && optionsMap[key].length) {
+                  options = optionsMap[key];
+                }
+              }
+            }
+          }
+          // Computed fields and visibility condition
+          let metadata: Record<string, any> | undefined = undefined;
+          const showIfFromRow = row['ShowIf'] || row['showIf'] || row['Visibility'] || row['visibility'] || row['Visible If'] || null;
           if (answerType === AnswerType.COMPUTED) {
             metadata = { computedFormula: row['calculation'] || row['Calculation'] || '' };
+          }
+          if (showIfFromRow) {
+            metadata = { ...(metadata || {}), showIf: String(showIfFromRow) };
           }
           return {
             id: `q${Math.random().toString(36).substr(2, 9)}`,
             activityId: activityId || '',
-            pageName: formDef.pages[activePageIndex].name,
-            sectionName: formDef.pages[activePageIndex].sections[0].name,
+            pageName: pageNameFromRow || formDef.pages[activePageIndex].name,
+            sectionName: sectionNameFromRow || formDef.pages[activePageIndex].sections[0].name,
             questionText: row['Question'] || row['question'] || 'Untitled',
             questionHelper: row['Helper Text'] || row['HelperText'] || row['helper'] || undefined,
             answerType,
@@ -503,9 +565,31 @@ const BuildFormPage: React.FC = () => {
           };
         });
         if (newQuestions.length > 0) {
-          const newFormDef = { ...formDef };
-          // Append to first section of active page
-          newFormDef.pages[activePageIndex].sections[0].questions.push(...newQuestions);
+          // Deep-ish copy of formDef pages/sections to avoid mutating original
+          const newFormDef: any = {
+            ...formDef,
+            pages: (formDef.pages || []).map(p => ({ ...p, sections: (p.sections || []).map(s => ({ ...s, questions: [...(s.questions || [])] })) }))
+          };
+
+          for (const q of newQuestions) {
+            const targetPageName = q.pageName || (formDef.pages[activePageIndex] && formDef.pages[activePageIndex].name) || `Page ${newFormDef.pages.length + 1}`;
+            const targetSectionName = q.sectionName || 'Section 1';
+
+            let page = newFormDef.pages.find((p: any) => String(p.name).trim() === String(targetPageName).trim());
+            if (!page) {
+              page = { id: `page-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, name: targetPageName, sections: [] };
+              newFormDef.pages.push(page);
+            }
+
+            let section = (page.sections || []).find((s: any) => String(s.name).trim() === String(targetSectionName).trim());
+            if (!section) {
+              section = { id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, name: targetSectionName, questions: [] };
+              page.sections.push(section);
+            }
+
+            section.questions.push(q);
+          }
+
           updateFormDef(newFormDef);
           setIsImportModalOpen(false);
           alert(`Successfully imported ${newQuestions.length} questions.`);
@@ -642,11 +726,13 @@ const BuildFormPage: React.FC = () => {
             <li><strong>Question</strong> (required) — question text.</li>
             <li><strong>Type</strong> — one of: textbox, textarea, number, date, time, dropdown, radio, checkbox, file, computed.</li>
             <li><strong>Helper Text</strong> — optional helper or hint text.</li>
-            <li><strong>Options</strong> — for dropdown/radio/checkbox; use <code>value:label|value:label</code> (pipe-separated). Example: <code>Nigeria:FCT|Togo:Lome</code></li>
+            <li><strong>Options</strong> — for dropdown/radio/checkbox; inline options may use <code>value:label|value:label</code> (pipe-separated). Example: <code>Nigeria:FCT|Togo:Lome</code>. Alternatively, provide a second worksheet named <strong>options</strong> with columns <code>name</code> (field_name), <code>value</code>, <code>label</code> to supply options for multiple fields centrally.</li>
             <li><strong>Required</strong> — "true" or "false" (optional). Marks the question as mandatory when true.</li>
             <li><strong>ColumnSize</strong> — numeric; recommended values: 12 (full), 6 (half), 4 (third), 3 (quarter). Default is 12.</li>
             <li><strong>field_name</strong> — (for computed only) non-spaced field name to reference in formulas.</li>
             <li><strong>calculation</strong> — (for computed only) mathematical formula using field names, obeying BODMAS. Example: <code>age + score * 2</code></li>
+            <li><strong>Page</strong> — optional: name of the page (tab) to place the question on. If omitted, the currently active page is used.</li>
+            <li><strong>Section</strong> — optional: name of the section inside the page to place the question. If omitted, the first section of the page is used.</li>
           </ul>
           <a
             href="/form_template.csv"
@@ -656,18 +742,19 @@ const BuildFormPage: React.FC = () => {
           >
             Download sample template (CSV)
           </a>
-          <p className="text-xs text-gray-500">When importing, questions will be added to the currently active page and the first section of that page. You can edit page/section assignments after import.</p>
+          <p className="text-xs text-gray-500">When importing, if your sheet provides <strong>Page</strong> and/or <strong>Section</strong> columns those values will be used to place questions into matching pages and sections (new pages/sections will be created when necessary). If Page/Section are omitted, questions will be added to the currently active page and its first section. You can edit assignments after import.</p>
           <input type="file" accept=".xlsx,.csv" onChange={handleFileImport} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
           <div className="text-xs text-gray-500">Notes: empty rows are ignored. For option values, use <code>value:label|value:label</code> (pipe-separated). For computed fields, provide <code>field_name</code> and <code>calculation</code> columns. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
         </div>
       </Modal>
 
-      <Modal isOpen={isGuideModalOpen} onClose={() => setIsGuideModalOpen(false)} title="Form Builder Guide" footer={<Button onClick={() => setIsGuideModalOpen(false)}>Close</Button>}>
+      <Modal size="2xl" isOpen={isGuideModalOpen} onClose={() => setIsGuideModalOpen(false)} title="Form Builder Guide" footer={<Button onClick={() => setIsGuideModalOpen(false)}>Close</Button>}>
         <div className="space-y-2 text-sm text-gray-700">
           <p><strong>Pages & Sections:</strong> Organize your form into pages (tabs) and sections.</p>
           <p><strong>Questions:</strong> Add various question types using the buttons at the bottom of each section.</p>
-          <p><strong>Options:</strong> For Dropdown, Radio, and Checkbox, you can paste options from Excel. Format: <code>Value [TAB] Label</code> or just <code>Label</code> on each line.</p>
+          <p><strong>Options:</strong> For Dropdown, Radio, and Checkbox, provide options via the separate <strong>options</strong> worksheet in the Excel template (preferred) or paste options into a question's Options field when editing. The worksheet should have columns <code>name</code> (field_name), <code>value</code>, <code>label</code>.</p>
           <p><strong>Computed Fields:</strong> Use the <code>Computed</code> question type to create fields calculated from other fields. Assign a unique <em>Field Name</em> and enter a formula using those names (e.g. <code>field_a + field_b * 2</code>).</p>
+          <p><strong>Visibility / Conditional Logic:</strong> To make a question appear only under certain conditions, expand that question in the Form Builder and edit the <strong>Visibility Condition (Show If)</strong> field under the question's advanced settings. Enter a JavaScript-like expression referencing other questions by their <em>Field Name</em>. Examples: <code>age &gt; 18</code>, <code>facility === 'Nairobi' &amp;&amp; score &gt;= 50</code>, or <code>!!name</code> (shows when name is non-empty).</p>
           <p><strong>Validation:</strong> Questions marked with <span className="text-red-500">*</span> must have text, and selection types must have options.</p>
         </div>
       </Modal>

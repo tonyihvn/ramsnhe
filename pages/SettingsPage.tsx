@@ -437,8 +437,12 @@ const SettingsPage: React.FC = () => {
         // try to load server env defaults and settings (admin-only). Fail silently if not authorized.
         (async () => {
             try {
-                const r = await fetch('/api/admin/env', { credentials: 'include' });
-                if (r.ok) {
+                let r = await fetch('/api/admin/env', { credentials: 'include' });
+                if (r.status === 401) {
+                    // fallback to public env endpoint when not authenticated
+                    try { r = await fetch('/api/env'); } catch (e) { /* ignore */ }
+                }
+                if (r && r.ok) {
                     const je = await r.json();
                     setDbEnv(je);
                     // populate editable form values if not already set
@@ -689,25 +693,25 @@ const SettingsPage: React.FC = () => {
                 <Card>
                     <h3 className="text-lg font-medium mb-2">Roles & Permissions</h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div>
-                                <h4 className="font-medium">Roles</h4>
-                                <div className="mt-2 space-y-2">
-                                    <RolesList />
-                                </div>
-                            </div>
-                            <div>
-                                <h4 className="font-medium">Permissions</h4>
-                                <div className="mt-2 space-y-2">
-                                    <PermissionsList />
-                                </div>
-                            </div>
-                            <div>
-                                <h4 className="font-medium">Users</h4>
-                                <div className="mt-2 space-y-2">
-                                    <UsersList />
-                                </div>
+                        <div>
+                            <h4 className="font-medium">Roles</h4>
+                            <div className="mt-2 space-y-2">
+                                <RolesList />
                             </div>
                         </div>
+                        <div>
+                            <h4 className="font-medium">Permissions</h4>
+                            <div className="mt-2 space-y-2">
+                                <PermissionsList />
+                            </div>
+                        </div>
+                        <div>
+                            <h4 className="font-medium">Users</h4>
+                            <div className="mt-2 space-y-2">
+                                <UsersList />
+                            </div>
+                        </div>
+                    </div>
                 </Card>
             )}
         </div>

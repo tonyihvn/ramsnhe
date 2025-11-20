@@ -15,9 +15,11 @@ const UsersPage: React.FC = () => {
   useEffect(() => {
     // Fetch roles and permissions from backend
     fetch('/api/admin/roles', { credentials: 'include' })
-      .then(r => r.json()).then(setAllRoles).catch(() => setAllRoles([]));
+      .then(async (r) => { if (!r.ok) { setAllRoles([]); return; } const j = await r.json(); setAllRoles(Array.isArray(j) ? j : []); })
+      .catch(() => setAllRoles([]));
     fetch('/api/admin/permissions', { credentials: 'include' })
-      .then(r => r.json()).then(setAllPermissions).catch(() => setAllPermissions([]));
+      .then(async (r) => { if (!r.ok) { setAllPermissions([]); return; } const j = await r.json(); setAllPermissions(Array.isArray(j) ? j : []); })
+      .catch(() => setAllPermissions([]));
   }, []);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentUserEdit, setCurrentUserEdit] = useState<Partial<User>>({});

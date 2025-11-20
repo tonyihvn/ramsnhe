@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 dotenv.config();
 
 const app = express();
@@ -14,68 +15,7 @@ const PORT = process.env.PORT || 3000;
 // Allow public admin-like endpoints in development or when explicitly enabled
 const allowPublicAdmin = (process.env.ALLOW_PUBLIC_ADMIN === 'true') || (process.env.NODE_ENV !== 'production');
 
-// API: Get all submissions for an activity (Power BI friendly)
-app.get('/api/activity/:activityId/submissions', async (req, res) => {
-    const { activityId } = req.params;
-    try {
-        const { rows } = await pool.query(
-            `SELECT ar.*, u.first_name, u.last_name, u.email, f.name as facility_name
-             FROM activity_reports ar
-             LEFT JOIN users u ON ar.user_id = u.id
-             LEFT JOIN facilities f ON ar.facility_id = f.id
-             WHERE ar.activity_id = $1
-             ORDER BY ar.submission_date DESC`,
-            [activityId]
-        );
-        res.json(rows);
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Failed to fetch submissions' });
-    }
-});
-
-// API: Get a single submission for an activity by user or facility
-app.get('/api/activity/:activityId/submission', async (req, res) => {
-    const { activityId } = req.params;
-    const { userId, facilityId } = req.query;
-    try {
-        let where = 'ar.activity_id = $1';
-        const params = [activityId];
-        if (userId) { where += ' AND ar.user_id = $2'; params.push(userId); }
-        if (facilityId) { where += userId ? ' AND ar.facility_id = $3' : ' AND ar.facility_id = $2'; params.push(facilityId); }
-        const { rows } = await pool.query(
-            `SELECT ar.*, u.first_name, u.last_name, u.email, f.name as facility_name
-             FROM activity_reports ar
-             LEFT JOIN users u ON ar.user_id = u.id
-             LEFT JOIN facilities f ON ar.facility_id = f.id
-             WHERE ${where}
-             ORDER BY ar.submission_date DESC
-             LIMIT 1`,
-            params
-        );
-        if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
-        res.json(rows[0]);
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Failed to fetch submission' });
-    }
-});
-// LLM SQL generation endpoint (mock or connect to your LLM logic)
-app.post('/api/llm/generate_sql', async (req, res) => {
-    try {
-        const { prompt } = req.body;
-        if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
-        // TODO: Replace this mock with your LLM integration logic
-        // Example: call Ollama, OpenAI, or your FastAPI chroma service here
-        // For now, just echo a fake SQL
-        return res.json({ sql: `-- SQL generated for prompt: ${prompt}\nSELECT * FROM my_table WHERE ...;` });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Failed to generate SQL' });
-    }
-});
-
-// Middleware
+// Middleware - MUST be registered before route handlers so req.body is available
 app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -87,6 +27,214 @@ app.use(
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     })
 );
+
+// LLM SQL generation endpoint (provider dispatch + fallback)
+async function tryCallProvider(providerRow, prompt, ragContext) {
+    try {
+        const cfg = providerRow.config || {};
+        const base = (cfg.url || process.env.OLLAMA_URL || cfg.endpoint || '').toString().replace(/\/$/, '') || 'http://localhost:11434';
+        const model = providerRow.model || cfg.model || undefined;
+        const payload = { prompt: `${ragContext || ''}\n\nUser: ${prompt}`, model };
+
+        const attempts = [`${base}/v1/generate`, `${base}/generate`, `${base}/llms/generate`, `${base}/llms`, base];
+        for (const ep of attempts) {
+            try {
+                const r = await fetch(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!r.ok) continue;
+                let j = null;
+                try { j = await r.json(); } catch (e) { const txt = await r.text(); j = { text: txt }; }
+                let text = '';
+                if (typeof j === 'string') text = j;
+                else if (j.text) text = j.text;
+                else if (j.output && j.output[0] && j.output[0].content) text = j.output[0].content;
+                else if (j.choices && Array.isArray(j.choices) && j.choices[0]) {
+                    const c = j.choices[0];
+                    text = c.message?.content || c.text || JSON.stringify(c);
+                } else {
+                    text = JSON.stringify(j);
+                }
+                let sql = null;
+                const fenced = text.match(/```sql\s*([\s\S]*?)```/i);
+                if (fenced) sql = fenced[1].trim();
+                else {
+                    const sel = text.match(/(SELECT[\s\S]*)/i);
+                    if (sel) sql = sel[1].trim();
+                }
+                return { text, sql };
+            } catch (e) {
+                continue;
+            }
+        }
+        return null;
+    } catch (e) {
+        console.error('tryCallProvider error', e);
+        return null;
+    }
+}
+
+app.post('/api/llm/generate_sql', async (req, res) => {
+    try {
+        const { prompt, context, scope, providerId } = req.body || {};
+        if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+
+        const rres = await pool.query('SELECT * FROM rag_schemas');
+        const ragRows = rres.rows || [];
+
+        const tokens = (String(prompt).toLowerCase().match(/\w+/g) || []);
+        const scored = ragRows.map(r => {
+            const table = (r.table_name || '').toString().toLowerCase();
+            const cols = (r.schema || []).map(c => (c.column_name || c.name || '').toString().toLowerCase());
+            let score = 0;
+            for (const t of tokens) {
+                if (!t) continue;
+                if (table.includes(t)) score += 3;
+                for (const c of cols) {
+                    if (c === t) score += 2;
+                    else if (c.includes(t)) score += 1;
+                }
+            }
+            return { r, score, cols };
+        });
+
+        scored.sort((a, b) => (b.score - a.score));
+        const best = scored[0];
+        if (!best || best.score <= 0) {
+            const available = ragRows.map(rr => rr.table_name).filter(Boolean).slice(0, 50);
+            return res.json({ text: `I couldn't confidently match your request to any table schema. Please clarify which table/fields you mean. Available tables: ${available.join(', ')}` });
+        }
+
+        const tableName = best.r.table_name;
+        const matchedCols = [];
+        for (const c of (best.r.schema || [])) {
+            const cname = (c.column_name || c.name || '').toString();
+            const low = cname.toLowerCase();
+            if (tokens.some(t => low.includes(t) || t === low)) matchedCols.push(cname);
+        }
+
+        const schemaDesc = (best.r.schema || []).map(c => `${c.column_name || c.name}(${c.data_type || ''})`).join(', ');
+        const samplePreview = JSON.stringify((best.r.sample_rows || []).slice(0, 3));
+        const ragContext = `Table: ${tableName}\nColumns: ${schemaDesc}\nSample: ${samplePreview}`;
+
+        let providerUsed = null;
+        let providerResponse = null;
+        try {
+            if (providerId) {
+                const pr = await pool.query('SELECT * FROM llm_providers WHERE id = $1', [providerId]);
+                if (pr.rows.length) {
+                    const prov = pr.rows[0];
+                    providerResponse = await tryCallProvider(prov, prompt, ragContext);
+                    if (providerResponse) providerUsed = prov.name || prov.provider_id;
+                }
+            } else {
+                const pres = await pool.query('SELECT * FROM llm_providers ORDER BY priority ASC NULLS LAST');
+                for (const prov of pres.rows) {
+                    try {
+                        const r = await tryCallProvider(prov, prompt, ragContext);
+                        if (r) { providerResponse = r; providerUsed = prov.name || prov.provider_id; break; }
+                    } catch (e) { }
+                }
+            }
+        } catch (e) { console.error('provider dispatch error', e); }
+
+        if (providerResponse && (providerResponse.sql || providerResponse.text)) {
+            const text = providerResponse.text || '';
+            const sql = providerResponse.sql || '';
+            return res.json({ text, sql, ragTables: [tableName], matchedColumns: matchedCols, providerUsed });
+        }
+
+        const lower = String(prompt).toLowerCase();
+        let sql = '';
+        const numericCol = (best.r.schema || []).find(c => /(int|numeric|decimal|real|double|smallint|bigint)/i.test(String(c.data_type || '')));
+
+        if (/(average|avg|mean)/.test(lower) && numericCol) {
+            const agg = `AVG("${numericCol.column_name}") as avg_${numericCol.column_name}`;
+            const byMatch = prompt.match(/by\s+([a-zA-Z0-9_]+)/i);
+            if (byMatch) {
+                const groupCol = byMatch[1];
+                sql = `SELECT ${agg}, "${groupCol}" FROM "${tableName}" GROUP BY "${groupCol}" LIMIT 200`;
+            } else {
+                sql = `SELECT ${agg} FROM "${tableName}" LIMIT 200`;
+            }
+        } else if (/(count|how many|number of)/.test(lower)) {
+            const byMatch = prompt.match(/by\s+([a-zA-Z0-9_]+)/i);
+            if (byMatch) {
+                const groupCol = byMatch[1];
+                sql = `SELECT "${groupCol}", COUNT(*) as count FROM "${tableName}" GROUP BY "${groupCol}" LIMIT 200`;
+            } else {
+                sql = `SELECT COUNT(*) as count FROM "${tableName}"`;
+            }
+        } else {
+            let selectCols = [];
+            if (matchedCols.length > 0) selectCols = matchedCols.slice(0, 10);
+            else selectCols = (best.r.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).slice(0, 10);
+            const selectClause = (selectCols.length > 0) ? selectCols.map(c => `"${c}"`).join(', ') : '*';
+            let where = '';
+            const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([a-zA-Z0-9_ \-\.]+)['"]?/i);
+            if (whereMatch) {
+                const col = whereMatch[1]; const val = whereMatch[3];
+                const hasCol = (best.r.schema || []).some(c => (c.column_name || c.name || '') === col);
+                if (hasCol) where = ` WHERE "${col}" = '${val.replace(/'/g, "''")}'`;
+            } else {
+                const forMatch = prompt.match(/for\s+([a-zA-Z0-9_ \-]+)/i);
+                if (forMatch) {
+                    const val = forMatch[1].trim();
+                    const textCol = (best.r.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
+                    if (textCol) where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${val.replace(/'/g, "''")}%'`;
+                }
+            }
+            sql = `SELECT ${selectClause} FROM "${tableName}"${where} LIMIT 500`;
+        }
+
+        const explanation = `I selected the RAG schema for table "${tableName}" as the best match based on your prompt. Matched columns: ${matchedCols.join(', ') || '(none)'}.
+I will produce a safe, read-only SQL query constrained to the discovered table schema and return results formatted per your request.`;
+        const responseText = `${explanation}\n\nAction to Be Taken:\n${sql}`;
+        return res.json({ text: responseText, sql, ragTables: [tableName], matchedColumns: matchedCols, providerUsed });
+
+    } catch (e) {
+        console.error('LLM/generate_sql error', e);
+        res.status(500).json({ error: 'Failed to generate SQL', details: String(e) });
+    }
+});
+
+// Execute safe read-only SQL against the configured target DB (uses process.env DB_* settings)
+app.post('/api/execute_sql', async (req, res) => {
+    try {
+        const { sql } = req.body || {};
+        if (!sql) return res.status(400).json({ error: 'Missing sql' });
+        // Enforce read-only single-statement SELECT queries for safety
+        const trimmed = sql.trim();
+        if (!/^select\s+/i.test(trimmed)) return res.status(400).json({ error: 'Only SELECT queries are allowed' });
+        if (/;/.test(trimmed.replace(/\s+/g, ' ')) && !/;\s*\z/.test(trimmed)) {
+            // multiple statements detected (naive check)
+            return res.status(400).json({ error: 'Multiple statements are not allowed' });
+        }
+
+        const targetConfig = {
+            user: process.env.DB_USER || process.env.TARGET_DB_USER,
+            host: process.env.DB_HOST || process.env.TARGET_DB_HOST,
+            database: process.env.DB_NAME || process.env.TARGET_DB_NAME,
+            password: process.env.DB_PASSWORD || process.env.TARGET_DB_PASSWORD,
+            port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
+            connectionTimeoutMillis: 10000
+        };
+
+        const targetPool = new Pool(targetConfig);
+        try {
+            const result = await targetPool.query(trimmed);
+            await targetPool.end();
+            return res.json({ rows: result.rows, rowCount: result.rowCount });
+        } catch (e) {
+            await targetPool.end().catch(() => { });
+            console.error('execute_sql query error', e);
+            return res.status(500).json({ error: String(e.message || e) });
+        }
+    } catch (e) {
+        console.error('execute_sql error', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+
+// ...existing middleware registered earlier
 
 // Database Connection
 const pool = new Pool({
@@ -328,7 +476,7 @@ async function initDb() {
         console.error('Failed to ensure default admin user', err);
     }
 
-    
+
 
     // Seed default roles and permissions if missing
     try {
@@ -395,6 +543,367 @@ async function initDb() {
         }
     } catch (err) {
         console.error('Failed to assign Admin role to default admin user (post-seed):', err);
+    }
+}
+
+// Helper: connect to an arbitrary target DB (Postgres or MySQL). Returns { type: 'pg'|'mysql', client }
+async function connectToTargetDB(cfg) {
+    // cfg: { user, host, database, password, port, type }
+    const typeHint = (cfg.type || '').toString().toLowerCase();
+    const port = Number(cfg.port || 0);
+    if (typeHint === 'mysql' || port === 3306) {
+        // dynamic import to avoid hard dependency unless used
+        try {
+            const mysql = await import('mysql2/promise');
+            const conn = await mysql.createConnection({ host: cfg.host, user: cfg.user, database: cfg.database, password: cfg.password, port: cfg.port ? Number(cfg.port) : undefined });
+            return { type: 'mysql', client: conn };
+        } catch (e) {
+            throw new Error('mysql2 is required to connect to MySQL target DB. Install it: npm install mysql2');
+        }
+    }
+
+    // default: Postgres
+    const pool = new Pool({ user: cfg.user, host: cfg.host, database: cfg.database, password: cfg.password, port: cfg.port ? Number(cfg.port) : undefined, connectionTimeoutMillis: 10000 });
+    // test
+    await pool.query('SELECT 1');
+    return { type: 'pg', client: pool };
+}
+
+// Create the app tables in the target DB with prefix (e.g., dqai_)
+async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
+    const connObj = await connectToTargetDB(cfg);
+    try {
+        if (connObj.type === 'pg') {
+            const p = connObj.client;
+            const q = async (sql) => await p.query(sql);
+            // Use JSONB in Postgres
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}users" (
+                id SERIAL PRIMARY KEY,
+                first_name TEXT,
+                last_name TEXT,
+                email TEXT UNIQUE,
+                password TEXT,
+                role TEXT,
+                status TEXT,
+                facility_id INTEGER,
+                profile_image TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}programs" (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                details TEXT,
+                type TEXT,
+                category TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}facilities" (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                state TEXT,
+                lga TEXT,
+                address TEXT,
+                category TEXT
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}activities" (
+                id SERIAL PRIMARY KEY,
+                title TEXT,
+                subtitle TEXT,
+                program_id INTEGER,
+                details TEXT,
+                start_date TIMESTAMP,
+                end_date TIMESTAMP,
+                response_type TEXT,
+                category TEXT,
+                status TEXT,
+                created_by INTEGER,
+                form_definition JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}activity_reports" (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER,
+                user_id INTEGER,
+                facility_id INTEGER,
+                status TEXT,
+                answers JSONB,
+                reviewers_report TEXT,
+                overall_score NUMERIC,
+                reported_by INTEGER,
+                submission_date TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}questions" (
+                id TEXT PRIMARY KEY,
+                activity_id INTEGER,
+                page_name TEXT,
+                section_name TEXT,
+                question_text TEXT,
+                question_helper TEXT,
+                answer_type TEXT,
+                category TEXT,
+                question_group TEXT,
+                column_size INTEGER,
+                status TEXT,
+                options JSONB,
+                metadata JSONB,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}answers" (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER,
+                activity_id INTEGER,
+                question_id TEXT,
+                answer_value JSONB,
+                facility_id INTEGER,
+                user_id INTEGER,
+                recorded_by INTEGER,
+                answer_datetime TIMESTAMP DEFAULT NOW(),
+                reviewers_comment TEXT,
+                quality_improvement_followup TEXT,
+                score NUMERIC,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}uploaded_docs" (
+                id SERIAL PRIMARY KEY,
+                activity_id INTEGER,
+                facility_id INTEGER,
+                user_id INTEGER,
+                uploaded_by INTEGER,
+                file_content JSONB,
+                filename TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}roles" (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}permissions" (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}role_permissions" (
+                role_id INTEGER,
+                permission_id INTEGER,
+                PRIMARY KEY (role_id, permission_id)
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}user_roles" (
+                user_id INTEGER,
+                role_id INTEGER,
+                PRIMARY KEY (user_id, role_id)
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}settings" (
+                key TEXT PRIMARY KEY,
+                value JSONB
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}llm_providers" (
+                id SERIAL PRIMARY KEY,
+                provider_id TEXT,
+                name TEXT,
+                model TEXT,
+                config JSONB,
+                priority INTEGER
+            )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}rag_schemas" (
+                id SERIAL PRIMARY KEY,
+                table_name TEXT,
+                schema JSONB,
+                sample_rows JSONB,
+                generated_at TIMESTAMP DEFAULT NOW()
+            )`);
+            return { ok: true };
+        } else if (connObj.type === 'mysql') {
+            const c = connObj.client;
+            const exec = async (sql) => await c.execute(sql);
+            // Use JSON type in MySQL (5.7+); fallback to LONGTEXT if not supported by target
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}users\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                first_name TEXT,
+                last_name TEXT,
+                email TEXT UNIQUE,
+                password TEXT,
+                role TEXT,
+                status TEXT,
+                facility_id INT,
+                profile_image TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}programs\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name TEXT,
+                details TEXT,
+                type TEXT,
+                category TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}facilities\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name TEXT,
+                state TEXT,
+                lga TEXT,
+                address TEXT,
+                category TEXT
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}activities\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title TEXT,
+                subtitle TEXT,
+                program_id INT,
+                details TEXT,
+                start_date DATETIME,
+                end_date DATETIME,
+                response_type TEXT,
+                category TEXT,
+                status TEXT,
+                created_by INT,
+                form_definition JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}activity_reports\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                activity_id INT,
+                user_id INT,
+                facility_id INT,
+                status TEXT,
+                answers JSON,
+                reviewers_report TEXT,
+                overall_score DECIMAL(10,2),
+                reported_by INT,
+                submission_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}questions\` (
+                id VARCHAR(255) PRIMARY KEY,
+                activity_id INT,
+                page_name TEXT,
+                section_name TEXT,
+                question_text TEXT,
+                question_helper TEXT,
+                answer_type TEXT,
+                category TEXT,
+                question_group TEXT,
+                column_size INT,
+                status TEXT,
+                options JSON,
+                metadata JSON,
+                created_by INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}answers\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                report_id INT,
+                activity_id INT,
+                question_id VARCHAR(255),
+                answer_value JSON,
+                facility_id INT,
+                user_id INT,
+                recorded_by INT,
+                answer_datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reviewers_comment TEXT,
+                quality_improvement_followup TEXT,
+                score DECIMAL(10,2),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}uploaded_docs\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                activity_id INT,
+                facility_id INT,
+                user_id INT,
+                uploaded_by INT,
+                file_content JSON,
+                filename TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}roles\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name TEXT UNIQUE,
+                description TEXT
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}permissions\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name TEXT UNIQUE,
+                description TEXT
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}role_permissions\` (
+                role_id INT,
+                permission_id INT,
+                PRIMARY KEY (role_id, permission_id)
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}user_roles\` (
+                user_id INT,
+                role_id INT,
+                PRIMARY KEY (user_id, role_id)
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}settings\` (
+                \`key\` TEXT PRIMARY KEY,
+                value JSON
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}llm_providers\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                provider_id TEXT,
+                name TEXT,
+                model TEXT,
+                config JSON,
+                priority INT
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}rag_schemas\` (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                table_name TEXT,
+                schema JSON,
+                sample_rows JSON,
+                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            return { ok: true };
+        }
+    } finally {
+        try { if (connObj.type === 'pg') await connObj.client.end(); else await connObj.client.end(); } catch (e) { /* ignore */ }
+    }
+}
+
+// Generate RAG schemas (columns + samples) from target DB and store in local rag_schemas and optionally push to CHROMA
+async function generateRagFromTarget(cfg, prefix = 'dqai_') {
+    const connObj = await connectToTargetDB(cfg);
+    try {
+        let tables = [];
+        if (connObj.type === 'pg') {
+            const p = connObj.client;
+            const tres = await p.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'");
+            tables = tres.rows.map(r => r.table_name).filter(t => t && t.startsWith(prefix));
+            for (const t of tables) {
+                const colsRes = await p.query('SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1', [t]);
+                let sample = [];
+                try { const sres = await p.query(`SELECT * FROM "${t}" LIMIT 5`); sample = sres.rows; } catch (e) { sample = []; }
+                // upsert into local rag_schemas (without prefix in stored name)
+                const shortName = t.startsWith(prefix) ? t.slice(prefix.length) : t;
+                await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [shortName, JSON.stringify(colsRes.rows), JSON.stringify(sample)]);
+                // optional: push to Chroma/Vector DB if configured via CHROMA_API_URL
+                if (process.env.CHROMA_API_URL) {
+                    try {
+                        const fetchRes = await fetch((process.env.CHROMA_API_URL || '').replace(/\/\/$/, '') + '/upsert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: shortName, docs: sample }) });
+                        // ignore result
+                    } catch (e) { console.error('Failed to push to CHROMA for', shortName, e); }
+                }
+            }
+        } else if (connObj.type === 'mysql') {
+            const c = connObj.client;
+            const [trows] = await c.execute("SHOW TABLES");
+            const key = Object.keys(trows[0] || {})[0];
+            tables = trows.map(r => r[key]).filter(t => t && t.startsWith(prefix));
+            for (const t of tables) {
+                const [cols] = await c.execute(`DESCRIBE \`${t}\``);
+                let sample = [];
+                try { const [srows] = await c.execute(`SELECT * FROM \`${t}\` LIMIT 5`); sample = srows; } catch (e) { sample = []; }
+                const shortName = t.startsWith(prefix) ? t.slice(prefix.length) : t;
+                await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [shortName, JSON.stringify(cols), JSON.stringify(sample)]);
+                if (process.env.CHROMA_API_URL) {
+                    try { await fetch((process.env.CHROMA_API_URL || '').replace(/\/\/$/, '') + '/upsert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: shortName, docs: sample }) }); } catch (e) { console.error('Failed to push to CHROMA for', shortName, e); }
+                }
+            }
+        }
+        return { ok: true, processed: tables.length };
+    } finally {
+        try { if (connObj.type === 'pg') await connObj.client.end(); else await connObj.client.end(); } catch (e) { }
     }
 }
 
@@ -474,8 +983,7 @@ app.post('/api/admin/env', requireAdmin, async (req, res) => {
                 const targetConfig = {
                     user: map['DB_USER'], host: map['DB_HOST'], database: map['DB_NAME'], password: map['DB_PASSWORD'], port: map['DB_PORT'] ? Number(map['DB_PORT']) : undefined
                 };
-                const Pool2 = require('pg').Pool;
-                const tempPool = new Pool2(targetConfig);
+                const tempPool = new Pool(targetConfig);
                 // get list of tables in public schema
                 const tablesRes = await tempPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'");
                 for (const r of tablesRes.rows) {
@@ -490,7 +998,7 @@ app.post('/api/admin/env', requireAdmin, async (req, res) => {
                         sample = sres.rows;
                     } catch (e) { /* ignore sampling errors */ }
                     // upsert into rag_schemas
-                    await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, schema, sample]);
+                    await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, JSON.stringify(schema), JSON.stringify(sample)]);
                 }
                 await tempPool.end();
                 console.log('RAG schemas generated/updated based on provided DB settings');
@@ -531,8 +1039,7 @@ app.post('/api/env', async (req, res) => {
                 const targetConfig = {
                     user: map['DB_USER'], host: map['DB_HOST'], database: map['DB_NAME'], password: map['DB_PASSWORD'], port: map['DB_PORT'] ? Number(map['DB_PORT']) : undefined
                 };
-                const Pool2 = require('pg').Pool;
-                const tempPool = new Pool2(targetConfig);
+                const tempPool = new Pool(targetConfig);
                 const tablesRes = await tempPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'");
                 for (const r of tablesRes.rows) {
                     const tname = r.table_name;
@@ -540,7 +1047,7 @@ app.post('/api/env', async (req, res) => {
                     const schema = colsRes.rows;
                     let sample = [];
                     try { const sres = await tempPool.query(`SELECT * FROM "${tname}" LIMIT 5`); sample = sres.rows; } catch (e) { /* ignore */ }
-                    await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, schema, sample]);
+                    await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, JSON.stringify(schema), JSON.stringify(sample)]);
                 }
                 await tempPool.end();
                 console.log('RAG schemas generated/updated (public env update)');
@@ -549,6 +1056,126 @@ app.post('/api/env', async (req, res) => {
 
         res.json({ success: true });
     } catch (e) { console.error('public env write error', e); res.status(500).json({ error: 'Failed to write env' }); }
+});
+
+// Switch the application's data DB to an external target and create required tables there (admin only)
+app.post('/api/admin/switch-db', requireAdmin, async (req, res) => {
+    try {
+        const { dbType, dbHost, dbPort, dbUser, dbPassword, dbName, prefix } = req.body || {};
+        if (!dbType || !dbHost || !dbPort || !dbUser || !dbName) return res.status(400).json({ ok: false, error: 'Missing parameters' });
+        const cfg = { type: dbType, host: dbHost, port: dbPort, user: dbUser, password: dbPassword, database: dbName };
+        // Create tables in target
+        const pfx = prefix || 'dqai_';
+        try {
+            await createAppTablesInTarget(cfg, pfx);
+        } catch (e) {
+            console.error('Failed to create tables in target DB', e);
+            return res.status(500).json({ ok: false, error: String(e.message || e) });
+        }
+
+        // Generate RAG schemas from the new DB and save into local rag_schemas and optional Chroma
+        try {
+            const gen = await generateRagFromTarget(cfg, pfx);
+            // Persist the target DB settings to local .env so execute_sql uses them
+            const envPath = path.resolve(process.cwd(), '.env');
+            const map = { DB_USER: dbUser, DB_HOST: dbHost, DB_NAME: dbName, DB_PORT: String(dbPort), DB_PASSWORD: dbPassword, DB_PREFIX: pfx, DB_TYPE: dbType };
+            const out = Object.entries(map).map(([k, v]) => `${k}=${v}`).join('\n');
+            try { await fs.promises.writeFile(envPath, out, 'utf8'); } catch (e) { console.error('Failed to write .env', e); }
+            try {
+                const localPath = path.resolve(process.cwd(), '.env.local');
+                await fs.promises.writeFile(localPath, out, 'utf8');
+            } catch (e) { console.error('Failed to write .env.local', e); }
+
+            return res.json({ ok: true, ragGenerated: gen.processed || 0 });
+        } catch (e) {
+            console.error('RAG generation failed', e);
+            return res.status(500).json({ ok: false, error: String(e) });
+        }
+    } catch (e) { console.error('switch-db error', e); res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// SMTP/POP settings endpoints (stored in settings table under key 'smtp')
+app.get('/api/admin/smtp', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query("SELECT value FROM settings WHERE key = 'smtp'");
+        if (r.rows.length === 0) return res.json(null);
+        return res.json(r.rows[0].value);
+    } catch (e) { console.error('Failed to get smtp settings', e); res.status(500).json({ error: String(e) }); }
+});
+
+app.post('/api/admin/smtp', requireAdmin, async (req, res) => {
+    try {
+        const payload = req.body || {};
+        await pool.query("INSERT INTO settings (key, value) VALUES ('smtp',$1) ON CONFLICT (key) DO UPDATE SET value = $1", [payload]);
+        res.json({ ok: true });
+    } catch (e) { console.error('Failed to save smtp settings', e); res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// Test SMTP send (admin only)
+app.post('/api/admin/test-smtp', requireAdmin, async (req, res) => {
+    try {
+        const { to, subject, text } = req.body || {};
+        if (!to) return res.status(400).json({ ok: false, error: 'Missing to' });
+        // load smtp settings
+        const sres = await pool.query("SELECT value FROM settings WHERE key = 'smtp'");
+        const smtp = sres.rows[0] ? sres.rows[0].value : null;
+        if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
+        // dynamic import nodemailer
+        try {
+            const nm = await import('nodemailer');
+            const transporter = nm.createTransport(smtp);
+            await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to, subject: subject || 'Test', text: text || 'Test message' });
+            return res.json({ ok: true });
+        } catch (e) {
+            console.error('Failed to send test smtp', e);
+            return res.status(500).json({ ok: false, error: String(e.message || e) });
+        }
+    } catch (e) { console.error('test-smtp error', e); res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// Password reset: request token
+app.post('/auth/request-password-reset', async (req, res) => {
+    try {
+        const { email } = req.body || {};
+        if (!email) return res.status(400).json({ ok: false, error: 'Missing email' });
+        const ures = await pool.query('SELECT id, email, first_name FROM users WHERE email = $1', [email]);
+        if (ures.rows.length === 0) return res.status(404).json({ ok: false, error: 'User not found' });
+        const user = ures.rows[0];
+        // ensure password_resets table exists
+        await pool.query(`CREATE TABLE IF NOT EXISTS password_resets (user_id INTEGER, token TEXT PRIMARY KEY, expires_at TIMESTAMP)`);
+        const token = crypto.randomBytes(24).toString('hex');
+        const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+        await pool.query('INSERT INTO password_resets (user_id, token, expires_at) VALUES ($1,$2,$3)', [user.id, token, expires]);
+        // load smtp
+        const sres = await pool.query("SELECT value FROM settings WHERE key = 'smtp'");
+        const smtp = sres.rows[0] ? sres.rows[0].value : null;
+        if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
+        const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const resetUrl = `${frontend.replace(/\/$/, '')}/reset-password?token=${token}`;
+        try {
+            const nm = await import('nodemailer');
+            const transporter = nm.createTransport(smtp);
+            const mailText = `Hello ${user.first_name || ''},\n\nYou requested a password reset. Click the link to reset your password: ${resetUrl}\n\nIf you didn't request this, ignore.`;
+            await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: user.email, subject: 'Password Reset', text: mailText });
+        } catch (e) { console.error('Failed to send reset email', e); }
+        return res.json({ ok: true });
+    } catch (e) { console.error('request-password-reset error', e); res.status(500).json({ ok: false, error: String(e) }); }
+});
+
+// Password reset: perform reset
+app.post('/auth/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body || {};
+        if (!token || !newPassword) return res.status(400).json({ ok: false, error: 'Missing token or newPassword' });
+        const tres = await pool.query('SELECT user_id, expires_at FROM password_resets WHERE token = $1', [token]);
+        if (tres.rows.length === 0) return res.status(400).json({ ok: false, error: 'Invalid token' });
+        const row = tres.rows[0];
+        if (new Date(row.expires_at) < new Date()) return res.status(400).json({ ok: false, error: 'Token expired' });
+        const hash = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, row.user_id]);
+        await pool.query('DELETE FROM password_resets WHERE token = $1', [token]);
+        return res.json({ ok: true });
+    } catch (e) { console.error('reset-password error', e); res.status(500).json({ ok: false, error: String(e) }); }
 });
 
 // Admin: generic settings store (key/value JSON)
@@ -612,14 +1239,38 @@ app.post('/api/admin/test-db', requireAdmin, async (req, res) => {
     try {
         const { dbHost, dbPort, dbUser, dbPassword, dbName } = req.body || {};
         if (!dbHost || !dbPort || !dbUser || !dbName) return res.status(400).json({ ok: false, error: 'Missing parameters (dbHost, dbPort, dbUser, dbName required)' });
-        const Pool2 = require('pg').Pool;
-        const tempPool = new Pool2({ host: dbHost, port: Number(dbPort), user: dbUser, password: dbPassword, database: dbName, connectionTimeoutMillis: 3000 });
+        const tempPool = new Pool({ host: dbHost, port: Number(dbPort), user: dbUser, password: dbPassword, database: dbName, connectionTimeoutMillis: 5000 });
         try {
             await tempPool.query('SELECT 1');
+            // Generate RAG schemas (indexes/cols/sample rows) for this target DB
+            try {
+                const tablesRes = await tempPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'");
+                for (const r of tablesRes.rows) {
+                    const tname = r.table_name;
+                    try {
+                        const colsRes = await tempPool.query('SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1', [tname]);
+                        const schema = colsRes.rows;
+                        let sample = [];
+                        try {
+                            const sres = await tempPool.query(`SELECT * FROM "${tname}" LIMIT 1`);
+                            sample = sres.rows;
+                        } catch (e) {
+                            // sampling failure is non-fatal
+                            sample = [];
+                        }
+                        await pool.query('INSERT INTO rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, JSON.stringify(schema), JSON.stringify(sample)]);
+                    } catch (e) {
+                        console.error('Failed processing table', tname, e);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to generate RAG schemas during test-db:', e);
+            }
             await tempPool.end();
-            return res.json({ ok: true });
+            return res.json({ ok: true, generated: true });
         } catch (err) {
             await tempPool.end().catch(() => { });
+            console.error('test-db connection error', err);
             return res.status(500).json({ ok: false, error: String(err.message || err) });
         }
     } catch (e) { console.error('test-db error', e); return res.status(500).json({ ok: false, error: String(e) }); }
@@ -630,8 +1281,7 @@ app.post('/api/test-db', async (req, res) => {
     try {
         const { dbHost, dbPort, dbUser, dbPassword, dbName } = req.body || {};
         if (!dbHost || !dbPort || !dbUser || !dbName) return res.status(400).json({ ok: false, error: 'Missing parameters (dbHost, dbPort, dbUser, dbName required)' });
-        const Pool2 = require('pg').Pool;
-        const tempPool = new Pool2({ host: dbHost, port: Number(dbPort), user: dbUser, password: dbPassword, database: dbName, connectionTimeoutMillis: 3000 });
+        const tempPool = new Pool({ host: dbHost, port: Number(dbPort), user: dbUser, password: dbPassword, database: dbName, connectionTimeoutMillis: 3000 });
         try {
             await tempPool.query('SELECT 1');
             await tempPool.end();
