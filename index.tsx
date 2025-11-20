@@ -2,7 +2,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import 'materialize-css/dist/css/materialize.min.css';
+// Materialize CSS removed; using Tailwind
 import './overrides.css';
 import { ThemeProvider } from './hooks/useTheme';
 

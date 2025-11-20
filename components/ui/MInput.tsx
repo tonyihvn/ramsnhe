@@ -19,40 +19,7 @@ type Props = {
 const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, options = [], placeholder, required, rows = 3, name, className }) => {
     const rootRef = useRef<HTMLDivElement | null>(null);
 
-    useEffect(() => {
-        // Initialize selects and datepickers when options, value, or type change
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const M = require('materialize-css');
-            if (rootRef.current) {
-                // Initialize selects
-                const selects = rootRef.current.querySelectorAll('select');
-                selects.forEach((s) => {
-                    // @ts-ignore
-                    M.FormSelect.init(s);
-                });
-                // Initialize datepickers
-                const datepickers = rootRef.current.querySelectorAll('input.datepicker');
-                datepickers.forEach((d) => {
-                    // @ts-ignore
-                    M.Datepicker.init(d, {
-                        format: 'yyyy-mm-dd',
-                        autoClose: true,
-                        showClearBtn: true,
-                        defaultDate: value ? new Date(value) : undefined,
-                        setDefaultDate: !!value,
-                        onSelect: (date: Date) => {
-                            if (onChange) onChange(date.toISOString().slice(0, 10));
-                        },
-                    });
-                });
-            }
-            // update text fields so labels float
-            if (M && typeof M.updateTextFields === 'function') M.updateTextFields();
-        } catch (err) {
-            // no-op
-        }
-    }, [options, value, type]);
+    // Materialize removed: no initialization needed
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         if (!onChange) return;
@@ -69,66 +36,58 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
 
     if (type === 'textarea') {
         return (
-            <div ref={rootRef} className={`input-field ${className || ''}`}>
-                <textarea id={inputId} className="materialize-textarea" value={value ?? ''} onChange={handleChange} rows={rows} placeholder={placeholder} />
-                {label && <label htmlFor={inputId}>{label}{required ? '*' : ''}</label>}
+            <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
+                {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
+                <textarea id={inputId} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500" value={value ?? ''} onChange={handleChange} rows={rows} placeholder={placeholder} />
             </div>
         );
     }
 
     if (type === 'select') {
         return (
-            <div ref={rootRef} className={`input-field ${className || ''}`}>
-                <select id={inputId} value={value ?? ''} onChange={handleChange}>
+            <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
+                {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
+                <select id={inputId} value={value ?? ''} onChange={handleChange} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500">
                     <option value="" disabled>{placeholder ?? 'Choose an option'}</option>
                     {options.map((opt) => (
                         <option key={String(opt.value)} value={opt.value}>{opt.label}</option>
                     ))}
                 </select>
-                {label && <label htmlFor={inputId}>{label}{required ? '*' : ''}</label>}
             </div>
         );
     }
 
     if (type === 'file') {
         return (
-            <div ref={rootRef} className={`file-field input-field ${className || ''}`}>
-                <div className="btn">
-                    <span>File</span>
-                    <input id={inputId} type="file" onChange={handleChange} />
-                </div>
-                <div className="file-path-wrapper">
-                    <input className="file-path validate" type="text" placeholder={placeholder} />
-                </div>
-                {label && <label htmlFor={inputId}>{label}{required ? '*' : ''}</label>}
+            <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
+                {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
+                <input id={inputId} type="file" onChange={handleChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
             </div>
         );
     }
 
     if (type === 'radio' || type === 'checkbox') {
         return (
-            <p>
-                <label>
-                    <input id={inputId} name={name} type={type} checked={!!value} onChange={handleChange} />
-                    <span>{label}</span>
-                </label>
-            </p>
+            <label className="inline-flex items-center gap-2">
+                <input id={inputId} name={name} type={type} checked={!!value} onChange={handleChange} className="form-checkbox h-4 w-4 text-primary-600 border-gray-300 rounded" />
+                <span className="text-sm text-gray-700">{label}</span>
+            </label>
         );
     }
 
     // default input
     if (type === 'date') {
         return (
-            <div ref={rootRef} className={`input-field ${className || ''}`}>
-                <input id={inputId} type="text" value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="datepicker validate" />
-                {label && <label htmlFor={inputId}>{label}{required ? '*' : ''}</label>}
+            <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
+                {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
+                <input id={inputId} type="date" value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500" />
             </div>
         );
     }
     return (
-        <div ref={rootRef} className={`input-field ${className || ''}`}>
-            <input id={inputId} type={type} value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="validate" />
-            {label && <label htmlFor={inputId}>{label}{required ? '*' : ''}</label>}
+        <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
+            {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
+            <input id={inputId} type={type} value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500" />
         </div>
     );
 };

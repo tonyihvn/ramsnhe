@@ -61,17 +61,7 @@ const AppRoutes = () => {
 }
 
 const App: React.FC = () => {
-  useEffect(() => {
-    try {
-      // Initialize Materialize JS components
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const M = require('materialize-css');
-      if (M && typeof M.AutoInit === 'function') M.AutoInit();
-    } catch (err) {
-      // ignore if materialize is not available during static analysis
-      // console.warn('Materialize init failed', err);
-    }
-  }, []);
+  // Materialize removed: no longer needed
   return (
     <DataProvider>
       <HashRouter>

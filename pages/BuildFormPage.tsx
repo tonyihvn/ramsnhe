@@ -5,7 +5,7 @@ import { FormDefinition, FormPage, FormSection, Question, AnswerType } from '../
 import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
-import * as XLSX from 'xlsx';
+import * as ExcelJS from 'exceljs';
 
 const makeFieldName = (text: string) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `f_${Date.now()}`;
 // --- Types for Validation ---
@@ -450,14 +450,23 @@ const BuildFormPage: React.FC = () => {
     if (!file || !formDef) return;
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'array' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as any[];
-
+        const buffer = evt.target?.result;
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer as ArrayBuffer);
+        const worksheet = workbook.worksheets[0];
+        const data: any[] = [];
+        const headers: string[] = [];
+        worksheet.getRow(1).eachCell((cell) => headers.push(String(cell.value)));
+        worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+          if (rowNumber === 1) return; // skip header
+          const rowData: Record<string, any> = {};
+          headers.forEach((header, colIdx) => {
+            rowData[header] = row.getCell(colIdx + 1).value;
+          });
+          data.push(rowData);
+        });
         const newQuestions: Question[] = data.map((row: any) => {
           const answerType = (row['Type'] && Object.values(AnswerType).includes(row['Type'])) ? row['Type'] as AnswerType : (row['type'] && Object.values(AnswerType).includes(row['type'])) ? row['type'] as AnswerType : AnswerType.TEXT;
           // Parse options: Nigeria:FCT|Togo:Lome
@@ -493,7 +502,6 @@ const BuildFormPage: React.FC = () => {
             metadata
           };
         });
-
         if (newQuestions.length > 0) {
           const newFormDef = { ...formDef };
           // Append to first section of active page
@@ -504,7 +512,6 @@ const BuildFormPage: React.FC = () => {
         } else {
           alert("No valid questions found in file.");
         }
-
       } catch (err) {
         console.error(err);
         alert("Error parsing file.");
@@ -517,7 +524,7 @@ const BuildFormPage: React.FC = () => {
   if (!activity || !formDef) return <div>Loading...</div>;
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6 pb-0">
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
           <button onClick={() => navigate('/activities')} className="text-gray-500 hover:text-gray-700">

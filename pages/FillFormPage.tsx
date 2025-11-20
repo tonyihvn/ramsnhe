@@ -6,7 +6,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import * as XLSX from 'xlsx';
+import * as ExcelJS from 'exceljs';
 
 const RenderQuestion = ({ question, value, onChange }: { question: Question, value: any, onChange: (value: any) => void }) => {
     switch (question.answerType) {
@@ -295,28 +295,31 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
         Array.from(files).forEach((file: File) => {
             const reader = new FileReader();
-
-            reader.onload = (evt) => {
+            reader.onload = async (evt) => {
                 try {
-                    const bstr = evt.target?.result;
-                    const wb = XLSX.read(bstr, { type: 'array' });
-                    // Grab first sheet
-                    const wsname = wb.SheetNames[0];
-                    const ws = wb.Sheets[wsname];
-                    // Convert to JSON
-                    const data = XLSX.utils.sheet_to_json(ws);
-
+                    const buffer = evt.target?.result;
+                    const workbook = new ExcelJS.Workbook();
+                    await workbook.xlsx.load(buffer as ArrayBuffer);
+                    const worksheet = workbook.worksheets[0];
+                    const data: Record<string, any>[] = [];
+                    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+                        if (rowNumber === 1) return; // skip header
+                        const rowData: Record<string, any> = {};
+                        worksheet.getRow(1).eachCell((cell, colNumber) => {
+                            rowData[cell.value as string] = row.getCell(colNumber).value;
+                        });
+                        data.push(rowData);
+                    });
                     setUploadedFiles(prev => [...prev, {
                         id: `file-${Date.now()}-${file.name}`,
                         fileName: file.name,
-                        data: data as Record<string, any>[]
+                        data: data
                     }]);
                 } catch (err) {
                     console.error("Error parsing file", err);
-                    alert(`Could not parse ${file.name}. Please ensure it is a valid Excel or CSV file.`);
+                    alert(`Could not parse ${file.name}. Please ensure it is a valid Excel file.`);
                 }
             };
-
             reader.readAsArrayBuffer(file);
         });
     };

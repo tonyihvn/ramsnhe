@@ -14,7 +14,9 @@ const LLMSettingsForm: React.FC = () => {
     useEffect(() => {
         (async () => {
             try {
-                const r = await fetch('/api/admin/llm_providers', { credentials: 'include' });
+                // Try admin endpoint first; fall back to public endpoint if unauthorized
+                let r = await fetch('/api/admin/llm_providers', { credentials: 'include' });
+                if (r.status === 401) r = await fetch('/api/llm_providers');
                 if (r.ok) {
                     const provs = await r.json();
                     setLocal(provs.slice());
@@ -35,17 +37,13 @@ const LLMSettingsForm: React.FC = () => {
         setDetectedModels([]);
         setSelectedDetected(null);
         try {
-            const r = await fetch('/api/admin/detect-ollama', { credentials: 'include' });
-            if (!r.ok) {
-                alert('No local Ollama detected or not authorized');
-                return;
-            }
+            // try admin endpoint first then fallback to public detect endpoint
+            let r = await fetch('/api/admin/detect-ollama', { credentials: 'include' });
+            if (r.status === 401) r = await fetch('/api/detect-ollama');
+            if (!r.ok) { alert('No local Ollama detected or not authorized'); return; }
             const j = await r.json();
-            if (j && j.ok && Array.isArray(j.models) && j.models.length) {
-                setDetectedModels(j.models);
-            } else {
-                alert('No local Ollama models detected');
-            }
+            if (j && j.ok && Array.isArray(j.models) && j.models.length) setDetectedModels(j.models);
+            else alert('No local Ollama models detected');
         } catch (e) {
             console.error(e);
             alert('Error detecting local Ollama: ' + String(e));
@@ -116,12 +114,22 @@ const LLMSettingsForm: React.FC = () => {
                 <Button variant="secondary" onClick={async () => {
                     // Persist to server (admin endpoint) and also save to local settings
                     try {
+                        // save providers: try admin endpoint first; on 401 fallback to public endpoint if available
                         for (const p of local) {
                             const payload = { provider_id: p.provider_id || p.id, name: p.name, model: p.model, config: { ...(p || {}) }, priority: p.priority || 0 };
-                            await fetch('/api/admin/llm_providers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+                            let r = await fetch('/api/admin/llm_providers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+                            if (r.status === 401) {
+                                // try public save (dev-only)
+                                r = await fetch('/api/llm_providers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            }
+                            if (!r.ok) {
+                                const txt = await r.text();
+                                throw new Error(txt);
+                            }
                         }
-                        // fetch latest providers from server
-                        const r = await fetch('/api/admin/llm_providers', { credentials: 'include' });
+                        // fetch latest providers from server (admin preferred)
+                        let r = await fetch('/api/admin/llm_providers', { credentials: 'include' });
+                        if (r.status === 401) r = await fetch('/api/llm_providers');
                         if (r.ok) {
                             const provs = await r.json();
                             setSettings({ ...(settings as any), llmProviders: provs });
@@ -224,6 +232,128 @@ const RolesList: React.FC = () => {
                             <label key={p.id} className="flex items-center gap-2">
                                 <input type="checkbox" checked={rolePerms.includes(p.id)} onChange={() => togglePerm(p.id)} />
                                 <div className="ml-2"><div className="font-medium">{p.name}</div><div className="text-xs text-gray-500">{p.description}</div></div>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const UsersList: React.FC = () => {
+    const [users, setUsers] = useState<any[]>([]);
+    const [roles, setRoles] = useState<any[]>([]);
+    const [editing, setEditing] = useState<any | null>(null);
+    const [manageUser, setManageUser] = useState<any | null>(null);
+    const [userRoles, setUserRoles] = useState<number[]>([]);
+
+    const fetchUsers = async () => {
+        try {
+            const r = await fetch('/api/users');
+            if (r.ok) setUsers(await r.json());
+        } catch (e) { console.error(e); }
+    };
+    const fetchRoles = async () => {
+        try {
+            const r = await fetch('/api/admin/roles', { credentials: 'include' });
+            if (r.status === 401) return; // can't list roles without auth
+            if (r.ok) setRoles(await r.json());
+        } catch (e) { console.error(e); }
+    };
+
+    useEffect(() => { fetchUsers(); fetchRoles(); }, []);
+
+    const openManage = async (user: any) => {
+        setManageUser(user);
+        setUserRoles([]);
+        try {
+            const r = await fetch(`/api/admin/user_roles?userId=${user.id}`, { credentials: 'include' });
+            if (r.ok) {
+                const rows = await r.json();
+                setUserRoles(rows.map((r: any) => r.role_id));
+            }
+        } catch (e) { console.error(e); }
+    };
+
+    const toggleRoleForUser = async (roleId: number) => {
+        if (!manageUser) return;
+        const has = userRoles.includes(roleId);
+        try {
+            if (!has) {
+                await fetch('/api/admin/roles/assign', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: manageUser.id, roleId }) });
+                setUserRoles(prev => [...prev, roleId]);
+            } else {
+                await fetch('/api/admin/roles/unassign', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: manageUser.id, roleId }) });
+                setUserRoles(prev => prev.filter((r: number) => r !== roleId));
+            }
+        } catch (e) { console.error(e); alert('Failed to update role'); }
+    };
+
+    const saveUser = async (u?: any) => {
+        try {
+            const payload = { ...(u || editing) };
+            const r = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (r.ok) { fetchUsers(); setEditing(null); alert('User saved'); }
+            else alert('Failed to save user: ' + await r.text());
+        } catch (e) { console.error(e); alert('Failed to save user'); }
+    };
+
+    const deleteUser = async (id: number) => {
+        if (!confirm('Delete user? This cannot be undone.')) return;
+        try {
+            const r = await fetch(`/api/admin/users/${id}`, { method: 'DELETE', credentials: 'include' });
+            if (r.ok) { fetchUsers(); alert('User deleted'); }
+            else alert('Failed to delete user: ' + await r.text());
+        } catch (e) { console.error(e); alert('Failed to delete user'); }
+    };
+
+    return (
+        <div>
+            <h4 className="font-medium">Users</h4>
+            <div className="mt-2 space-y-2">
+                {users.map(u => (
+                    <div key={u.id} className="p-2 border rounded flex justify-between items-center">
+                        <div>
+                            <div className="font-medium">{u.firstName} {u.lastName} — <span className="text-xs text-gray-500">{u.email}</span></div>
+                            <div className="text-xs text-gray-500">Roles: <span className="font-medium">{u.role || ''}</span></div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => { setEditing(u); }} className="text-sm p-1 border rounded">Edit</button>
+                            <button onClick={() => openManage(u)} className="text-sm p-1 border rounded">Manage Roles</button>
+                            <button onClick={() => deleteUser(u.id)} className="text-sm p-1 border rounded text-red-600">Delete</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {editing && (
+                <div className="mt-3 p-3 border rounded bg-white">
+                    <h5 className="font-medium">Edit User</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                        <input className="p-2 border rounded" placeholder="First name" value={editing.firstName || ''} onChange={e => setEditing({ ...editing, firstName: e.target.value })} />
+                        <input className="p-2 border rounded" placeholder="Last name" value={editing.lastName || ''} onChange={e => setEditing({ ...editing, lastName: e.target.value })} />
+                        <input className="p-2 border rounded" placeholder="Email" value={editing.email || ''} onChange={e => setEditing({ ...editing, email: e.target.value })} />
+                        <input className="p-2 border rounded" placeholder="Password (leave blank to keep)" value={editing.password || ''} onChange={e => setEditing({ ...editing, password: e.target.value })} />
+                    </div>
+                    <div className="mt-2 flex gap-2"><Button onClick={() => saveUser()}>Save</Button><Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button></div>
+                </div>
+            )}
+
+            {manageUser && (
+                <div className="mt-3 p-3 border rounded bg-white">
+                    <div className="flex justify-between items-center">
+                        <div className="font-medium">Manage Roles for {manageUser.firstName} {manageUser.lastName}</div>
+                        <button onClick={() => setManageUser(null)} className="text-sm p-1 border rounded">Close</button>
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {roles.map(r => (
+                            <label key={r.id} className="inline-flex items-center gap-2 border p-2 rounded">
+                                <input type="checkbox" checked={userRoles.includes(r.id)} onChange={() => toggleRoleForUser(r.id)} />
+                                <div>
+                                    <div className="font-medium">{r.name}</div>
+                                    <div className="text-xs text-gray-500">{r.description}</div>
+                                </div>
                             </label>
                         ))}
                     </div>
@@ -365,17 +495,45 @@ const SettingsPage: React.FC = () => {
                                 <Button onClick={async () => {
                                     try {
                                         const payload = { ...(settings as any), ...(dbForm || {}), ...dbEnv };
-                                        const res = await fetch('/api/admin/test-db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
-                                        if (res.ok) alert('Connection succeeded'); else alert('Connection failed: ' + await res.text());
+                                        // Try admin endpoint first (supports server-side test and is preferred)
+                                        let res = await fetch('/api/admin/test-db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+                                        if (res.status === 401) {
+                                            // Not authorized -> fall back to public endpoint without credentials
+                                            res = await fetch('/api/test-db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                        }
+                                        if (res.ok) {
+                                            alert('Connection succeeded');
+                                        } else {
+                                            // try to parse json else text
+                                            let body = await res.text();
+                                            try { const j = JSON.parse(body); body = j.error || j.message || JSON.stringify(j); } catch (e) { /* keep text */ }
+                                            alert('Connection failed: ' + body);
+                                        }
                                     } catch (e) { alert('Connection test error: ' + String(e)); }
                                 }}>Test Connection</Button>
                                 <Button variant="secondary" onClick={async () => {
                                     try {
                                         const payload = { ...(dbForm || {}), ...(dbEnv || {}) };
-                                        const res = await fetch('/api/admin/env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+                                        // Try admin write first
+                                        let res = await fetch('/api/admin/env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
+                                        if (res.status === 401) {
+                                            // fall back to public env write
+                                            res = await fetch('/api/env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                            if (res.ok) {
+                                                alert('Saved DB settings to .env and .env.local (server settings table not updated because not authenticated)');
+                                                return;
+                                            } else {
+                                                const txt = await res.text();
+                                                alert('Failed to save via public endpoint: ' + txt);
+                                                return;
+                                            }
+                                        }
+
                                         if (res.ok) {
-                                            // also save into settings table for app-level persistence
-                                            await fetch('/api/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ db: payload }) });
+                                            // also save into settings table for app-level persistence (admin only)
+                                            try {
+                                                await fetch('/api/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ db: payload }) });
+                                            } catch (e) { /* ignore */ }
                                             alert('Saved DB settings to .env and settings table');
                                         } else {
                                             alert('Failed to save: ' + await res.text());
@@ -530,21 +688,26 @@ const SettingsPage: React.FC = () => {
             {tab === 'permissions' && (
                 <Card>
                     <h3 className="text-lg font-medium mb-2">Roles & Permissions</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <h4 className="font-medium">Roles</h4>
-                            <div className="mt-2 space-y-2">
-                                {/* roles list */}
-                                <RolesList />
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <h4 className="font-medium">Roles</h4>
+                                <div className="mt-2 space-y-2">
+                                    <RolesList />
+                                </div>
+                            </div>
+                            <div>
+                                <h4 className="font-medium">Permissions</h4>
+                                <div className="mt-2 space-y-2">
+                                    <PermissionsList />
+                                </div>
+                            </div>
+                            <div>
+                                <h4 className="font-medium">Users</h4>
+                                <div className="mt-2 space-y-2">
+                                    <UsersList />
+                                </div>
                             </div>
                         </div>
-                        <div>
-                            <h4 className="font-medium">Permissions</h4>
-                            <div className="mt-2 space-y-2">
-                                <PermissionsList />
-                            </div>
-                        </div>
-                    </div>
                 </Card>
             )}
         </div>

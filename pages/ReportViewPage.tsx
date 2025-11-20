@@ -165,13 +165,26 @@ const ReportViewPage: React.FC = () => {
               } catch (e) { console.error(e); }
             };
             // Excel download handler
-            const handleDownloadExcel = () => {
-              import('xlsx').then(XLSX => {
-                const ws = XLSX.utils.json_to_sheet(rows);
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-                XLSX.writeFile(wb, d.filename ? d.filename.replace(/\.[^.]+$/, '') + '.xlsx' : 'uploaded_file.xlsx');
-              });
+            const handleDownloadExcel = async () => {
+              const ExcelJS = await import('exceljs');
+              const workbook = new ExcelJS.Workbook();
+              const worksheet = workbook.addWorksheet('Sheet1');
+              if (rows.length > 0) {
+                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
+                worksheet.addRows(rows);
+              }
+              const buffer = await workbook.xlsx.writeBuffer();
+              const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+              const url = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = d.filename ? d.filename.replace(/\.[^.]+$/, '') + '.xlsx' : 'uploaded_file.xlsx';
+              document.body.appendChild(a);
+              a.click();
+              setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+              }, 100);
             };
             // Add Row handler: infer types from first row or column names
             const handleAddRow = () => {
