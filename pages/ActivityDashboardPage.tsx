@@ -21,6 +21,12 @@ const ActivityDashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [usersMap, setUsersMap] = useState<Record<string, string>>({});
+  const [facilitiesMap, setFacilitiesMap] = useState<Record<string, string>>({});
+  const [fileModalOpen, setFileModalOpen] = useState(false);
+  const [selectedDoc, setSelectedDoc] = useState<any>(null);
+  const [fileSearch, setFileSearch] = useState('');
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -29,6 +35,8 @@ const ActivityDashboardPage: React.FC = () => {
         if (res.ok) {
           const json = await res.json();
           setData(json);
+          // initialize selected questions to all questions
+          setSelectedQuestionIds((json.questions || []).map((q: any) => String(q.id)));
         } else {
           console.error('Failed to load dashboard', await res.text());
         }
@@ -36,6 +44,28 @@ const ActivityDashboardPage: React.FC = () => {
       setLoading(false);
     };
     fetchDashboard();
+
+    // fetch users and facilities for name mapping
+    (async () => {
+      try {
+        const [uRes, fRes] = await Promise.all([
+          fetch('http://localhost:3000/api/users', { credentials: 'include' }),
+          fetch('http://localhost:3000/api/facilities', { credentials: 'include' })
+        ]);
+        if (uRes.ok) {
+          const users = await uRes.json();
+          const map: Record<string, string> = {};
+          users.forEach((u: any) => map[String(u.id)] = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || String(u.id));
+          setUsersMap(map);
+        }
+        if (fRes.ok) {
+          const facs = await fRes.json();
+          const fmap: Record<string, string> = {};
+          facs.forEach((f: any) => fmap[String(f.id)] = f.name || String(f.id));
+          setFacilitiesMap(fmap);
+        }
+      } catch (e) { console.error('Failed to fetch users/facilities', e); }
+    })();
   }, [activityId]);
 
   if (loading) return <div>Loading...</div>;
@@ -87,7 +117,7 @@ const ActivityDashboardPage: React.FC = () => {
         <p className="text-sm text-gray-500">Charts are interactive. Use the charts to explore distribution of collected answers.</p>
 
         <div className="grid grid-cols-2 gap-4 mt-4">
-          {questions.map((q: any) => {
+          {questions.filter((q: any) => selectedQuestionIds.includes(String(q.id))).map((q: any) => {
             const answersForQ = (answersByQuestion[q.id] || []).map((a: any) => {
               // answer_value may be JSON; normalize to string
               let v = a.answer_value;
@@ -120,6 +150,22 @@ const ActivityDashboardPage: React.FC = () => {
               </div>
             );
           })}
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="text-lg font-semibold mb-2">Chart Controls</h2>
+        <p className="text-sm text-gray-500">Select which questions to include in charts.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border p-3 rounded">
+          {questions.map((q: any) => (
+            <label key={q.id} className="text-sm">
+              <input type="checkbox" checked={selectedQuestionIds.includes(String(q.id))} onChange={(e) => {
+                const id = String(q.id);
+                setSelectedQuestionIds(prev => e.target.checked ? Array.from(new Set([...prev, id])) : prev.filter(x => x !== id));
+              }} />
+              <span className="ml-2">{q.question_text}</span>
+            </label>
+          ))}
         </div>
       </Card>
 
@@ -157,17 +203,99 @@ const ActivityDashboardPage: React.FC = () => {
                 <div className="font-medium">{d.filename || 'Uploaded file'}</div>
                 <div className="text-xs text-gray-500">Uploaded: {new Date(d.created_at).toLocaleString()}</div>
               </div>
-              <div>
-                <Button variant="secondary" onClick={() => {
-                  // show file content in new tab as JSON for now
-                  const w = window.open();
-                  w?.document.write('<pre>' + JSON.stringify(d.file_content, null, 2) + '</pre>');
-                }}>View</Button>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => { setSelectedDoc(d); setFileSearch(''); setFileModalOpen(true); }}>View</Button>
+                <Button size="sm" variant="secondary" onClick={async () => {
+                  // download as excel
+                  const ExcelJS = await import('exceljs');
+                  const workbook = new ExcelJS.Workbook();
+                  const worksheet = workbook.addWorksheet('Sheet1');
+                  const rows = Array.isArray(d.file_content) ? d.file_content : [];
+                  if (rows.length > 0) {
+                    worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
+                    worksheet.addRows(rows);
+                  }
+                  const buffer = await workbook.xlsx.writeBuffer();
+                  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = (d.filename ? d.filename.replace(/\.[^.]+$/, '') : 'uploaded_file') + '.xlsx';
+                  document.body.appendChild(a);
+                  a.click();
+                  setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
+                }}>Download</Button>
+                <Button size="sm" variant="secondary" onClick={async () => {
+                  if (!confirm('Delete this uploaded file?')) return;
+                  try {
+                    const res = await fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
+                    if (res.ok) {
+                      // refresh dashboard data
+                      const r = await fetch(`http://localhost:3000/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+                      if (r.ok) setData(await r.json());
+                    } else {
+                      alert('Delete failed');
+                    }
+                  } catch (e) { console.error(e); alert('Delete failed'); }
+                }}>Delete</Button>
               </div>
             </div>
           </div>
         ))}
       </Card>
+
+      {/* File Modal */}
+      {fileModalOpen && selectedDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white w-11/12 max-w-4xl p-6 rounded shadow-lg">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">{selectedDoc.filename}</h3>
+              <div className="flex items-center gap-2">
+                <input className="border p-2 rounded text-sm" placeholder="Search..." value={fileSearch} onChange={e => setFileSearch(e.target.value)} />
+                <button className="px-3 py-1 bg-gray-100 rounded" onClick={() => setFileModalOpen(false)}>Close</button>
+              </div>
+            </div>
+            <div className="overflow-auto max-h-96">
+              {(() => {
+                const rows = Array.isArray(selectedDoc.file_content) ? selectedDoc.file_content : [];
+                if (rows.length === 0) return <div className="text-sm text-gray-500">No data</div>;
+                const colsSet = new Set<string>();
+                rows.forEach((r: any) => Object.keys(r || {}).forEach(k => colsSet.add(k)));
+                const cols = Array.from(colsSet).map(c => ({ key: c, label: c }));
+                const filtered = rows.filter((r: any) => {
+                  if (!fileSearch) return true;
+                  const s = fileSearch.toLowerCase();
+                  return Object.values(r || {}).some((v: any) => String(v || '').toLowerCase().includes(s));
+                });
+                return <DataTable columns={cols} data={filtered} onCellEdit={undefined} />;
+              })()}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-2 bg-gray-100 rounded" onClick={async () => {
+                // download
+                const ExcelJS = await import('exceljs');
+                const workbook = new ExcelJS.Workbook();
+                const worksheet = workbook.addWorksheet('Sheet1');
+                const rows = Array.isArray(selectedDoc.file_content) ? selectedDoc.file_content : [];
+                if (rows.length > 0) {
+                  worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
+                  worksheet.addRows(rows);
+                }
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = (selectedDoc.filename ? selectedDoc.filename.replace(/\.[^.]+$/, '') : 'uploaded_file') + '.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
+              }}>Download Excel</button>
+              <button className="px-3 py-2 bg-blue-600 text-white rounded" onClick={() => setFileModalOpen(false)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Card>
         <h2 className="text-lg font-semibold mb-2">Data Quality Followups</h2>

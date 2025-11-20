@@ -82,13 +82,15 @@ const ReportsPage: React.FC = () => {
                       const activity = activities.find(a => a.id === report.activityId);
                       if (!activity) return;
                       // If Facility level, go to fill form for that activity/facility
+                      const base = `/fill-form/${report.activityId}`;
+                      const params = new URLSearchParams();
+                      params.set('reportId', String(report.id));
                       if ((activity.responseType || '').toLowerCase() === 'facility') {
-                        navigate(`/fill-form/${report.activityId}?facilityId=${report.facilityId}`);
+                        params.set('facilityId', String(report.facilityId || ''));
                       } else if ((activity.responseType || '').toLowerCase() === 'user') {
-                        navigate(`/fill-form/${report.activityId}?userId=${report.userId}`);
-                      } else {
-                        navigate(`/fill-form/${report.activityId}`);
+                        params.set('userId', String(report.userId || ''));
                       }
+                      navigate(`${base}?${params.toString()}`);
                     }}>Edit Report Form</button>
                     <button className="text-red-600 hover:text-red-900 flex items-center text-xs" onClick={() => alert('Delete Report coming soon')}>Delete</button>
                   </td>
@@ -103,7 +105,7 @@ const ReportsPage: React.FC = () => {
         <ConversationPanel context={{ reports }} scope="reports" />
       </div>
 
-    </div>
+    </div >
   );
 };
 

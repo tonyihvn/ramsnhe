@@ -2262,6 +2262,20 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
     }
 });
 
+// Delete an uploaded doc by id
+app.delete('/api/uploaded_docs/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const docRes = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [id]);
+        if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
+        await pool.query('DELETE FROM dqai_uploaded_docs WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Failed to delete uploaded_doc', e);
+        res.status(500).json({ error: 'Failed to delete uploaded_doc' });
+    }
+});
+
 app.post('/api/reports', async (req, res) => {
     const { activityId, userId, facilityId, status, answers, uploadedFiles } = req.body;
     try {

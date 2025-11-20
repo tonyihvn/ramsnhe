@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate, Navigate } from 'react-router-dom';
+import { useParams, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
 import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport } from '../types';
 import Card from '../components/ui/Card';
@@ -125,7 +125,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const { activityId: activityIdParam } = useParams<{ activityId: string }>();
     const history = useNavigate();
     const activityId = activityIdOverride || activityIdParam;
-    const { getActivity, saveReport, currentUser, facilities, users } = useMockData();
+    const { getActivity, saveReport, currentUser, facilities, users, reports } = useMockData();
     const activity = getActivity(activityId || '');
     const formDef: FormDefinition | undefined = activity?.formDefinition;
 
@@ -136,6 +136,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [formSubmitted, setFormSubmitted] = useState(false);
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
     const [activePageIndex, setActivePageIndex] = useState(0);
+    const [editingReport, setEditingReport] = useState<ActivityReport | undefined>(undefined);
+
+    const location = useLocation();
+    const search = new URLSearchParams(location.search);
+    const qReportId = search.get('reportId');
 
     const handleAnswerChange = (questionId: string, value: any) => {
         setAnswers(prev => ({ ...prev, [questionId]: value }));
@@ -272,21 +277,39 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             return;
         }
 
-        const report: ActivityReport = {
-            id: `rpt-${Date.now()}`,
-            activityId: activityId!,
-            userId: selectedUserId || currentUser?.id,
-            facilityId: selectedFacilityId || currentUser?.facilityId,
-            dataCollectionLevel: currentUser?.role === 'Data Collector' ? 'Facility' : 'User',
-            status: 'Completed',
-            preparedBy: currentUser?.id || 'unknown',
-            answers: answers,
-            uploadedFiles: uploadedFiles,
-            submissionDate: new Date().toISOString(),
+        if (editingReport) {
+            const updated: ActivityReport = {
+                ...editingReport,
+                activityId: activityId!,
+                userId: selectedUserId || currentUser?.id,
+                facilityId: selectedFacilityId || currentUser?.facilityId,
+                dataCollectionLevel: currentUser?.role === 'Data Collector' ? 'Facility' : 'User',
+                status: 'Completed',
+                preparedBy: currentUser?.id || editingReport.preparedBy || 'unknown',
+                answers: answers,
+                uploadedFiles: uploadedFiles,
+                submissionDate: new Date().toISOString(),
+            };
+            saveReport(updated);
+            alert('Report updated successfully!');
+            history('/reports');
+        } else {
+            const report: ActivityReport = {
+                id: `rpt-${Date.now()}`,
+                activityId: activityId!,
+                userId: selectedUserId || currentUser?.id,
+                facilityId: selectedFacilityId || currentUser?.facilityId,
+                dataCollectionLevel: currentUser?.role === 'Data Collector' ? 'Facility' : 'User',
+                status: 'Completed',
+                preparedBy: currentUser?.id || 'unknown',
+                answers: answers,
+                uploadedFiles: uploadedFiles,
+                submissionDate: new Date().toISOString(),
+            }
+            saveReport(report);
+            alert('Data successfully submitted!');
+            history('/reports');
         }
-        saveReport(report);
-        alert('Data successfully submitted!');
-        history('/reports');
     }
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -327,6 +350,31 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const handleFileUpdate = (updatedFile: UploadedFile) => {
         setUploadedFiles(files => files.map(f => f.id === updatedFile.id ? updatedFile : f));
     };
+
+    // If reportId supplied in query params, load existing report for editing
+    React.useEffect(() => {
+        if (!qReportId) return;
+        if (!reports || reports.length === 0) return;
+        const rpt = reports.find(r => String(r.id) === String(qReportId));
+        if (!rpt) return;
+        setEditingReport(rpt);
+        // answers may be stored either as an object map or an array of { question_id, answer_value }
+        const rawAnswers: any = rpt.answers || rpt.answer || {};
+        if (Array.isArray(rawAnswers)) {
+            const mapped: Record<string, any> = {};
+            rawAnswers.forEach((a: any) => {
+                const qid = a.question_id || a.questionId || a.questionId;
+                const val = a.answer_value !== undefined ? a.answer_value : a.answer || a.value;
+                if (qid) mapped[qid] = val;
+            });
+            setAnswers(mapped);
+        } else {
+            setAnswers(rawAnswers || {});
+        }
+        setUploadedFiles(rpt.uploadedFiles || rpt.uploaded_files || []);
+        setSelectedFacilityId((rpt as any).facilityId || undefined);
+        setSelectedUserId((rpt as any).userId || undefined);
+    }, [qReportId, reports]);
 
     if (!activity) return <div>Activity not found.</div>;
     if (!formDef || !Array.isArray(formDef.pages) || formDef.pages.length === 0) {
@@ -473,7 +521,14 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             <div>
                                 {uploadedFiles.map(file => (
                                     <Card key={file.id} className="border border-gray-200 mb-4">
-                                        <EditableTable file={file} onUpdate={handleFileUpdate} />
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <EditableTable file={file} onUpdate={handleFileUpdate} />
+                                            </div>
+                                            <div className="ml-4">
+                                                <button onClick={() => { if (confirm('Delete this uploaded file?')) setUploadedFiles(prev => prev.filter(f => f.id !== file.id)); }} className="text-red-600 hover:text-red-900 text-sm">Delete File</button>
+                                            </div>
+                                        </div>
                                     </Card>
                                 ))}
                             </div>
