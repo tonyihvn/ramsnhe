@@ -79,10 +79,38 @@ const RenderQuestion = ({ question, value, onChange }: { question: Question, val
                 </div>
             );
         case AnswerType.COMPUTED:
-            // Show computed/calculated value as read-only output
+            // Show computed/calculated value as read-only output.
+            // If a function is present, try to invoke it safely to get the result; otherwise display the value as a string.
+            let displayValue: any = value;
+            if (typeof displayValue === 'function') {
+                try {
+                    const res = displayValue();
+                    displayValue = (res === undefined || res === null) ? String(displayValue) : res;
+                } catch (e) {
+                    // if calling fails, fall back to string representation
+                    displayValue = String(displayValue);
+                }
+            }
+            // If the value is a string that looks like JS source (arrow or function), try to extract a trailing primitive result.
+            if (typeof displayValue === 'string' && /=>|function\s*\(/.test(displayValue)) {
+                // Attempt to extract text after the last closing brace '}' which commonly contains the computed result when stringified
+                const after = displayValue.replace(/^[\s\S]*}\s*/, '').trim();
+                if (after) {
+                    // If it's a plain number, coerce to Number
+                    if (/^-?\d+(?:\.\d+)?$/.test(after)) displayValue = Number(after);
+                    else {
+                        try { displayValue = JSON.parse(after); } catch (e) { displayValue = after; }
+                    }
+                } else {
+                    // No trailing primitive; don't show raw JS source — present as empty so placeholder appears
+                    displayValue = null;
+                }
+            }
+            const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
             return (
                 <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
-                    <span className="font-semibold">{question.questionText}:</span> <span>{value === undefined || value === null || value === '' ? <span className="italic text-gray-400">(no value)</span> : value}</span>
+                    <span className="font-semibold">{question.questionText}:</span>{' '}
+                    <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(displayValue)}</span>
                 </div>
             );
         default:
@@ -277,6 +305,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             return;
         }
 
+        // prepare upload payload mapping fileName -> filename and data -> content
+        const mappedUploads = uploadedFiles.map(f => ({ filename: f.fileName || f.filename || f.fileName || `uploaded_${Date.now()}`, content: f.data || f.data || f }));
+
         if (editingReport) {
             const updated: ActivityReport = {
                 ...editingReport,
@@ -287,7 +318,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 status: 'Completed',
                 preparedBy: currentUser?.id || editingReport.preparedBy || 'unknown',
                 answers: answers,
-                uploadedFiles: uploadedFiles,
+                uploadedFiles: mappedUploads,
                 submissionDate: new Date().toISOString(),
             };
             saveReport(updated);
@@ -303,7 +334,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 status: 'Completed',
                 preparedBy: currentUser?.id || 'unknown',
                 answers: answers,
-                uploadedFiles: uploadedFiles,
+                uploadedFiles: mappedUploads,
                 submissionDate: new Date().toISOString(),
             }
             saveReport(report);
@@ -377,8 +408,22 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     }, [qReportId, reports]);
 
     if (!activity) return <div>Activity not found.</div>;
+    // Only allow filling if activity is Published
+    if (!standaloneMode && String(activity.status || '').toLowerCase() !== 'published') {
+        return <div className="p-6">This activity is not published. Form filling is disabled.</div>;
+    }
     if (!formDef || !Array.isArray(formDef.pages) || formDef.pages.length === 0) {
         return <div className="p-6">This activity does not have a form built for it yet. Please contact the administrator.</div>;
+    }
+
+    // If editing an existing report that is Completed, do not allow edits
+    if (editingReport && (String(editingReport.status || '').toLowerCase() === 'completed')) {
+        return (
+            <Card>
+                <h2 className="text-lg font-semibold">This response is completed</h2>
+                <p className="text-sm text-gray-600 mt-2">This report has been marked as completed and cannot be edited.</p>
+            </Card>
+        );
     }
 
     const currentPage = formDef.pages[activePageIndex] || formDef.pages[0];
@@ -521,8 +566,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             <div>
                                 {uploadedFiles.map(file => (
                                     <Card key={file.id} className="border border-gray-200 mb-4">
-                                        <div className="flex justify-between items-start">
+                                        <div className="flex justify-between items-start gap-4">
                                             <div className="flex-1">
+                                                <div className="mb-2">
+                                                    <label className="block text-xs text-gray-600">File Title</label>
+                                                    <input className="p-2 border rounded w-full" value={file.fileName || ''} onChange={e => setUploadedFiles(prev => prev.map(f => f.id === file.id ? { ...f, fileName: e.target.value } : f))} placeholder="Enter title for this file" />
+                                                </div>
                                                 <EditableTable file={file} onUpdate={handleFileUpdate} />
                                             </div>
                                             <div className="ml-4">

@@ -3,18 +3,21 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
-import { Bar } from 'react-chartjs-2';
+import { Bar, Pie, Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   BarElement,
+  ArcElement,
+  PointElement,
+  LineElement,
   Title,
   Tooltip,
   Legend,
 } from 'chart.js';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend);
 
 const ActivityDashboardPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
@@ -27,6 +30,7 @@ const ActivityDashboardPage: React.FC = () => {
   const [selectedDoc, setSelectedDoc] = useState<any>(null);
   const [fileSearch, setFileSearch] = useState('');
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
+  const [chartTypes, setChartTypes] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -35,8 +39,8 @@ const ActivityDashboardPage: React.FC = () => {
         if (res.ok) {
           const json = await res.json();
           setData(json);
-          // initialize selected questions to all questions
-          setSelectedQuestionIds((json.questions || []).map((q: any) => String(q.id)));
+          // start with no questions selected so charts don't render until user checks them
+          setSelectedQuestionIds([]);
         } else {
           console.error('Failed to load dashboard', await res.text());
         }
@@ -139,13 +143,43 @@ const ActivityDashboardPage: React.FC = () => {
               ]
             };
 
+            const chartType = chartTypes[String(q.id)] || 'bar';
             return (
               <div key={q.id} className="bg-white p-4 rounded shadow">
-                <div className="text-sm font-medium">{q.question_text}</div>
-                <div className="text-xs text-gray-500">{q.question_helper}</div>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-sm font-medium">{q.question_text}</div>
+                    <div className="text-xs text-gray-500">{q.question_helper}</div>
+                  </div>
+                  <div className="ml-4 text-sm">
+                    <label className="text-xs text-gray-600 mr-2">Chart</label>
+                    <select className="p-1 border rounded text-sm" value={chartType} onChange={e => setChartTypes(prev => ({ ...prev, [q.id]: e.target.value }))}>
+                      <option value="bar">Bar</option>
+                      <option value="pie">Pie</option>
+                      <option value="line">Line</option>
+                      <option value="table">Table</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="mt-2">
                   <div className="text-sm">Responses: {(answersByQuestion[q.id] || []).length}</div>
-                  <div className="mt-2 h-44"><Bar data={data} options={{ responsive: true, maintainAspectRatio: false }} /></div>
+                  <div className="mt-2 h-44">
+                    {chartType === 'bar' && <Bar data={data} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'pie' && <Pie data={{ labels: data.labels, datasets: [{ data: data.datasets[0].data, backgroundColor: ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'] }] }} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'line' && <Line data={{ labels: data.labels, datasets: [{ label: 'Responses', data: data.datasets[0].data, fill: false, borderColor: 'rgba(37,99,235,0.8)' }] }} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'table' && (
+                      <div className="overflow-auto max-h-44 border rounded p-2 bg-gray-50">
+                        <table className="min-w-full text-sm">
+                          <thead><tr><th className="text-left">Value</th><th className="text-right">Count</th></tr></thead>
+                          <tbody>
+                            {data.labels.map((l: any, idx: number) => (
+                              <tr key={l}><td>{l}</td><td className="text-right">{data.datasets[0].data[idx]}</td></tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );

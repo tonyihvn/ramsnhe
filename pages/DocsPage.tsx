@@ -6,19 +6,9 @@ const DocsPage: React.FC = () => {
             <aside className="w-64 border-r bg-white p-4 overflow-y-auto sticky top-0 h-screen">
                 <h2 className="text-lg font-semibold mb-4">Docs</h2>
                 <nav className="space-y-2 text-sm">
-                    <a href="#getting-started" className="block text-gray-700 hover:text-primary-600">Getting Started</a>
-                    <a href="#installation" className="block text-gray-700 hover:text-primary-600">Installation</a>
-                    <a href="#run-dev" className="block text-gray-700 hover:text-primary-600">Running (Dev)</a>
-                    <a href="#frontend" className="block text-gray-700 hover:text-primary-600">Frontend</a>
-                    <a href="#backend" className="block text-gray-700 hover:text-primary-600">Backend</a>
-                    <a href="#api-reference" className="block text-gray-700 hover:text-primary-600">API Reference</a>
-                    <a href="#llm-rag" className="block text-gray-700 hover:text-primary-600">RAG & LLM</a>
-                    <a href="#activities" className="block text-gray-700 hover:text-primary-600">Activities / Sharing</a>
-                    <a href="#excel-import" className="block text-gray-700 hover:text-primary-600">Excel Bulk Import</a>
-                    <a href="#security" className="block text-gray-700 hover:text-primary-600">Security</a>
-                    <a href="#troubleshooting" className="block text-gray-700 hover:text-primary-600">Troubleshooting</a>
-                    <a href="#faq" className="block text-gray-700 hover:text-primary-600">FAQ</a>
-                    <a href="#contact" className="block text-gray-700 hover:text-primary-600">Contact</a>
+                    {['getting-started', 'installation', 'run-dev', 'frontend', 'backend', 'api-reference', 'llm-rag', 'activities', 'excel-import', 'security', 'troubleshooting', 'faq', 'contact'].map(id => (
+                        <a key={id} href={`#/docs#${id}`} className="block text-gray-700 hover:text-primary-600" onClick={(e) => { e.preventDefault(); const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}>{id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</a>
+                    ))}
                 </nav>
             </aside>
 

@@ -28,13 +28,20 @@ app.use(
     })
 );
 
+// Serve uploaded files (images/videos) from /uploads
+const uploadsRoot = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsRoot)) fs.mkdirSync(uploadsRoot, { recursive: true });
+app.use('/uploads', express.static(uploadsRoot));
+
 // LLM SQL generation endpoint (provider dispatch + fallback)
 async function tryCallProvider(providerRow, prompt, ragContext) {
     try {
         const cfg = providerRow.config || {};
         const base = (cfg.url || process.env.OLLAMA_URL || cfg.endpoint || '').toString().replace(/\/$/, '') || 'http://localhost:11434';
         const model = providerRow.model || cfg.model || undefined;
-        const payload = { prompt: `${ragContext || ''}\n\nUser: ${prompt}`, model };
+        // Provide a strict instruction template so LLMs 'think' and then return a safe, read-only SQL
+        const instruction = `INSTRUCTIONS: You are a SQL assistant.\n- First, provide a concise explanation (1-3 sentences) of how you interpreted the user's request and what you will do (label this 'Thoughts:').\n- Then, under the heading 'Action to Be Taken:', return a single read-only SELECT SQL statement only using the provided tables and columns. Wrap the SQL in a fenced block like \`\`\`sql ... \`\`\`.\n- DO NOT reference or use any tables/columns not present in the context.\n- Do not produce DML/DDL or multiple statements.\n`;
+        const payload = { prompt: `${instruction}\nContext:\n${ragContext || ''}\n\nUser: ${prompt}`, model };
 
         const attempts = [`${base}/v1/generate`, `${base}/generate`, `${base}/llms/generate`, `${base}/llms`, base];
         for (const ep of attempts) {
@@ -102,6 +109,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         const ragRows = rres.rows || [];
 
         const tokens = (String(prompt).toLowerCase().match(/\w+/g) || []);
+        const lowerPrompt = String(prompt).toLowerCase();
         const scored = ragRows.map(r => {
             const table = (r.table_name || '').toString().toLowerCase();
             const cols = (r.schema || []).map(c => (c.column_name || c.name || '').toString().toLowerCase());
@@ -115,6 +123,17 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                     else if (c.includes(t)) score += 1;
                 }
             }
+            // Heuristics for statistical/score queries: boost schemas that contain score-like columns
+            try {
+                if (/\b(total|total score|overall score|score|sum|average|avg|mean)\b/.test(lowerPrompt)) {
+                    const lowCols = cols;
+                    if (lowCols.includes('overall_score') || lowCols.includes('overallscore')) score += 80;
+                    if (lowCols.includes('score') || lowCols.includes('scores') || lowCols.includes('score_value')) score += 50;
+                    if (lowCols.some(c => c.includes('answer') || c.includes('answer_value') || c.includes('answers'))) score += 40;
+                    if (table.includes('report')) score += 30;
+                    if (table.includes('answer') || table.includes('answers')) score += 30;
+                }
+            } catch (e) { }
             return { r, score, cols };
         });
 
@@ -148,10 +167,17 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         }
 
         // Include any RAG records marked as 'Compulsory' into the LLM context so the model always sees them
-        const compulsoryRags = (ragRows || []).filter(rr => String(rr.category || '').toLowerCase() === 'compulsory');
+        let compulsoryRags = (ragRows || []).filter(rr => String(rr.category || '').toLowerCase() === 'compulsory');
+        // If no explicit compulsory entries exist, prefer core tables that are likely required for SQL generation
+        if (!compulsoryRags || compulsoryRags.length === 0) {
+            const coreNames = ['dqai_activity_reports', 'dqai_answers', 'dqai_questions'];
+            compulsoryRags = ragRows.filter(rr => coreNames.includes(((rr.table_name || '')).toString()));
+        }
         let compulsoryContext = '';
         if (compulsoryRags.length) {
+            // Prefer using a short human-readable summary if available
             compulsoryContext = compulsoryRags.map(cr => {
+                if (cr.summary_text && String(cr.summary_text).trim()) return `RAG Summary: ${String(cr.summary_text).trim()}${cr.business_rules ? '\nBusiness Rules: ' + cr.business_rules : ''}`;
                 const crCols = (cr.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).join(', ');
                 const crSample = JSON.stringify((cr.sample_rows || []).slice(0, 2));
                 const br = cr.business_rules ? `Business Rules: ${cr.business_rules}` : '';
@@ -159,9 +185,20 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             }).join('\n\n');
         }
 
-        const schemaDesc = (chosenRow.schema || []).map(c => `${c.column_name || c.name}(${c.data_type || ''})`).join(', ');
-        const samplePreview = JSON.stringify((chosenRow.sample_rows || []).slice(0, 3));
-        const ragContext = `${compulsoryContext ? ('COMPULSORY RAGS:\n' + compulsoryContext + '\n\n') : ''}Table: ${tableName}\nColumns: ${schemaDesc}\nSample: ${samplePreview}`;
+        // Build structured RAG context as JSON to send to LLMs (reduces token waste and keeps schema precise)
+        const buildRagObj = (row) => ({
+            table_name: row.table_name,
+            schema: Array.isArray(row.schema) ? row.schema.map(c => ({ data_type: c.data_type || '', column_name: c.column_name || c.name || '', is_nullable: c.is_nullable || (c.nullable ? 'YES' : 'NO') })) : [],
+            sample_rows: Array.isArray(row.sample_rows) ? (row.sample_rows || []).slice(0, 3) : [],
+            category: row.category || null,
+            business_rules: row.business_rules || null,
+            summary_text: row.summary_text || null
+        });
+
+        const chosenObj = buildRagObj(chosenRow || best.r);
+        const compulsoryObjs = (compulsoryRags || []).map(buildRagObj);
+        const ragContextObj = { compulsory: compulsoryObjs, chosen: chosenObj };
+        const ragContext = JSON.stringify(ragContextObj);
 
         let providerUsed = null;
         let providerResponse = null;
@@ -194,6 +231,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         let sql = '';
         const numericCol = (best.r.schema || []).find(c => /(int|numeric|decimal|real|double|smallint|bigint)/i.test(String(c.data_type || '')));
 
+        // A: average / mean requests
         if (/(average|avg|mean)/.test(lower) && numericCol) {
             const agg = `AVG("${numericCol.column_name}") as avg_${numericCol.column_name}`;
             const byMatch = prompt.match(/by\s+([a-zA-Z0-9_]+)/i);
@@ -203,34 +241,76 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             } else {
                 sql = `SELECT ${agg} FROM "${tableName}" LIMIT 200`;
             }
+
+            // B: count / how many requests — improved handling for "by", "per", and quoted values
         } else if (/(count|how many|number of)/.test(lower)) {
-            const byMatch = prompt.match(/by\s+([a-zA-Z0-9_]+)/i);
+            // prefer explicit "by <col>" or "per <col>"
+            const byMatch = prompt.match(/(?:by|per|group by)\s+([a-zA-Z0-9_]+)/i);
             if (byMatch) {
                 const groupCol = byMatch[1];
                 sql = `SELECT "${groupCol}", COUNT(*) as count FROM "${tableName}" GROUP BY "${groupCol}" LIMIT 200`;
             } else {
-                sql = `SELECT COUNT(*) as count FROM "${tableName}"`;
+                // if the prompt contains a quoted value or "for <value>", try to add a WHERE clause on a text column
+                const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([^'"\n]+)['"]?/i) || prompt.match(/for\s+'?([^']+)'?/i);
+                if (whereMatch && whereMatch[1] && whereMatch[2]) {
+                    // pattern matched as where <col> = <val>
+                    const col = whereMatch[1]; const val = whereMatch[2];
+                    const hasCol = (best.r.schema || []).some(c => (c.column_name || c.name || '') === col);
+                    if (hasCol) {
+                        sql = `SELECT COUNT(*) as count FROM "${tableName}" WHERE "${col}" = '${String(val).replace(/'/g, "''")}'`;
+                    }
+                }
+
+                // fallback: simple count of rows
+                if (!sql) sql = `SELECT COUNT(*) as count FROM "${tableName}"`;
             }
+
+            // C: generic select with heuristic WHERE handling
         } else {
             let selectCols = [];
             if (matchedCols.length > 0) selectCols = matchedCols.slice(0, 10);
             else selectCols = (best.r.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).slice(0, 10);
             const selectClause = (selectCols.length > 0) ? selectCols.map(c => `"${c}"`).join(', ') : '*';
             let where = '';
-            const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([a-zA-Z0-9_ \-\.]+)['"]?/i);
+
+            // try to capture explicit where clauses including quoted values with spaces
+            const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([^'"\n]+)['"]?/i);
             if (whereMatch) {
                 const col = whereMatch[1]; const val = whereMatch[3];
                 const hasCol = (best.r.schema || []).some(c => (c.column_name || c.name || '') === col);
-                if (hasCol) where = ` WHERE "${col}" = '${val.replace(/'/g, "''")}'`;
+                if (hasCol) where = ` WHERE "${col}" = '${String(val).replace(/'/g, "''")}'`;
             } else {
-                const forMatch = prompt.match(/for\s+([a-zA-Z0-9_ \-]+)/i);
+                // try "for <value>" or "in <value>" and match to a text column
+                const forMatch = prompt.match(/(?:for|in)\s+['"]?([^'"\n]+)['"]?/i);
                 if (forMatch) {
                     const val = forMatch[1].trim();
                     const textCol = (best.r.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
-                    if (textCol) where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${val.replace(/'/g, "''")}%'`;
+                    if (textCol) where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${String(val).replace(/'/g, "''")}%'`;
                 }
             }
-            sql = `SELECT ${selectClause} FROM "${tableName}"${where} LIMIT 500`;
+
+            // If the prompt mentions "program" and we have other RAGs with program in their table name,
+            // hint a join by selecting important columns and adding a where clause if a program value was provided.
+            if (!where && /program\b/.test(lower) && (ragRows || []).some(rr => (rr.table_name || '').toLowerCase().includes('program'))) {
+                const programTable = (ragRows || []).find(rr => (rr.table_name || '').toLowerCase().includes('program'));
+                if (programTable) {
+                    // try to find a likely program name column in the program table
+                    const progSchema = programTable.schema || [];
+                    const progNameCol = (progSchema.find(c => /(name|title|program)/i.test(String(c.column_name || c.name || ''))) || {}).column_name || (progSchema.find(c => /(name|title|program)/i.test(String(c.column_name || c.name || ''))) || {}).name;
+                    const textCol = (best.r.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
+                    if (progNameCol && textCol) {
+                        // if user provided a program name, capture it
+                        const progMatch = prompt.match(/(?:for|in)\s+['"]?([^'"\n]+)['"]?/i);
+                        if (progMatch) {
+                            const progVal = progMatch[1].trim();
+                            where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${String(progVal).replace(/'/g, "''")}%'`;
+                            sql = `SELECT ${selectClause} FROM "${tableName}"${where} LIMIT 500`;
+                        }
+                    }
+                }
+            }
+
+            if (!sql) sql = `SELECT ${selectClause} FROM "${tableName}"${where} LIMIT 500`;
         }
 
         // Add autogenerated business-rule guidance when relevant and include any stored business_rules
@@ -406,7 +486,8 @@ async function initDb() {
             facility_id INTEGER REFERENCES dqai_facilities(id) ON DELETE SET NULL,
             user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
             uploaded_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
-            file_content JSONB,
+                report_id INTEGER REFERENCES dqai_activity_reports(id) ON DELETE CASCADE,
+                file_content JSONB,
             filename TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`
@@ -482,9 +563,20 @@ async function initDb() {
             chroma_id TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`);
+        // Audit batches: store arrays of events pushed from clients (minimalistic records)
+        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_batches (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+            events JSONB,
+            created_at TIMESTAMP DEFAULT NOW()
+        )`);
         // Ensure RAG schemas table has category and business rules fields
         await pool.query(`ALTER TABLE dqai_rag_schemas ADD COLUMN IF NOT EXISTS category TEXT`);
         await pool.query(`ALTER TABLE dqai_rag_schemas ADD COLUMN IF NOT EXISTS business_rules TEXT`);
+        // Add a minimal text summary field for RAG records to provide concise context to LLMs
+        await pool.query(`ALTER TABLE dqai_rag_schemas ADD COLUMN IF NOT EXISTS summary_text TEXT`);
+        // Ensure uploaded_docs has a report_id reference so files can be tied to a specific report
+        await pool.query(`ALTER TABLE dqai_uploaded_docs ADD COLUMN IF NOT EXISTS report_id INTEGER`);
         // Ensure activities has response_type and form_definition (sync with schema)
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS response_type TEXT`);
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS form_definition JSONB`);
@@ -1540,17 +1632,37 @@ app.get('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
     try {
-        const { id, table_name, schema, sample_rows } = req.body || {};
+        const { id, table_name, schema, sample_rows, category, business_rules } = req.body || {};
         if (!table_name) return res.status(400).json({ error: 'Missing table_name' });
+        if (!business_rules || !String(business_rules).trim()) return res.status(400).json({ error: 'Business rules (natural language) are required for every RAG record' });
         const schemaJson = schema ? JSON.stringify(schema) : JSON.stringify([]);
         const processedSamples = Array.isArray(sample_rows) ? truncateSampleRows(sample_rows) : [];
         const sampleJson = JSON.stringify(processedSamples || []);
+        const cat = category ? String(category) : null;
+        const br = business_rules ? String(business_rules) : null;
         let saved;
         if (id) {
-            const r = await pool.query('UPDATE dqai_rag_schemas SET table_name=$1, schema=$2, sample_rows=$3, generated_at = NOW() WHERE id=$4 RETURNING *', [table_name, schemaJson, sampleJson, id]);
+            const r = await pool.query('UPDATE dqai_rag_schemas SET table_name=$1, schema=$2, sample_rows=$3, category=$4, business_rules=$5, generated_at = NOW() WHERE id=$6 RETURNING *', [table_name, schemaJson, sampleJson, cat, br, id]);
             saved = r.rows[0];
         } else {
-            const r = await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW() RETURNING *', [table_name, schemaJson, sampleJson]);
+            // Compute a minimal textual summary for the RAG record if not provided
+            const computeSummary = () => {
+                try {
+                    const cols = (schema || []).map((c) => (c.column_name || c.name)).filter(Boolean);
+                    const previewRows = (processedSamples || []).slice(0, 3).map((r) => {
+                        try {
+                            // join first few column values into a short string
+                            const vals = cols.slice(0, 4).map(cn => `${cn}: ${String(r[cn] ?? '')}`);
+                            return vals.join(' | ');
+                        } catch (e) { return JSON.stringify(r).slice(0, 100); }
+                    });
+                    const colPart = cols.length ? `Columns: ${cols.slice(0, 8).join(', ')}` : '';
+                    const samplePart = previewRows.length ? ` Sample: ${previewRows.join(' || ')}` : '';
+                    return `${table_name}${colPart ? ' — ' + colPart : ''}${samplePart}`.slice(0, 800);
+                } catch (e) { return `${table_name}`; }
+            };
+            const summaryText = computeSummary();
+            const r = await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows, category, business_rules, summary_text) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, category = $4, business_rules = $5, summary_text = $6, generated_at = NOW() RETURNING *', [table_name, schemaJson, sampleJson, cat, br, summaryText]);
             saved = r.rows[0];
         }
 
@@ -1679,6 +1791,22 @@ app.get('/api/admin/roles_with_perms', requireAdmin, async (req, res) => {
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to fetch roles with permissions' }); }
 });
 
+// Accept bulk audit events from clients (clients should batch localStorage events and POST them here)
+app.post('/api/audit/bulk', async (req, res) => {
+    try {
+        const payload = req.body || {};
+        const events = Array.isArray(payload.events) ? payload.events : (payload.events ? [payload.events] : []);
+        if (!events.length) return res.status(400).json({ error: 'Missing events array' });
+        const uid = (req.session && req.session.userId) ? req.session.userId : (payload.userId || null);
+        // store the entire batch as one JSONB entry for minimalistic audit
+        await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [uid, JSON.stringify(events)]);
+        return res.json({ ok: true });
+    } catch (e) {
+        console.error('Failed to accept audit bulk', e);
+        return res.status(500).json({ error: 'Failed to accept audit events' });
+    }
+});
+
 // Sync questions from either a form-definition object or a flat questions array into the `questions` table
 async function syncQuestions(activityId, formDefOrQuestions) {
     if (!activityId) return;
@@ -1791,6 +1919,10 @@ app.post('/auth/login', async (req, res) => {
                 status: user.status,
                 profileImage: user.profile_image || null
             };
+            // Record login in audit_batches for server-side traceability
+            try {
+                await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [user.id, JSON.stringify([{ type: 'login', email: user.email, success: true, ts: new Date().toISOString(), ip: req.ip }])]);
+            } catch (e) { console.error('Failed to write audit login record', e); }
             return res.json(safeUser);
         }
 
@@ -1810,6 +1942,9 @@ app.post('/auth/login', async (req, res) => {
             user = insertRes.rows[0];
         }
         req.session.userId = user.id;
+        try {
+            await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [user.id || null, JSON.stringify([{ type: 'login', email: user.email || null, success: true, ts: new Date().toISOString(), demo: true, ip: req.ip }])]);
+        } catch (e) { console.error('Failed to write audit login record', e); }
         res.json(user);
     } catch (err) {
         console.error(err);
@@ -2117,13 +2252,124 @@ app.get('/api/reports/:id', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
+// Update a report (reviewers_report, overall_score, status)
+app.put('/api/reports/:id', async (req, res) => {
+    try {
+        const { reviewers_report, overall_score, status } = req.body || {};
+        const fields = [];
+        const params = [];
+        let idx = 1;
+        if (reviewers_report !== undefined) { fields.push(`reviewers_report = $${idx++}`); params.push(reviewers_report); }
+        if (overall_score !== undefined) { fields.push(`overall_score = $${idx++}`); params.push(overall_score); }
+        if (status !== undefined) { fields.push(`status = $${idx++}`); params.push(status); }
+        if (fields.length === 0) return res.status(400).send('No fields to update');
+        params.push(req.params.id);
+        const sql = `UPDATE dqai_activity_reports SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`;
+        const result = await pool.query(sql, params);
+        if (result.rowCount === 0) return res.status(404).send('Report not found');
+        const r = result.rows[0];
+        res.json({
+            ...r,
+            activityId: r.activity_id,
+            userId: r.user_id,
+            facilityId: r.facility_id,
+            submissionDate: r.submission_date,
+            reviewersReport: r.reviewers_report,
+            overallScore: r.overall_score,
+            reportedBy: r.reported_by
+        });
+    } catch (e) { res.status(500).send(e.message); }
+});
+
+// Accept base64 media uploads for reviews (images/videos). Body: { reportId, filename, contentBase64, mimeType }
+app.post('/api/review_uploads', async (req, res) => {
+    try {
+        const { reportId, filename, contentBase64, mimeType } = req.body || {};
+        if (!reportId || !filename || !contentBase64) return res.status(400).send('Missing parameters');
+        const safeReportId = String(reportId).replace(/[^a-zA-Z0-9-_\.]/g, '_');
+        const folder = path.join(uploadsRoot, 'reports', String(safeReportId));
+        if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+        const ts = Date.now();
+        const ext = path.extname(filename) || '';
+        const baseName = path.basename(filename, ext).replace(/[^a-zA-Z0-9-_\.]/g, '_');
+        const savedName = `${ts}_${baseName}${ext}`;
+        const filePath = path.join(folder, savedName);
+        // contentBase64 may be a data URL or raw base64
+        let base64 = contentBase64;
+        const comma = base64.indexOf(',');
+        if (comma !== -1) base64 = base64.slice(comma + 1);
+        const buf = Buffer.from(base64, 'base64');
+        fs.writeFileSync(filePath, buf);
+        const publicUrl = `${req.protocol}://${req.get('host')}/uploads/reports/${encodeURIComponent(String(safeReportId))}/${encodeURIComponent(savedName)}`;
+        res.json({ url: publicUrl, path: filePath });
+    } catch (e) {
+        console.error('review_uploads error', e);
+        res.status(500).send(e.message);
+    }
+});
+
+// Delete a report and its associated uploaded docs and media files
+app.delete('/api/reports/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+        // Safely delete uploaded_docs rows if the DB has a report_id column.
+        // Some installations may not have migrated dqai_uploaded_docs.report_id; in that case
+        // attempt a best-effort deletion by checking file_content->>'reportId' JSON field.
+        try {
+            const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+            if (colRes.rowCount > 0) {
+                await pool.query('DELETE FROM dqai_uploaded_docs WHERE report_id = $1', [id]);
+            } else {
+                try {
+                    await pool.query("DELETE FROM dqai_uploaded_docs WHERE (file_content->>'reportId') = $1", [String(id)]);
+                } catch (e) {
+                    console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e);
+                }
+            }
+        } catch (e) {
+            console.warn('Skipping uploaded_docs deletion due to error checking schema:', e.message || e);
+        }
+
+        // Remove filesystem uploads folder for this report (if any)
+        const folder = path.join(uploadsRoot, 'reports', String(id));
+        try { if (fs.existsSync(folder)) fs.rmSync(folder, { recursive: true, force: true }); } catch (e) { console.error('Failed to remove upload folder', e); }
+
+        // delete the report (answers cascade if DB has FK)
+        const result = await pool.query('DELETE FROM dqai_activity_reports WHERE id = $1 RETURNING *', [id]);
+        if (result.rowCount === 0) return res.status(404).send('Report not found');
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Failed to delete report', e);
+        res.status(500).send(e.message);
+    }
+});
+
 // Get uploaded_docs by activityId or facilityId or userId
 app.get('/api/uploaded_docs', async (req, res) => {
     const { activityId, facilityId, userId } = req.query;
+    const reportId = req.query.reportId;
     try {
         const clauses = [];
         const params = [];
         let idx = 1;
+
+        if (reportId) {
+            // Some DBs may not have a physical report_id column. Detect and fallback to JSONB file_content->>'reportId'
+            try {
+                const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+                if (colRes.rowCount > 0) {
+                    clauses.push(`report_id = $${idx++}`);
+                    params.push(reportId);
+                } else {
+                    clauses.push(`(file_content->>'reportId') = $${idx++}`);
+                    params.push(String(reportId));
+                }
+            } catch (err) {
+                // If schema check fails, fall back to JSONB approach
+                clauses.push(`(file_content->>'reportId') = $${idx++}`);
+                params.push(String(reportId));
+            }
+        }
         if (activityId) { clauses.push(`activity_id = $${idx++}`); params.push(activityId); }
         if (facilityId) { clauses.push(`facility_id = $${idx++}`); params.push(facilityId); }
         if (userId) { clauses.push(`user_id = $${idx++}`); params.push(userId); }
@@ -2324,9 +2570,9 @@ app.post('/api/reports', async (req, res) => {
             if (Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
                 for (const file of uploadedFiles) {
                     try {
-                        const filename = file.name || file.filename || null;
+                        const filename = file.name || file.filename || file.fileName || null;
                         const content = file.content || file.data || file; // expect JSON-able representation
-                        await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6)', [activityId, facilityId, userId || null, req.session.userId || null, JSON.stringify(content), filename]);
+                        await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [activityId, facilityId, userId || null, req.session.userId || null, report.id, JSON.stringify(content), filename]);
                     } catch (e) {
                         console.error('Failed to persist uploaded file', e);
                     }

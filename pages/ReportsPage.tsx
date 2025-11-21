@@ -82,7 +82,8 @@ const ReportsPage: React.FC = () => {
                       const activity = activities.find(a => a.id === report.activityId);
                       if (!activity) return;
                       // If Facility level, go to fill form for that activity/facility
-                      const base = `/fill-form/${report.activityId}`;
+                      // Note: route is /activities/fill/:activityId
+                      const base = `/activities/fill/${report.activityId}`;
                       const params = new URLSearchParams();
                       params.set('reportId', String(report.id));
                       if ((activity.responseType || '').toLowerCase() === 'facility') {
@@ -92,7 +93,18 @@ const ReportsPage: React.FC = () => {
                       }
                       navigate(`${base}?${params.toString()}`);
                     }}>Edit Report Form</button>
-                    <button className="text-red-600 hover:text-red-900 flex items-center text-xs" onClick={() => alert('Delete Report coming soon')}>Delete</button>
+                    <button className="text-red-600 hover:text-red-900 flex items-center text-xs" onClick={async () => {
+                      if (!confirm('Delete this report and its uploaded files?')) return;
+                      try {
+                        const res = await fetch(`http://localhost:3000/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
+                        if (res.ok) {
+                          alert('Report deleted');
+                          window.location.reload();
+                        } else {
+                          alert('Failed to delete report');
+                        }
+                      } catch (e) { console.error(e); alert('Failed to delete report'); }
+                    }}>Delete</button>
                   </td>
                 </tr>
               ))}

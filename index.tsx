@@ -3,7 +3,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 // Materialize CSS removed; using Tailwind
-import './overrides.css';
+import './index.css';
 import { ThemeProvider } from './hooks/useTheme';
 
 const rootElement = document.getElementById('root');
