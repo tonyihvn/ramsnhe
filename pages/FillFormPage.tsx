@@ -106,6 +106,8 @@ const RenderQuestion = ({ question, value, onChange }: { question: Question, val
                     displayValue = null;
                 }
             }
+
+                
             const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
             return (
                 <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
@@ -163,6 +165,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [answers, setAnswers] = useState<Record<string, any>>({});
     const [formSubmitted, setFormSubmitted] = useState(false);
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+    const [uploadToFolder, setUploadToFolder] = useState<boolean>(false);
     const [activePageIndex, setActivePageIndex] = useState(0);
     const [editingReport, setEditingReport] = useState<ActivityReport | undefined>(undefined);
 
@@ -305,42 +308,118 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             return;
         }
 
-        // prepare upload payload mapping fileName -> filename and data -> content
-        const mappedUploads = uploadedFiles.map(f => ({ filename: f.fileName || f.filename || f.fileName || `uploaded_${Date.now()}`, content: f.data || f.data || f }));
+        (async () => {
+            try {
+                // Create the report first without embedding base64 file data so server returns an id
+                const payloadBase: any = {
+                    activityId: activityId,
+                    userId: selectedUserId || currentUser?.id,
+                    facilityId: selectedFacilityId || currentUser?.facilityId,
+                    status: 'Pending',
+                    answers: {}
+                };
+                // copy answers but strip out any dataUrl content so we can upload them separately
+                const strippedAnswers: Record<string, any> = {};
+                // sanitize computed fields so we don't save function source code into DB
+                const sanitizeComputedValue = (v: any) => {
+                    if (v === undefined || v === null) return v;
+                    if (typeof v === 'number' || typeof v === 'boolean') return v;
+                    if (typeof v === 'function') {
+                        try {
+                            const res = v();
+                            return res === undefined || res === null ? null : res;
+                        } catch (e) { return null; }
+                    }
+                    if (typeof v === 'string' && /=>|function\s*\(/.test(v)) {
+                        // extract trailing primitive after last closing brace
+                        const after = v.replace(/^[\s\S]*}\s*/, '').trim();
+                        if (after) {
+                            if (/^-?\d+(?:\.\d+)?$/.test(after)) return Number(after);
+                            try { return JSON.parse(after); } catch (e) { return after; }
+                        }
+                        return null;
+                    }
+                    return v;
+                };
+                const fileAnswerMap: Array<{ qid: string; filename: string; mimeType?: string; dataUrl: string }> = [];
+                for (const [qid, val] of Object.entries(answers)) {
+                    // narrow to any so we can safely access file-like properties
+                    const vObj = val as any;
+                    // if this question is computed, sanitize value
+                    // find question metadata from formDef
+                    try {
+                        if (formDef) {
+                            for (const p of formDef.pages) for (const s of p.sections) for (const q of s.questions) {
+                                if (String(q.id) === String(qid) && q.answerType === AnswerType.COMPUTED) {
+                                    // replace val with sanitized primitive
+                                    // eslint-disable-next-line no-param-reassign
+                                    // @ts-ignore
+                                    // keep vObj as sanitized
+                                    const sv = sanitizeComputedValue(vObj);
+                                    // use sv as vObj for subsequent handling
+                                    // but preserve object identity if file
+                                    // assign back to variable used below
+                                    // eslint-disable-next-line prefer-const
+                                    // (we'll overwrite vObj variable)
+                                }
+                            }
+                        }
+                    } catch (e) { /* ignore */ }
+                    if (vObj && typeof vObj === 'object' && (vObj.dataUrl || vObj.data)) {
+                        // collect for upload after report is created
+                        const filename = vObj.filename || vObj.name || `file_${Date.now()}`;
+                        const mimeType = vObj.mimeType || vObj.type || '';
+                        const dataUrl = vObj.dataUrl || vObj.data || '';
+                        fileAnswerMap.push({ qid, filename, mimeType, dataUrl });
+                        // leave a placeholder in answers
+                        strippedAnswers[qid] = { filename };
+                    } else {
+                        // sanitize computed string values too
+                        strippedAnswers[qid] = sanitizeComputedValue(val);
+                    }
+                }
+                payloadBase.answers = strippedAnswers;
 
-        if (editingReport) {
-            const updated: ActivityReport = {
-                ...editingReport,
-                activityId: activityId!,
-                userId: selectedUserId || currentUser?.id,
-                facilityId: selectedFacilityId || currentUser?.facilityId,
-                dataCollectionLevel: currentUser?.role === 'Data Collector' ? 'Facility' : 'User',
-                status: 'Completed',
-                preparedBy: currentUser?.id || editingReport.preparedBy || 'unknown',
-                answers: answers,
-                uploadedFiles: mappedUploads,
-                submissionDate: new Date().toISOString(),
-            };
-            saveReport(updated);
-            alert('Report updated successfully!');
-            history('/reports');
-        } else {
-            const report: ActivityReport = {
-                id: `rpt-${Date.now()}`,
-                activityId: activityId!,
-                userId: selectedUserId || currentUser?.id,
-                facilityId: selectedFacilityId || currentUser?.facilityId,
-                dataCollectionLevel: currentUser?.role === 'Data Collector' ? 'Facility' : 'User',
-                status: 'Completed',
-                preparedBy: currentUser?.id || 'unknown',
-                answers: answers,
-                uploadedFiles: mappedUploads,
-                submissionDate: new Date().toISOString(),
+                // create report on server
+                const createRes = await fetch('/api/reports', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadBase) });
+                if (!createRes.ok) {
+                    alert('Failed to create report');
+                    return;
+                }
+                const created = await createRes.json();
+                const reportId = created.id || created.activity_reports_id || null;
+
+                // upload any file answers to /api/review_uploads so they are written to disk and associated with the report
+                const updatedAnswers = { ...strippedAnswers };
+                for (const fa of fileAnswerMap) {
+                    try {
+                        const upRes = await fetch('/api/review_uploads', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId, filename: fa.filename, contentBase64: fa.dataUrl, mimeType: fa.mimeType }) });
+                        if (upRes.ok) {
+                            const uj = await upRes.json();
+                            // replace placeholder with returned url
+                            updatedAnswers[fa.qid] = { url: uj.url, filename: fa.filename };
+                        } else {
+                            // leave placeholder filename if upload failed
+                            updatedAnswers[fa.qid] = { filename: fa.filename };
+                        }
+                    } catch (e) {
+                        console.error('File upload failed', e);
+                        updatedAnswers[fa.qid] = { filename: fa.filename };
+                    }
+                }
+
+                // If we changed any answers to include URLs, send an update to the report
+                try {
+                    await fetch(`/api/reports/${reportId}`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: updatedAnswers }) });
+                } catch (e) { console.error('Failed to update report answers with uploaded file URLs', e); }
+
+                alert('Data successfully submitted!');
+                history('/reports');
+            } catch (err) {
+                console.error('Finalize error', err);
+                alert('Failed to submit data');
             }
-            saveReport(report);
-            alert('Data successfully submitted!');
-            history('/reports');
-        }
+        })();
     }
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -349,6 +428,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
         Array.from(files).forEach((file: File) => {
             const reader = new FileReader();
+            // also read a dataURL of the original file so we can upload raw file if requested
+            const readerDataUrl = new FileReader();
             reader.onload = async (evt) => {
                 try {
                     const buffer = evt.target?.result;
@@ -364,11 +445,18 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         });
                         data.push(rowData);
                     });
-                    setUploadedFiles(prev => [...prev, {
-                        id: `file-${Date.now()}-${file.name}`,
-                        fileName: file.name,
-                        data: data
-                    }]);
+                    // read dataURL of original file in parallel so we can optionally upload raw file later
+                    readerDataUrl.onload = (ev2) => {
+                        const dataUrl = ev2.target?.result as string;
+                        setUploadedFiles(prev => [...prev, {
+                            id: `file-${Date.now()}-${file.name}`,
+                            fileName: file.name,
+                            data: data,
+                            rawDataUrl: dataUrl,
+                            mimeType: file.type || undefined
+                        }]);
+                    };
+                    try { readerDataUrl.readAsDataURL(file); } catch (e) { /* ignore */ }
                 } catch (err) {
                     console.error("Error parsing file", err);
                     alert(`Could not parse ${file.name}. Please ensure it is a valid Excel file.`);
@@ -416,8 +504,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         return <div className="p-6">This activity does not have a form built for it yet. Please contact the administrator.</div>;
     }
 
-    // If editing an existing report that is Completed, do not allow edits
-    if (editingReport && (String(editingReport.status || '').toLowerCase() === 'completed')) {
+    // If editing an existing report that is Completed, do not allow edits for non-admins
+    const isCompleted = editingReport && (String(editingReport.status || '').toLowerCase() === 'completed');
+    const isAdmin = currentUser && String(currentUser.role || '').toLowerCase() === 'admin';
+    if (isCompleted && !isAdmin) {
         return (
             <Card>
                 <h2 className="text-lg font-semibold">This response is completed</h2>
@@ -559,6 +649,13 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                     <p className="text-xs text-gray-500">Supports .xlsx, .xls, .csv</p>
                                 </div>
                             </div>
+                        </div>
+                        <div className="mt-3">
+                            <label className="inline-flex items-center">
+                                <input type="checkbox" className="mr-2" checked={uploadToFolder} onChange={e => setUploadToFolder(e.target.checked)} />
+                                <span className="text-sm text-gray-700">Upload files to server folder (do not parse into tables)</span>
+                            </label>
+                            <p className="text-xs text-gray-400">When checked, the selected Excel/CSV files will be uploaded as-is to the server and stored under the activity uploads folder.</p>
                         </div>
 
                         <div className="space-y-4">

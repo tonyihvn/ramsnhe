@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
-import { Bar, Pie, Line } from 'react-chartjs-2';
+import { confirm, error as swalError, success as swalSuccess } from '../components/ui/swal';
+import { Bar, Pie, Line, Scatter } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -15,9 +16,10 @@ import {
   Title,
   Tooltip,
   Legend,
+  Filler,
 } from 'chart.js';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Filler, Title, Tooltip, Legend);
 
 const ActivityDashboardPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
@@ -31,18 +33,34 @@ const ActivityDashboardPage: React.FC = () => {
   const [fileSearch, setFileSearch] = useState('');
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [chartTypes, setChartTypes] = useState<Record<string, string>>({});
+  const [powerbiModalOpen, setPowerbiModalOpen] = useState(false);
+  const [powerbiInput, setPowerbiInput] = useState('');
+  const [powerbiLinkType, setPowerbiLinkType] = useState<string | null>(null);
+  const [powerbiMode, setPowerbiMode] = useState<string | null>(null);
+  const [powerbiSaving, setPowerbiSaving] = useState(false);
 
   useEffect(() => {
     const fetchDashboard = async () => {
       try {
-        const res = await fetch(`http://localhost:3000/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+        const res = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
         if (res.ok) {
           const json = await res.json();
           setData(json);
           // start with no questions selected so charts don't render until user checks them
           setSelectedQuestionIds([]);
         } else {
-          console.error('Failed to load dashboard', await res.text());
+          // If the dashboard endpoint isn't available, try fetching the activity as a fallback
+          const txt = await res.text();
+          console.error('Failed to load dashboard', txt);
+          if (res.status === 404) {
+            try {
+              const aRes = await fetch(`/api/activities/${activityId}`, { credentials: 'include' });
+              if (aRes.ok) {
+                const a = await aRes.json();
+                setData({ activity: a, questions: [], reports: [], answers: [], answersByQuestion: {}, uploadedDocs: [] });
+              }
+            } catch (e) { /* ignore */ }
+          }
         }
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -53,8 +71,8 @@ const ActivityDashboardPage: React.FC = () => {
     (async () => {
       try {
         const [uRes, fRes] = await Promise.all([
-          fetch('http://localhost:3000/api/users', { credentials: 'include' }),
-          fetch('http://localhost:3000/api/facilities', { credentials: 'include' })
+          fetch('/api/users', { credentials: 'include' }),
+          fetch('/api/facilities', { credentials: 'include' })
         ]);
         if (uRes.ok) {
           const users = await uRes.json();
@@ -93,7 +111,7 @@ const ActivityDashboardPage: React.FC = () => {
   const standaloneUrl = `${window.location.origin}/standalone-form/${activity.id}`;
   return (
     <div className="space-y-6 pb-20">
-      <div className="flex justify-between items-center">
+      <div>
         <div>
           <h1 className="text-2xl font-bold">{activity.title} — Collected Data</h1>
           <p className="text-sm text-gray-500">{stripHtml(activity.details)}</p>
@@ -102,9 +120,16 @@ const ActivityDashboardPage: React.FC = () => {
             <a href={standaloneUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 underline break-all">{standaloneUrl}</a>
           </div>
         </div>
-        <div className="space-x-2">
-          <Button onClick={() => navigate('/activities')} variant="secondary">Back</Button>
-          <Button onClick={handleDownloadPdf}>Download PDF</Button>
+
+        <div className="flex justify-end mt-3">
+          <div className="inline-flex items-center space-x-2">
+            <Button onClick={() => navigate('/activities')} variant="secondary">Back</Button>
+            <Button onClick={() => navigate(`/activities/fill/${activity.id}`)} variant="primary">New +</Button>
+            <Button onClick={() => navigate(`/reports/builder?activityId=${activity.id}`)} variant="secondary">Build Report</Button>
+            <Button onClick={handleDownloadPdf}>Download PDF</Button>
+            <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/submitted-answers`)}>View Submitted Answers</Button>
+            <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/excel-tables`)}>View Excel Tables</Button>
+          </div>
         </div>
       </div>
 
@@ -112,9 +137,89 @@ const ActivityDashboardPage: React.FC = () => {
         <h2 className="text-lg font-semibold mb-2">Power BI</h2>
         <p className="text-sm text-gray-500">Embed your Power BI report here (iframe) or connect external dashboard.</p>
         <div className="mt-4">
-          <iframe title="PowerBI" src={activity.powerbi_url || ''} style={{ width: '100%', height: 300, border: 'none' }} />
+          <div className="flex items-center justify-end mb-2">
+            <Button variant="secondary" size="sm" onClick={() => { setPowerbiInput(activity.powerbi_url || ''); setPowerbiLinkType(activity.powerbi_link_type || null); setPowerbiMode(activity.powerbi_mode || null); setPowerbiModalOpen(true); }}>Configure Power BI</Button>
+          </div>
+          {(() => {
+            const extractUrlFromIframe = (maybeIframe: any) => {
+              if (!maybeIframe) return null;
+              if (typeof maybeIframe !== 'string') return String(maybeIframe);
+              const s = maybeIframe.trim();
+              if (s.startsWith('<iframe') || /<iframe/i.test(s)) {
+                const m = s.match(/src\s*=\s*"([^"]+)"/) || s.match(/src\s*=\s*'([^']+)'/) || s.match(/src\s*=\s*([^\s>]+)/);
+                if (m && m[1]) return m[1];
+              }
+              return s;
+            };
+            const raw = activity.powerbi_url;
+            const url = extractUrlFromIframe(raw);
+            if (!url || !/^https?:\/\//i.test(url)) {
+              return <div className="text-sm text-red-500">No valid Power BI embed URL saved for this activity.</div>;
+            }
+            return <iframe title="PowerBI" src={url} style={{ width: '100%', height: 300, border: 'none' }} />;
+          })()}
         </div>
       </Card>
+
+      {/* Power BI Modal */}
+      {powerbiModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white w-11/12 max-w-2xl p-6 rounded shadow-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Configure Power BI for this activity</h3>
+              <div>
+                <Button size="sm" variant="secondary" onClick={() => setPowerbiModalOpen(false)}>Close</Button>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">Paste an iframe snippet or the direct iframe <code>src</code> URL below.</div>
+              <textarea className="w-full border rounded p-2 text-sm" rows={4} value={powerbiInput} onChange={e => setPowerbiInput(e.target.value)} />
+              <div className="grid grid-cols-2 gap-2">
+                <select className="border p-2 rounded" value={powerbiLinkType || ''} onChange={e => setPowerbiLinkType(e.target.value || null)}>
+                  <option value="">(Select type)</option>
+                  <option value="embed">Embed</option>
+                  <option value="iframe">Iframe</option>
+                  <option value="link">Link</option>
+                </select>
+                <select className="border p-2 rounded" value={powerbiMode || 'disabled'} onChange={e => setPowerbiMode(e.target.value || null)}>
+                  <option value="disabled">Disabled</option>
+                  <option value="enabled">Enabled</option>
+                </select>
+              </div>
+              <div className="text-xs text-gray-500">Example: &lt;iframe src=\"https://app.powerbi.com/....\" width=\"..\" height=\"..\"&gt;&lt;/iframe&gt;</div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button size="sm" variant="secondary" onClick={() => { setPowerbiModalOpen(false); }}>Cancel</Button>
+              <Button size="sm" variant="primary" onClick={async () => {
+                // sanitize and extract src
+                const s = (powerbiInput || '').trim();
+                const extract = (v: string) => {
+                  if (!v) return null;
+                  const t = v.trim();
+                  if (t.startsWith('<iframe') || /<iframe/i.test(t)) {
+                    const m = t.match(/src\s*=\s*"([^"]+)"/) || t.match(/src\s*=\s*'([^']+)'/) || t.match(/src\s*=\s*([^\s>]+)/);
+                    if (m && m[1]) return m[1];
+                  }
+                  return t;
+                };
+                const url = extract(s);
+                if (!url || !/^https?:\/\//i.test(url)) { swalError('Invalid URL', 'Please provide a valid http/https Power BI embed URL or iframe.'); return; }
+                try {
+                  setPowerbiSaving(true);
+                  const res = await fetch(`/api/admin/activities/${activity.id}/powerbi`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ powerbi_link: url, powerbi_url: url, link_type: powerbiLinkType || null, mode: powerbiMode || null }) });
+                  if (!res.ok) { const txt = await res.text().catch(() => ''); swalError('Save failed', txt || 'Unable to save Power BI configuration'); setPowerbiSaving(false); return; }
+                  // refresh dashboard
+                  const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+                  if (r.ok) setData(await r.json());
+                  setPowerbiModalOpen(false);
+                  swalSuccess('Saved', 'Power BI configuration saved');
+                } catch (e) { console.error(e); swalError('Save failed', 'Unable to save Power BI configuration'); }
+                finally { setPowerbiSaving(false); }
+              }}>Save</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Card>
         <h2 className="text-lg font-semibold mb-2">Interactive Charts</h2>
@@ -155,8 +260,12 @@ const ActivityDashboardPage: React.FC = () => {
                     <label className="text-xs text-gray-600 mr-2">Chart</label>
                     <select className="p-1 border rounded text-sm" value={chartType} onChange={e => setChartTypes(prev => ({ ...prev, [q.id]: e.target.value }))}>
                       <option value="bar">Bar</option>
+                      <option value="column">Column (alias of Bar)</option>
+                      <option value="stackedBar">Stacked Bar</option>
                       <option value="pie">Pie</option>
                       <option value="line">Line</option>
+                      <option value="area">Area</option>
+                      <option value="scatter">Scatter</option>
                       <option value="table">Table</option>
                     </select>
                   </div>
@@ -165,8 +274,17 @@ const ActivityDashboardPage: React.FC = () => {
                   <div className="text-sm">Responses: {(answersByQuestion[q.id] || []).length}</div>
                   <div className="mt-2 h-44">
                     {chartType === 'bar' && <Bar data={data} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'column' && <Bar data={data} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'stackedBar' && <Bar data={data} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true } }, scales: { x: { stacked: true }, y: { stacked: true } } }} />}
                     {chartType === 'pie' && <Pie data={{ labels: data.labels, datasets: [{ data: data.datasets[0].data, backgroundColor: ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'] }] }} options={{ responsive: true, maintainAspectRatio: false }} />}
                     {chartType === 'line' && <Line data={{ labels: data.labels, datasets: [{ label: 'Responses', data: data.datasets[0].data, fill: false, borderColor: 'rgba(37,99,235,0.8)' }] }} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'area' && <Line data={{ labels: data.labels, datasets: [{ label: 'Responses', data: data.datasets[0].data, fill: true, backgroundColor: 'rgba(37,99,235,0.2)', borderColor: 'rgba(37,99,235,0.8)' }] }} options={{ responsive: true, maintainAspectRatio: false }} />}
+                    {chartType === 'scatter' && (() => {
+                      const scatterPoints = data.labels.map((lbl: any, i: number) => ({ x: i + 1, y: data.datasets[0].data[i] }));
+                      const scatterData = { datasets: [{ label: 'Responses (scatter)', data: scatterPoints, backgroundColor: 'rgba(37,99,235,0.7)' }] };
+                      const scatterOptions = { responsive: true, maintainAspectRatio: false, scales: { x: { title: { display: true, text: 'Category (index)' } }, y: { title: { display: true, text: 'Count' } } } };
+                      return <Scatter data={scatterData} options={scatterOptions} />;
+                    })()}
                     {chartType === 'table' && (
                       <div className="overflow-auto max-h-44 border rounded p-2 bg-gray-50">
                         <table className="min-w-full text-sm">
@@ -214,6 +332,28 @@ const ActivityDashboardPage: React.FC = () => {
             { key: 'user_id', label: 'User' },
             { key: 'status', label: 'Status' },
             { key: 'reviewers_report', label: "Reviewer's Report" },
+            {
+              key: 'actions', label: 'Actions', render: (row: any) => (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/${row.__raw.id}`)}>View</Button>
+                  <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/builder?reportId=${row.__raw.id}`)}>Edit</Button>
+                  <Button size="sm" variant="danger" onClick={async () => {
+                    const ok = await confirm({ title: 'Delete report?', text: `Permanently delete report ${row.id}?` });
+                    if (!ok) return;
+                    try {
+                      const resp = await fetch(`/api/reports/${row.__raw.id}`, { method: 'DELETE', credentials: 'include' });
+                      if (resp.ok) {
+                        const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+                        if (r.ok) setData(await r.json());
+                        swalSuccess('Deleted', 'Report deleted');
+                      } else {
+                        const txt = await resp.text().catch(() => ''); swalError('Delete failed', txt || 'Unable to delete report');
+                      }
+                    } catch (e) { console.error(e); swalError('Delete failed', 'Unable to delete report'); }
+                  }}>Delete</Button>
+                </div>
+              )
+            },
           ];
           const data = reports.map((r: any) => ({
             id: r.id,
@@ -222,6 +362,7 @@ const ActivityDashboardPage: React.FC = () => {
             user_id: (r.user_id ? (usersMap[String(r.user_id)] || r.user_id) : '—'),
             status: r.status || '—',
             reviewers_report: stripHtml(r.reviewers_report),
+            __raw: r,
           }));
           return <DataTable columns={columns} data={data} onCellEdit={undefined} />;
         })()}
@@ -260,17 +401,22 @@ const ActivityDashboardPage: React.FC = () => {
                   setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
                 }}>Download</Button>
                 <Button size="sm" variant="secondary" onClick={async () => {
-                  if (!confirm('Delete this uploaded file?')) return;
+                  const ok = await confirm({ title: 'Delete uploaded file?', text: 'This will permanently remove the uploaded file.' });
+                  if (!ok) return;
                   try {
-                    const res = await fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
+                    const res = await fetch(`/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
                     if (res.ok) {
                       // refresh dashboard data
-                      const r = await fetch(`http://localhost:3000/api/activity_dashboard/${activityId}`, { credentials: 'include' });
-                      if (r.ok) setData(await r.json());
+                      const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+                      if (r.ok) {
+                        setData(await r.json());
+                        swalSuccess('Deleted', 'Uploaded file deleted');
+                      }
                     } else {
-                      alert('Delete failed');
+                      const txt = await res.text().catch(() => '');
+                      swalError('Delete failed', txt || 'Unable to delete the uploaded file');
                     }
-                  } catch (e) { console.error(e); alert('Delete failed'); }
+                  } catch (e) { console.error(e); swalError('Delete failed', 'Unable to delete the uploaded file'); }
                 }}>Delete</Button>
               </div>
             </div>

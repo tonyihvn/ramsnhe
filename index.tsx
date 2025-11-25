@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 // Materialize CSS removed; using Tailwind
 import './index.css';
+import 'sweetalert2/dist/sweetalert2.min.css';
 import { ThemeProvider } from './hooks/useTheme';
 
 const rootElement = document.getElementById('root');

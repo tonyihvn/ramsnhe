@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
 import ConversationPanel from '../components/ui/ConversationPanel';
 import Modal from '../components/ui/Modal';
+import { confirm as swalConfirm, success as swalSuccess, error as swalError } from '../components/ui/swal';
+import RichTextEditor from '../components/ui/RichTextEditor';
+import { apiFetch, getApiBase } from '../utils/api';
 
 const ReportViewPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>();
@@ -14,36 +17,50 @@ const ReportViewPage: React.FC = () => {
   const [answers, setAnswers] = useState<any[]>([]);
   const [uploadedDocs, setUploadedDocs] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [activityTitle, setActivityTitle] = useState<string | null>(null);
+  const [activityData, setActivityData] = useState<any>(null);
+  const [powerbiConfig, setPowerbiConfig] = useState<any>(null);
+  const [builtTemplate, setBuiltTemplate] = useState<any>(null);
+  const [templatesForActivity, setTemplatesForActivity] = useState<any[]>([]);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFormat, setPreviewFormat] = useState<string | null>(null);
+  const [powerbiModalOpen, setPowerbiModalOpen] = useState(false);
+  const [paperPreviewOpen, setPaperPreviewOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewContent, setReviewContent] = useState<string>(report?.reviewersReport || '');
   const [reviewScore, setReviewScore] = useState<number | null>(report?.overallScore ?? null);
   const [reviewStatus, setReviewStatus] = useState<string | null>(report?.status ?? null);
+  const [imageModalOpen, setImageModalOpen] = useState(false);
+  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
 
   const saveReview = async () => {
     if (!report) return;
     try {
       const payload: any = { reviewers_report: reviewContent, overall_score: reviewScore, status: reviewStatus };
-      const res = await fetch(`http://localhost:3000/api/reports/${report.id}`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await apiFetch(`/api/reports/${report.id}`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (res.ok) {
         const updated = await res.json();
         setReport(prev => ({ ...prev, reviewersReport: updated.reviewers_report || updated.reviewersReport, overallScore: updated.overall_score || updated.overallScore, status: updated.status || prev?.status }));
         setReviewModalOpen(false);
       } else {
-        alert('Failed to save review');
+        try { swalError('Save failed', 'Failed to save review'); } catch (e) { }
       }
-    } catch (e) { console.error(e); alert('Failed to save review'); }
+    } catch (e) { console.error(e); try { swalError('Save failed', 'Failed to save review'); } catch (er) { } }
   };
 
-  // insert HTML at caret in contentEditable
+  // Helper to insert HTML into the review content (used after uploads)
   const insertHtmlAtCaret = (html: string) => {
     const editor = document.getElementById('review-editor');
-    if (!editor) return;
+    if (!editor) {
+      setReviewContent((prev) => (prev || '') + html);
+      return;
+    }
     editor.focus();
     const sel = window.getSelection();
     if (!sel || !sel.getRangeAt || sel.rangeCount === 0) {
       editor.insertAdjacentHTML('beforeend', html);
-      setReviewContent((prev) => prev + html);
+      setReviewContent((prev) => (editor as HTMLElement).innerHTML || '');
       return;
     }
     const range = sel.getRangeAt(0);
@@ -56,7 +73,6 @@ const ReportViewPage: React.FC = () => {
       lastNode = frag.appendChild(node);
     }
     range.insertNode(frag);
-    // move caret after inserted
     if (lastNode) {
       range.setStartAfter(lastNode);
       range.collapse(true);
@@ -73,7 +89,7 @@ const ReportViewPage: React.FC = () => {
       reader.onload = async (ev) => {
         const dataUrl = ev.target?.result as string;
         try {
-          const res = await fetch('http://localhost:3000/api/review_uploads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ reportId: report.id, filename: file.name, contentBase64: dataUrl, mimeType: file.type }) });
+          const res = await apiFetch('/api/review_uploads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ reportId: report.id, filename: file.name, contentBase64: dataUrl, mimeType: file.type }) });
           if (res.ok) {
             const j = await res.json();
             resolve(j.url);
@@ -89,19 +105,45 @@ const ReportViewPage: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const r = await fetch(`http://localhost:3000/api/reports/${reportId}`, { credentials: 'include' });
+        const r = await apiFetch(`/api/reports/${reportId}`, { credentials: 'include' });
         if (!r.ok) { console.error('Failed to load report'); setLoading(false); return; }
         const jr = await r.json();
         setReport(jr);
         // fetch answers and questions so we can show labels, pages, sections
         const [aRes, qRes, docs] = await Promise.all([
-          fetch(`http://localhost:3000/api/answers?reportId=${reportId}`, { credentials: 'include' }),
-          fetch(`http://localhost:3000/api/questions?activityId=${jr.activity_id}`, { credentials: 'include' }),
-          fetch(`http://localhost:3000/api/uploaded_docs?reportId=${jr.id}`, { credentials: 'include' })
+          apiFetch(`/api/answers?reportId=${reportId}`, { credentials: 'include' }),
+          apiFetch(`/api/questions?activityId=${jr.activity_id}`, { credentials: 'include' }),
+          apiFetch(`/api/uploaded_docs?reportId=${jr.id}`, { credentials: 'include' })
         ]);
         if (aRes.ok) setAnswers(await aRes.json() || []);
         if (qRes.ok) setQuestions(await qRes.json() || []);
         if (docs.ok) setUploadedDocs(await docs.json() || []);
+        // fetch activity (title + data)
+        try {
+          const actRes = await apiFetch(`/api/activities/${jr.activity_id}`, { credentials: 'include' });
+          if (actRes.ok) {
+            const act = await actRes.json(); setActivityTitle(act.title || act.activityTitle || act.name || null); setActivityData(act);
+          }
+        } catch (e) { }
+        // fetch powerbi config (public)
+        try {
+          const pb = await apiFetch(`/api/reports/${jr.id}/powerbi`);
+          if (pb.ok) { const j = await pb.json(); setPowerbiConfig(j); }
+        } catch (e) { }
+        // fetch associated template if available
+        try {
+          if (jr.report_template_id) {
+            const t = await apiFetch(`/api/report_templates/${jr.report_template_id}`);
+            if (t.ok) { const tj = await t.json(); setBuiltTemplate(tj); }
+          }
+        } catch (e) { /* ignore */ }
+        // fetch all templates for this activity so we can show buttons to build any of them
+        try {
+          const tplRes = await apiFetch(`/api/report_templates?activityId=${jr.activity_id}`);
+          if (tplRes.ok) {
+            const tplJson = await tplRes.json(); setTemplatesForActivity(Array.isArray(tplJson) ? tplJson : []);
+          }
+        } catch (e) { setTemplatesForActivity([]); }
       } catch (e) { console.error(e); }
       setLoading(false);
     };
@@ -111,6 +153,12 @@ const ReportViewPage: React.FC = () => {
   // sync review modal default values when report loads
   useEffect(() => {
     if (!report) return;
+    try {
+      // don't overwrite content if user is actively editing the review (caret inside editor)
+      const active = document.activeElement as HTMLElement | null;
+      const inEditor = active && (active.closest ? (active.closest('.richtext-editor') || active.closest('#review-editor')) : false);
+      if (inEditor) return;
+    } catch (e) { }
     setReviewContent(report.reviewersReport || report.reviewers_report || '');
     setReviewScore(report.overallScore ?? report.overall_score ?? null);
     setReviewStatus(report.status || null);
@@ -121,38 +169,151 @@ const ReportViewPage: React.FC = () => {
 
   const handlePrint = () => window.print();
 
-  const handlePrintFormatted = () => {
-    // Build a print window with structured report content (pages, sections, questions)
-    const qMap: Record<string, any> = {};
-    for (const q of questions) qMap[q.id] = q;
-    let html = `<html><head><title>Report ${report.id}</title><style>body{font-family:Arial,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}</style></head><body>`;
-    html += `<h1>Report ${report.id}</h1><p>Submitted: ${new Date(report.submission_date).toLocaleString()}</p>`;
-    html += `<h2>Answers</h2><table><thead><tr><th>Page</th><th>Section</th><th>Question</th><th>Answer</th><th>Reviewer Comment</th><th>Followup</th></tr></thead><tbody>`;
-    for (const a of answers) {
-      const q = qMap[a.question_id] || {};
-      const questionText = q.questionText || q.question_text || a.question_id;
-      const pageName = q.pageName || q.page_name || '';
-      const sectionName = q.sectionName || q.section_name || '';
-      const ans = (typeof a.answer_value === 'object') ? JSON.stringify(a.answer_value) : String(a.answer_value);
-      html += `<tr><td>${pageName}</td><td>${sectionName}</td><td>${questionText}</td><td>${ans}</td><td>${a.reviewers_comment || ''}</td><td>${a.quality_improvement_followup || ''}</td></tr>`;
-    }
-    html += `</tbody></table>`;
-    if (uploadedDocs && uploadedDocs.length) {
-      html += `<h2>Uploaded Files</h2>`;
-      for (const d of uploadedDocs) {
-        html += `<h3>${d.filename || 'File'}</h3><pre>${JSON.stringify(d.file_content || d, null, 2)}</pre>`;
+  const handlePrintFormatted = async () => {
+    // Build a sanitized HTML summary client-side and open in a new window for printing.
+    try {
+      const escapeHtml = (s: any) => {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      };
+
+      const sanitizeHtml = (html: any) => {
+        if (!html) return '';
+        let out = String(html || '');
+        // strip dangerous / heavy elements
+        out = out.replace(/<video[\s\S]*?<\/video>/gi, '');
+        out = out.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+        out = out.replace(/<object[\s\S]*?<\/object>/gi, '');
+        out = out.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+        out = out.replace(/<script[\s\S]*?<\/script>/gi, '');
+        // remove very large data URLs in src attributes to avoid viewer failures
+        out = out.replace(/src=(\"|\')(data:[^\"']{5000,})(\"|\')/gi, '');
+        return out;
+      };
+
+      // Build answers HTML
+      const qMap: Record<string, any> = {};
+      for (const q of questions || []) {
+        try {
+          if (q && (q.id !== undefined)) qMap[String(q.id)] = q;
+          if (q && (q.qid !== undefined)) qMap[String(q.qid)] = q;
+          if (q && (q.question_id !== undefined)) qMap[String(q.question_id)] = q;
+        } catch (e) { }
       }
-    }
-    html += `</body></html>`;
-    const w = window.open('', '_blank');
-    if (w) {
-      w.document.write(html);
-      w.document.close();
-      w.focus();
-      w.print();
-    } else {
-      window.print();
-    }
+
+      const answersHtmlParts: string[] = [];
+      for (const a of answers || []) {
+        try {
+          const qid = String(a.question_id || a.qid || a.questionId || '');
+          const q = qMap[qid] || {};
+          const questionText = q.questionText || q.question_text || q.text || q.label || q.title || q.name || qid;
+          let val = a.answer_value;
+          if (val === null || val === undefined) val = '';
+          if (typeof val === 'object') val = JSON.stringify(val);
+          answersHtmlParts.push(`<tr><td style="vertical-align:top;padding:6px;border:1px solid #ddd;width:40%"><strong>${escapeHtml(questionText)}</strong></td><td style="padding:6px;border:1px solid #ddd">${escapeHtml(val)}</td></tr>`);
+        } catch (e) { }
+      }
+
+      // Build uploaded docs tables (only include JSON/array content rows; sanitize cell values)
+      const renderUploadedTables = () => {
+        const parts: string[] = [];
+        for (const d of uploadedDocs || []) {
+          try {
+            // ensure doc belongs to this report
+            const rpt = (d.report_id ?? d.reportId ?? d.report) || null;
+            if (String(rpt) !== String(report.id)) continue;
+            const rows = Array.isArray(d.file_content) ? d.file_content : (Array.isArray(d.dataset_data) ? d.dataset_data : []);
+            if (!rows || rows.length === 0) continue;
+            const keys = Object.keys(rows[0] || {});
+            let html = `<div style="margin-top:18px"><div style="font-weight:600;margin-bottom:6px">${escapeHtml(d.filename || 'Uploaded file')}</div><table style="border-collapse:collapse;width:100%"><thead><tr>`;
+            for (const k of keys) html += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(k)}</th>`;
+            html += '</tr></thead><tbody>';
+            for (const r of rows) {
+              html += '<tr>';
+              for (const k of keys) {
+                const val = r && typeof r === 'object' && (r[k] !== undefined && r[k] !== null) ? String(r[k]) : '';
+                html += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(val)}</td>`;
+              }
+              html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+            parts.push(html);
+          } catch (e) { }
+        }
+        return parts.join('\n');
+      };
+
+      const reviewers = sanitizeHtml(report.reviewersReport || report.reviewers_report || '');
+
+      // Power BI: show only a link if present (do not embed iframe)
+      let powerbiHtml = '';
+      try {
+        const pb = powerbiConfig && (powerbiConfig.powerbi_link || powerbiConfig.powerbi_url || powerbiConfig.powerbiLink);
+        if (pb) {
+          powerbiHtml = `<div><strong>Power BI:</strong> <a href="${escapeHtml(pb)}" target="_blank" rel="noreferrer">Open Power BI report</a></div>`;
+        }
+      } catch (e) { }
+
+      // Build final HTML doc
+      const title = `Report ${escapeHtml(String(report.id || ''))}`;
+      const facility = escapeHtml(report.facility || report.facility_name || report.facilityName || '');
+      const activityName = escapeHtml(activityTitle || (activityData && (activityData.title || activityData.name)) || '');
+      const submissionDate = escapeHtml(String(report.submission_date || ''));
+      const reportedBy = escapeHtml(report.reported_by || report.reported_by_name || report.reportedBy || report.user_name || '');
+      const status = escapeHtml(report.status || '');
+      const overallScore = escapeHtml(String(report.overallScore ?? report.overall_score ?? ''));
+
+      const htmlDoc = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.4;padding:20px}h1{font-size:20px;margin-bottom:8px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border:1px solid #ddd}thead th{background:#f7f7f7}</style></head><body>` +
+        `<h1>${title}</h1>` +
+        `<div style="margin-bottom:12px"><strong>Facility Name:</strong> ${facility || '—'}</div>` +
+        `<div style="margin-bottom:12px"><strong>Activity Name:</strong> ${activityName || '—'}</div>` +
+        `<div style="margin-bottom:12px"><strong>Submission Date:</strong> ${submissionDate || '—'}</div>` +
+        `<div style="margin-bottom:12px"><strong>Reported By:</strong> ${reportedBy || '—'}</div>` +
+        `<div style="margin-bottom:12px"><strong>Status:</strong> ${status || '—'}</div>` +
+        `<div style="margin-bottom:12px"><strong>Overall Score:</strong> ${overallScore || '—'}</div>` +
+        `<div style="margin-top:16px;margin-bottom:6px"><strong>Reviewer's Report</strong></div>` +
+        `<div style="border:1px solid #eee;padding:10px;margin-bottom:12px">${reviewers || '<em>No review yet</em>'}</div>` +
+        `${powerbiHtml}` +
+        `<div style="margin-top:16px;margin-bottom:6px"><strong>Submitted Answers</strong></div>` +
+        (answersHtmlParts.length === 0 ? '<div><em>No answers submitted</em></div>' : `<table><tbody>${answersHtmlParts.join('')}</tbody></table>`) +
+        `<div style="margin-top:16px;margin-bottom:6px"><strong>Uploaded Excel Files</strong></div>` +
+        (renderUploadedTables() || '<div><em>No uploaded files</em></div>') +
+        `</body></html>`;
+
+      const w = window.open('about:blank');
+      if (w && w.document) {
+        w.document.write(htmlDoc);
+        w.document.close();
+      } else {
+        // Fallback: open data URL (may be blocked on some browsers for large content)
+        const blob = new Blob([htmlDoc], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
+    } catch (e) { console.error('Open PDF endpoint failed', e); alert('Failed to open printable view'); }
+  };
+
+  const handlePreviewPdf = async () => {
+    try {
+      const base = getApiBase();
+      const url = base ? `${base}/api/reports/${report.id}/pdf?template=1` : `/api/reports/${report.id}/pdf?template=1`;
+      window.open(url, '_blank');
+    } catch (e) { console.error('Open PDF preview failed', e); alert('Failed to open PDF preview'); }
+  };
+
+  const getPaperDimensions = (tplObj: any) => {
+    // returns { widthMm, heightMm }
+    const map: Record<string, { w: number; h: number }> = {
+      'A4': { w: 210, h: 297 },
+      'A3': { w: 297, h: 420 },
+      'Letter': { w: 215.9, h: 279.4 }
+    };
+    const paper = (tplObj?.paperSize || tplObj?.paper || 'A4');
+    const orient = (tplObj?.orientation || tplObj?.orient || 'portrait');
+    const dims = map[paper] || map['A4'];
+    if (orient === 'landscape') return { widthMm: dims.h, heightMm: dims.w };
+    return { widthMm: dims.w, heightMm: dims.h };
   };
 
   const handleEmail = () => {
@@ -161,21 +322,154 @@ const ReportViewPage: React.FC = () => {
     window.location.href = `mailto:?subject=${subject}&body=${body}`;
   };
 
+  const savePowerBi = async (payload: any) => {
+    try {
+      // sanitize payload.powerbi_link: if user pasted an iframe HTML snippet, extract the src attribute
+      const extractUrlFromIframe = (maybeIframe: any) => {
+        if (!maybeIframe) return null;
+        if (typeof maybeIframe !== 'string') return String(maybeIframe);
+        const s = maybeIframe.trim();
+        // if it looks like an iframe tag, extract src
+        if (s.startsWith('<iframe') || /<iframe/i.test(s)) {
+          const m = s.match(/src\s*=\s*"([^"]+)"/) || s.match(/src\s*=\s*'([^']+)'/) || s.match(/src\s*=\s*([^\s>]+)/);
+          if (m && m[1]) return m[1];
+        }
+        // If it's a data URL or relative path, return as-is; callers will validate
+        return s;
+      };
+      if (payload && payload.powerbi_link) payload.powerbi_link = extractUrlFromIframe(payload.powerbi_link);
+      const res = await apiFetch(`/api/admin/reports/${report.id}/powerbi`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, powerbi_url: payload.powerbi_link || payload.powerbi_url }) });
+      if (res.ok) {
+        const j = await res.json();
+        setPowerbiConfig(j);
+        try { swalSuccess('Saved', 'Power BI config saved'); } catch (e) { }
+        return true;
+      }
+      try { swalError('Failed', 'Unable to save Power BI config'); } catch (e) { }
+      return false;
+    } catch (e) { console.error(e); try { swalError('Failed', 'Unable to save Power BI config'); } catch (er) { } return false; }
+  };
+
   return (
     <div className="space-y-6 pb-20">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">Report {report.id}</h1>
+          <h1 className="text-2xl font-bold">{activityTitle ? `${activityTitle} — Report ${report.id}` : `Report ${report.id}`}</h1>
           <p className="text-sm text-gray-500">Submitted: {new Date(report.submission_date).toLocaleString()}</p>
-        </div>
-        <div className="space-x-2">
-          <Button variant="secondary" onClick={() => navigate(-1)}>Back</Button>
-          <Button onClick={handlePrintFormatted}>Download PDF</Button>
-          <Button variant="secondary" onClick={handleEmail}>Forward via Email</Button>
+          <div className="inline-flex items-center gap-2">
+            <Button onClick={handlePrintFormatted}>Download PDF</Button>
+            {/* Replace single 'Preview PDF' with one button per template for this activity */}
+            {(templatesForActivity || []).map((tpl: any) => (
+              <Button key={tpl.id} variant="secondary" onClick={async () => {
+                try {
+                  const tplObj = (typeof tpl.template_json === 'string') ? JSON.parse(tpl.template_json || '{}') : (tpl.template_json || {});
+                  let fmt = (tplObj.displayFormat || 'pdf').toString().toLowerCase();
+                  const supported = ['pdf', 'docx', 'xlsx', 'image'];
+                  if (!supported.includes(fmt)) fmt = 'pdf';
+
+                  // Fill placeholders using current report data (questions, answers, uploadedDocs, activityData)
+                  const fillTemplate = (htmlStr: string) => {
+                    try {
+                      let out = String(htmlStr || '');
+                      const qMap: Record<string, any> = {};
+                      for (const q of questions || []) { try { if (q && (q.id !== undefined)) qMap[String(q.id)] = q; if (q && (q.qid !== undefined)) qMap[String(q.qid)] = q; if (q && (q.question_id !== undefined)) qMap[String(q.question_id)] = q; } catch (e) { } }
+                      const answersMap: Record<string, string> = {};
+                      for (const a of answers || []) { try { const qid = String(a.question_id || a.questionId || a.qid || ''); if (!qid) continue; if (!answersMap[qid]) { const val = (typeof a.answer_value === 'object') ? JSON.stringify(a.answer_value) : String(a.answer_value || ''); answersMap[qid] = val; } } catch (e) { } }
+                      const escapeHtml = (s: any) => { if (s === null || s === undefined) return ''; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+
+                      out = out.replace(/\{\{question_(\w+)\}\}/gi, (m: any, qid: any) => { const ansRaw = answersMap[String(qid)] || ''; const ans = (ansRaw === null || ansRaw === undefined) ? '' : String(ansRaw); return `<div class="report-filled">${escapeHtml(ans)}</div>`; });
+
+                      out = out.replace(/\{\{activity_([a-zA-Z0-9_]+)\}\}/gi, (m: any, field: any) => { try { if (!activityData) return ''; const val = activityData[field] ?? activityData[field.toLowerCase()] ?? ''; return escapeHtml(val); } catch (e) { return ''; } });
+
+                      out = out.replace(/<span[^>]*data-qid=["']?(\w+)["']?[^>]*>([\s\S]*?)<\/span>/gi, (m: any, qid: any) => {
+                        const ansRaw = (answers || []).find(a => String(a.question_id || a.qid || a.questionId) === String(qid))?.answer_value || '';
+                        const ans = (ansRaw === null || ansRaw === undefined) ? '' : (typeof ansRaw === 'object' ? JSON.stringify(ansRaw) : String(ansRaw));
+                        return `<div class="report-filled">${escapeHtml(ans)}</div>`;
+                      });
+
+                      out = out.replace(/<div[^>]*data-upload-id=["']?(\d+)["']?[^>]*>[\s\S]*?<\/div>/gi, (m: any, id: any) => {
+                        try {
+                          const doc = (uploadedDocs || []).find(d => String(d.id) === String(id)); if (!doc) return `<div>Uploaded table ${escapeHtml(id)} not found</div>`;
+                          const rows = Array.isArray(doc.file_content) ? doc.file_content : (Array.isArray(doc.dataset_data) ? doc.dataset_data : []);
+                          if (!rows || rows.length === 0) return '<div>No table data</div>';
+                          const keys = Object.keys(rows[0] || {});
+                          let html = '<div class="uploaded-table-wrapper"><table style="border-collapse: collapse; width:100%;"><thead><tr>';
+                          for (const k of keys) html += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(k)}</th>`;
+                          html += '</tr></thead><tbody>';
+                          for (const r of rows) { html += '<tr>'; for (const k of keys) { const val = r && typeof r === 'object' && (r[k] !== undefined && r[k] !== null) ? String(r[k]) : ''; html += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(val)}</td>`; } html += '</tr>'; }
+                          html += '</tbody></table></div>';
+                          return html;
+                        } catch (e) { return `<div>Failed to render uploaded table ${id}</div>`; }
+                      });
+
+                      return out;
+                    } catch (e) { return htmlStr || ''; }
+                  };
+
+                  const html = tplObj.html || '';
+                  const filled = fillTemplate(html);
+                  if (!filled || String(filled).trim() === '') { try { swalError('Empty template', 'Cannot build an empty template'); } catch (e) { } return; }
+
+                  const payload: any = { html: filled, format: fmt, filename: tpl.name || 'report', paperSize: tplObj.paperSize || 'A4', orientation: tplObj.orientation || 'portrait', context: { activityData, questionsList: questions, answersList: answers, uploadedDocs } };
+                  const res = await apiFetch('/api/build_report', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                  if (!res.ok) { const txt = await res.text().catch(() => ''); try { swalError('Build failed', txt || 'Failed to build report'); } catch (e) { } return; }
+                  const j = await res.json(); const url = j.url || j.path || null;
+                  if (!url) { try { swalError('Build failed', 'Server did not return a URL'); } catch (e) { } return; }
+                  // handle by format
+                  if (fmt === 'pdf') {
+                    // Open the built PDF in a new blank window and embed an iframe so the browser renders it properly.
+                    try {
+                      const base = getApiBase();
+                      const fullUrl = url.startsWith('http') ? url : (base ? `${base}${url}` : url);
+                      const w = window.open('about:blank');
+                      if (w && w.document) {
+                        const title = (tpl && tpl.name) ? tpl.name : `Report ${report.id}`;
+                        const htmlDoc = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>html,body{height:100%;margin:0}iframe{border:none;height:100vh;width:100%}</style></head><body><iframe src="${fullUrl}"></iframe></body></html>`;
+                        w.document.write(htmlDoc);
+                        w.document.close();
+                      } else {
+                        // fallback
+                        const full = url.startsWith('http') ? url : ((getApiBase() || '') + url);
+                        window.open(full, '_blank');
+                      }
+                      setBuiltTemplate(tpl);
+                    } catch (e) {
+                      console.error('Failed to open PDF in new window', e);
+                      const full = url.startsWith('http') ? url : ((getApiBase() || '') + url);
+                      window.open(full, '_blank');
+                    }
+                  } else if (fmt === 'image') {
+                    // open lightbox with image
+                    const imgUrl = url;
+                    setImageModalUrl(imgUrl);
+                    setImageModalOpen(true);
+                  } else if (fmt === 'docx' || fmt === 'xlsx') {
+                    // download
+                    try {
+                      const filenameFormat = tplObj.filenameFormat || tplObj.fileName || tplObj.nameFormat || tpl.name || `report_${report.id}`;
+                      const interpolate = (str: string) => String(str || '').replace(/\{\{\s*activity_title\s*\}\}/gi, activityTitle || '').replace(/\{\{\s*report_id\s*\}\}/gi, String(report.id || '')).replace(/\{\{\s*submission_date\s*\}\}/gi, String(report.submission_date || '')).replace(/[^a-zA-Z0-9-_\. ]/g, '_');
+                      const filename = interpolate(filenameFormat) + (fmt === 'docx' ? '.docx' : '.xlsx');
+                      const base = getApiBase(); const fullUrl = url.startsWith('http') ? url : (base ? `${base}${url}` : url);
+                      const resp = await fetch(fullUrl, { credentials: 'include' }); if (!resp.ok) { window.open(fullUrl, '_blank'); return; }
+                      const blob = await resp.blob(); const blobUrl = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = blobUrl; a.download = filename; document.body.appendChild(a); a.click(); setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(blobUrl); }, 500);
+                    } catch (e) { window.open(url, '_blank'); }
+                  } else {
+                    // fallback open in new tab
+                    const full = url.startsWith('http') ? url : ((getApiBase() || '') + url);
+                    window.open(full, '_blank');
+                  }
+                } catch (e) { console.error('Failed to build template', e); try { swalError('Build failed', String(e?.message || e)); } catch (err) { } }
+              }}>{tpl.name || 'Preview'}</Button>
+            ))}
+            <Button variant="secondary" onClick={handleEmail}>Forward via Email</Button>
+          </div>
           <Button variant="secondary" onClick={() => navigate(`/activities/${report.activity_id}/followups?reportId=${report.id}`)}>Edit Followups</Button>
-          {report?.status !== 'Completed' && (
-            <Button onClick={() => setReviewModalOpen(true)}>Add / Edit Review</Button>
-          )}
+          <div className="inline-flex items-center gap-2">
+            {report?.status !== 'Completed' && (
+              <Button onClick={() => setReviewModalOpen(true)}>Add / Edit Review</Button>
+            )}
+            {/* builtTemplate download button removed — per-template buttons render above and handle preview/download behavior */}
+          </div>
         </div>
       </div>
 
@@ -189,6 +483,44 @@ const ReportViewPage: React.FC = () => {
         <div className="prose max-w-full" dangerouslySetInnerHTML={{ __html: report.reviewersReport || report.reviewers_report || '<em>No review yet</em>' }} />
       </Card>
 
+      {/* Power BI Card */}
+      <Card>
+        <h2 className="text-lg font-semibold mb-2">Power BI</h2>
+        {powerbiConfig && powerbiConfig.mode && powerbiConfig.mode.toLowerCase() === 'disabled' && <div className="text-sm text-gray-500 mb-2">Power BI embed is disabled for this report.</div>}
+        {powerbiConfig && powerbiConfig.mode && powerbiConfig.mode.toLowerCase() === 'enabled' && powerbiConfig.powerbi_link && (
+          <div className="mb-4">
+            <div className="text-sm text-gray-700 mb-2">Embedded Power BI</div>
+            <div style={{ width: '100%', minHeight: 360 }}>
+              {(() => {
+                const extractUrlFromIframe = (maybeIframe: any) => {
+                  if (!maybeIframe) return null;
+                  if (typeof maybeIframe !== 'string') return String(maybeIframe);
+                  const s = maybeIframe.trim();
+                  if (s.startsWith('<iframe') || /<iframe/i.test(s)) {
+                    const m = s.match(/src\s*=\s*"([^"]+)"/) || s.match(/src\s*=\s*'([^']+)'/) || s.match(/src\s*=\s*([^\s>]+)/);
+                    if (m && m[1]) return m[1];
+                  }
+                  return s;
+                };
+                const raw = powerbiConfig.powerbi_link;
+                const url = extractUrlFromIframe(raw);
+                // basic validation: must be absolute http(s) URL
+                if (!url || !/^https?:\/\//i.test(url)) {
+                  return <div className="text-sm text-red-500">Invalid Power BI link. Please paste the embed URL (or the iframe snippet) and save.</div>;
+                }
+                return <iframe src={url} title={`powerbi-${report.id}`} style={{ width: '100%', height: 480, border: 'none' }} />;
+              })()}
+            </div>
+          </div>
+        )}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-700">Manage Power BI settings for this report.</div>
+            <Button onClick={() => setPowerbiModalOpen(true)}>Configure Power BI</Button>
+          </div>
+        </div>
+      </Card>
+
       <Card>
         <h2 className="text-lg font-semibold mb-2">Submitted Answers</h2>
         {/* DataTable with column-level filter */}
@@ -197,17 +529,67 @@ const ReportViewPage: React.FC = () => {
             { key: 'page', label: 'Page' },
             { key: 'section', label: 'Section' },
             { key: 'question', label: 'Question' },
-            { key: 'answer', label: 'Answer' },
+            {
+              key: 'answer', label: 'Answer', render: (row: any) => {
+                // row._raw contains the original answer object
+                const a = row._raw;
+                if (!a) return '—';
+                const v = a.answer_value;
+                const isString = typeof v === 'string';
+                const maybeUrl = (s?: any) => {
+                  if (!s) return null;
+                  if (typeof s !== 'string') return null;
+                  if (/^data:image\//i.test(s)) return s;
+                  if (/^https?:\/\//i.test(s)) return s;
+                  return null;
+                };
+                // If answer_value is an object, try common file keys
+                let url: string | null = null;
+                if (isString) url = maybeUrl(v as string) || String(v as string);
+                else if (v && typeof v === 'object') {
+                  url = (v.url || v.file_url || v.file || v.path || v.downloadUrl || v.download_url) || null;
+                }
+                // If it's an image, show thumbnail that opens modal
+                if (url && (/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url) || /^data:image\//i.test(url))) {
+                  return (
+                    <div className="flex items-center gap-2">
+                      <img src={url} alt="attachment" className="w-20 h-12 object-cover rounded cursor-pointer border" onClick={() => { setImageModalUrl(url); setImageModalOpen(true); }} />
+                      <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open / Download</a>
+                    </div>
+                  );
+                }
+                // If it's a remote URL (non-image), show a download/open link
+                if (url && typeof url === 'string' && /^https?:\/\//i.test(url)) {
+                  return <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open / Download</a>;
+                }
+                // If it's a JSON object that isn't a file URL, show a short preview
+                if (v && typeof v === 'object') return <pre className="whitespace-pre-wrap max-w-xs text-sm">{JSON.stringify(v)}</pre>;
+                if (isString && String(v).length > 200) return <div className="max-w-lg text-sm">{String(v).slice(0, 200)}…</div>;
+                return String(v ?? '—');
+              }
+            },
             { key: 'reviewers_comment', label: 'Reviewer Comment' },
             { key: 'quality_improvement_followup', label: 'Followup' },
           ];
+          // Build a quick lookup map for questions by several possible keys
+          const qMap: Record<string, any> = {};
+          for (const q of questions) {
+            try {
+              if (q && (q.id !== undefined)) qMap[String(q.id)] = q;
+              if (q && (q.qid !== undefined)) qMap[String(q.qid)] = q;
+              if (q && (q.question_id !== undefined)) qMap[String(q.question_id)] = q;
+            } catch (e) { /* ignore malformed question */ }
+          }
+
           const data = answers.map(a => {
-            const q = questions.find((x: any) => String(x.id) === String(a.question_id)) || {};
+            const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id)) || {};
+            const questionText = q.questionText || q.question_text || q.text || q.label || String(a.question_id);
             return {
               page: q.pageName || q.page_name || '',
               section: q.sectionName || q.section_name || '',
-              question: q.questionText || q.question_text || a.question_id,
+              question: questionText,
               answer: typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value),
+              _raw: a,
               reviewers_comment: a.reviewers_comment || '—',
               quality_improvement_followup: a.quality_improvement_followup || '—',
             };
@@ -219,6 +601,86 @@ const ReportViewPage: React.FC = () => {
       <div className="mt-6">
         <ConversationPanel context={{ report, answers, uploadedDocs }} scope={`report:${report.id}`} />
       </div>
+
+      {/* Paper preview modal for built template HTML */}
+      <Modal
+        isOpen={!!paperPreviewOpen}
+        onClose={() => { setPaperPreviewOpen(false); setPreviewUrl(null); setPreviewFormat(null); }}
+        title={builtTemplate ? `${builtTemplate.name || 'Report'} — Report ${report.id}` : `Report ${report.id}`}
+        size="xl"
+      >
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div style={{ background: '#f3f4f6', padding: 16, maxWidth: '95%', overflow: 'auto' }}>
+            {(previewUrl || builtTemplate) ? (() => {
+              // If we have a built preview URL (from /api/build_report), prefer that. Otherwise fall back
+              // to the older server-side PDF endpoint using builtTemplate.
+              const base = getApiBase();
+              const urlToUse = previewUrl ? (previewUrl.startsWith('http') ? previewUrl : (base ? `${base}${previewUrl}` : previewUrl)) : (base ? `${base}/api/reports/${report.id}/pdf?template=1` : `/api/reports/${report.id}/pdf?template=1`);
+              const tplObj = builtTemplate ? ((typeof builtTemplate.template_json === 'string') ? JSON.parse(builtTemplate.template_json || '{}') : (builtTemplate.template_json || {})) : {};
+              const html = tplObj.html || builtTemplate?.html || '';
+              const dims = getPaperDimensions(tplObj);
+              const widthMm = dims.widthMm; const heightMm = dims.heightMm;
+              return (
+                <div style={{ background: '#ffffff', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', padding: 12 }}>
+                  <div style={{ width: '100%', height: '80vh' }}>
+                    {/* If preview is an image, show image; otherwise show iframe for PDF */}
+                    {previewFormat === 'image' ? (
+                      <div style={{ display: 'flex', justifyContent: 'center' }}><img src={urlToUse} alt="preview" style={{ maxWidth: '100%', maxHeight: '80vh' }} /></div>
+                    ) : (
+                      <iframe src={urlToUse} title={`report-pdf-${report.id}`} style={{ width: '100%', height: '100%', border: 'none' }} />
+                    )}
+                  </div>
+                  {(!html || String(html).trim() === '') ? null : (
+                    <div className="mt-4" style={{ width: `${widthMm}mm`, height: `${heightMm}mm`, overflow: 'auto', direction: 'ltr' }}>
+                      <div dangerouslySetInnerHTML={{ __html: html }} />
+                    </div>
+                  )}
+                </div>
+              );
+            })() : <div className="text-sm text-gray-500">No built template available to preview.</div>}
+          </div>
+        </div>
+      </Modal>
+
+      {/* Power BI Settings Modal (configuration) */}
+      <Modal isOpen={!!powerbiModalOpen} onClose={() => setPowerbiModalOpen(false)} title={`Power BI Settings — Report ${report.id}`} size="lg" footer={(
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setPowerbiModalOpen(false)}>Close</Button>
+          <Button onClick={async () => {
+            const ok = await savePowerBi({ powerbi_link: powerbiConfig?.powerbi_link, link_type: powerbiConfig?.link_type, mode: powerbiConfig?.mode });
+            if (ok) setPowerbiModalOpen(false);
+          }}>Save Power BI</Button>
+        </div>
+      )}>
+        <div className="space-y-4">
+          <label className="block text-sm font-medium">Power BI Link / Embed</label>
+          <textarea className="w-full border rounded p-2" rows={4} value={powerbiConfig?.powerbi_link || ''} onChange={e => setPowerbiConfig(prev => ({ ...(prev || {}), powerbi_link: e.target.value }))} />
+          <div className="grid grid-cols-2 gap-2">
+            <select className="border p-2 rounded" value={powerbiConfig?.link_type || ''} onChange={e => setPowerbiConfig(prev => ({ ...(prev || {}), link_type: e.target.value }))}>
+              <option value="">(Select type)</option>
+              <option value="embed">Embed</option>
+              <option value="iframe">Iframe</option>
+              <option value="link">Link</option>
+            </select>
+            <select className="border p-2 rounded" value={powerbiConfig?.mode || 'disabled'} onChange={e => setPowerbiConfig(prev => ({ ...(prev || {}), mode: e.target.value }))}>
+              <option value="disabled">Disabled</option>
+              <option value="enabled">Enabled</option>
+            </select>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Image lightbox modal for attachments */}
+      <Modal isOpen={!!imageModalOpen} onClose={() => { setImageModalOpen(false); setImageModalUrl(null); }} title="Attachment Preview" size="lg" footer={(
+        <div className="flex justify-end">
+          <a href={imageModalUrl || '#'} target="_blank" rel="noreferrer"><Button variant="secondary">Open in new tab</Button></a>
+          <Button onClick={() => { setImageModalOpen(false); setImageModalUrl(null); }}>Close</Button>
+        </div>
+      )}>
+        <div className="w-full flex justify-center">
+          {imageModalUrl ? <img src={imageModalUrl} alt="attachment" style={{ maxWidth: '100%', maxHeight: '70vh' }} /> : <div>No image</div>}
+        </div>
+      </Modal>
 
       <Card>
         <div className="flex justify-between items-center">
@@ -264,7 +726,7 @@ const ReportViewPage: React.FC = () => {
             const cols = Array.from(colsSet).map(c => ({ key: c, label: c, editable: true }));
             const handleCellEdit = async (rowIndex: number, key: string, newValue: any) => {
               try {
-                const res = await fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ rowIndex, colKey: key, newValue }) });
+                const res = await apiFetch(`/api/uploaded_docs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ rowIndex, colKey: key, newValue }) });
                 if (res.ok) {
                   const json = await res.json();
                   setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content } : x));
@@ -313,7 +775,7 @@ const ReportViewPage: React.FC = () => {
               });
               const updatedRows = [...rows, newRow];
               setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: updatedRows } : x));
-              fetch(`http://localhost:3000/api/uploaded_docs/${d.id}`, {
+              apiFetch(`/api/uploaded_docs/${d.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
@@ -353,38 +815,49 @@ const ReportViewPage: React.FC = () => {
       )}>
         <div className="space-y-4">
           <div>
-            <div className="flex gap-2 mb-2">
-              <button type="button" className="px-2 py-1 border rounded" onClick={() => document.execCommand('bold')}>B</button>
-              {report?.status !== 'Completed' && (
-                <Button onClick={() => setReviewModalOpen(true)}>Add / Edit Review</Button>
-              )}
-              <Button className="text-red-600" onClick={async () => {
-                if (!confirm('Delete this report? This will remove associated uploaded files.')) return;
-                try {
-                  const res = await fetch(`http://localhost:3000/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
-                  if (res.ok) {
-                    alert('Report deleted');
-                    navigate('/reports');
-                  } else {
-                    alert('Failed to delete report');
-                  }
-                } catch (e) { console.error(e); alert('Failed to delete report'); }
-              }}>Delete</Button>
-              <label className="px-2 py-1 border rounded cursor-pointer">
-                Image
-                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                  const f = e.target.files?.[0]; if (!f) return; const url = await uploadMedia(f); if (url) insertHtmlAtCaret(`<img src="${url}" alt="${f.name}" style="max-width:100%"/>`);
-                }} />
-              </label>
-              <label className="px-2 py-1 border rounded cursor-pointer">
-                Video
-                <input type="file" accept="video/*" className="hidden" onChange={async (e) => {
-                  const f = e.target.files?.[0]; if (!f) return; const url = await uploadMedia(f); if (url) insertHtmlAtCaret(`<video controls src="${url}" style="max-width:100%"></video>`);
-                }} />
-              </label>
-            </div>
-            <div>
-              <div id="review-editor" contentEditable dir="ltr" style={{ minHeight: 160, border: '1px solid #e5e7eb', padding: 10, borderRadius: 6 }} onInput={(e: any) => setReviewContent(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: reviewContent }} />
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2 mb-2">
+                <div className="flex-1" />
+                <Button className="text-red-600" onClick={async () => {
+                  try {
+                    const ok = await swalConfirm({ title: 'Delete this report?', text: 'This will remove associated uploaded files.' });
+                    if (!ok) return;
+                    const res = await apiFetch(`/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
+                    if (res.ok) { try { swalSuccess('Deleted', 'Report deleted'); } catch (e) { } navigate('/reports'); }
+                    else { try { swalError('Failed', 'Failed to delete report'); } catch (e) { } }
+                  } catch (e) { console.error(e); try { swalError('Failed', 'Failed to delete report'); } catch (er) { } }
+                }}>Delete</Button>
+              </div>
+
+              <div className="flex gap-2 mb-2 items-center">
+                <label className="px-2 py-1 border rounded cursor-pointer inline-block">
+                  Image
+                  <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                    const f = e.target.files?.[0]; if (!f) return; const url = await uploadMedia(f); if (url) setReviewContent(prev => (prev || '') + `<img src="${url}" style="max-width:100%"/>`);
+                  }} />
+                </label>
+                <label className="px-2 py-1 border rounded cursor-pointer inline-block">
+                  Video File
+                  <input type="file" accept="video/*" className="hidden" onChange={async (e) => {
+                    const f = e.target.files?.[0]; if (!f) return; const url = await uploadMedia(f); if (url) setReviewContent(prev => (prev || '') + `<video controls src="${url}" style="max-width:100%"></video>`);
+                  }} />
+                </label>
+                <div className="flex-1">
+                  <input placeholder="Paste a YouTube or embed URL here" className="w-full border rounded p-2" value={String((powerbiConfig && powerbiConfig._lastVideoUrl) || '')} onChange={e => setPowerbiConfig(prev => ({ ...(prev || {}), _lastVideoUrl: e.target.value }))} />
+                </div>
+                <Button onClick={() => {
+                  const v = powerbiConfig?._lastVideoUrl;
+                  if (!v) return;
+                  let url = String(v);
+                  if (/youtube\.com\/watch\?v=/.test(url)) { const id = url.split('v=')[1].split('&')[0]; url = `https://www.youtube.com/embed/${id}`; }
+                  else if (/youtu\.be\//.test(url)) { const id = url.split('youtu.be/')[1].split('?')[0]; url = `https://www.youtube.com/embed/${id}`; }
+                  insertHtmlAtCaret(`<iframe src="${url}" style="width:100%;height:360px;border:none" allowfullscreen></iframe>`);
+                }}>Insert Video URL</Button>
+              </div>
+
+              <div>
+                <RichTextEditor value={reviewContent || ''} onChange={(v) => setReviewContent(v)} />
+              </div>
             </div>
           </div>
           <div>
@@ -428,7 +901,7 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
 
   const saveCell = async (rowIndex: number, colKey: string, newValue: any) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/uploaded_docs/${doc.id}`, {
+      const res = await apiFetch(`/api/uploaded_docs/${doc.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ rowIndex, colKey, newValue })
       });

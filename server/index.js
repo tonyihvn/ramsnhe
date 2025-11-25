@@ -8,6 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import ExcelJS from 'exceljs';
+import puppeteer from 'puppeteer';
 dotenv.config();
 
 const app = express();
@@ -32,6 +34,21 @@ app.use(
 const uploadsRoot = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsRoot)) fs.mkdirSync(uploadsRoot, { recursive: true });
 app.use('/uploads', express.static(uploadsRoot));
+
+// Serve built report artifacts
+const buildsRoot = path.join(process.cwd(), 'public', 'builds');
+if (!fs.existsSync(buildsRoot)) fs.mkdirSync(buildsRoot, { recursive: true });
+app.use('/builds', express.static(buildsRoot));
+
+// Public endpoint to expose limited client environment (TinyMCE API key) to the frontend
+app.get('/api/client_env', async (req, res) => {
+    try {
+        return res.json({ TINYMCE_API_KEY: process.env.TINYMCE_API_KEY || '' });
+    } catch (e) {
+        console.error('Failed to serve client_env', e);
+        return res.json({ TINYMCE_API_KEY: '' });
+    }
+});
 
 // LLM SQL generation endpoint (provider dispatch + fallback)
 async function tryCallProvider(providerRow, prompt, ragContext) {
@@ -379,6 +396,297 @@ app.post('/api/execute_sql', async (req, res) => {
     }
 });
 
+// Simple report build endpoint: render provided HTML to PDF (via puppeteer) and return public URL
+app.post('/api/build_report', async (req, res) => {
+    try {
+        const { html, format = 'pdf', filename = 'report', paperSize = 'A4', orientation = 'portrait' } = req.body || {};
+        if (!html) return res.status(400).json({ error: 'Missing html in request' });
+
+        const fmt = String((format || 'pdf')).toLowerCase();
+        const safeName = String(filename).replace(/[^a-z0-9_\-]/gi, '_') || 'report';
+
+        // wrapper to ensure valid HTML
+        // If context provided, perform server-side substitution for placeholders (safe fallback)
+        const substituteHtml = (rawHtml, ctx) => {
+            try {
+                let out = String(rawHtml || '');
+                const qMap = {};
+                const answersMap = {};
+                const uploaded = Array.isArray((ctx || {}).uploadedDocs) ? (ctx || {}).uploadedDocs : [];
+                if (Array.isArray((ctx || {}).questionsList)) {
+                    for (const q of (ctx || {}).questionsList) {
+                        try { if (q && q.id !== undefined) qMap[String(q.id)] = q; if (q && q.qid !== undefined) qMap[String(q.qid)] = q; if (q && q.question_id !== undefined) qMap[String(q.question_id)] = q; } catch (e) { }
+                    }
+                }
+                if (Array.isArray((ctx || {}).answersList)) {
+                    for (const a of (ctx || {}).answersList) {
+                        try { const qid = String(a.question_id || a.questionId || a.qid || ''); if (!qid) continue; if (!answersMap[qid]) { const val = (typeof a.answer_value === 'object') ? JSON.stringify(a.answer_value) : String(a.answer_value || ''); answersMap[qid] = val; } } catch (e) { }
+                    }
+                }
+                const escapeHtml = s => { if (s === null || s === undefined) return ''; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+                out = out.replace(/\{\{question_(\w+)\}\}/gi, (m, qid) => { const ansRaw = answersMap[String(qid)] || ''; const ans = (ansRaw === null || ansRaw === undefined) ? '' : String(ansRaw); return `<div class="report-filled">${escapeHtml(ans)}</div>`; });
+                out = out.replace(/\{\{activity_([a-zA-Z0-9_]+)\}\}/gi, (m, field) => { try { const act = (ctx || {}).activityData || {}; const val = act ? (act[field] ?? act[field.toLowerCase()] ?? '') : ''; return escapeHtml(val); } catch (e) { return ''; } });
+                out = out.replace(/<span[^>]*data-qid=["']?(\w+)["']?[^>]*>([\s\S]*?)<\/span>/gi, (m, qid) => { const ansRaw = answersMap[String(qid)] || ''; const ans = (ansRaw === null || ansRaw === undefined) ? '' : String(ansRaw); return `<div class="report-filled">${escapeHtml(ans)}</div>`; });
+                out = out.replace(/<div[^>]*data-upload-id=["']?(\d+)["']?[^>]*>[\s\S]*?<\/div>/gi, (m, id) => {
+                    try {
+                        const doc = uploaded.find(d => String(d.id) === String(id));
+                        if (!doc) return `<div>Uploaded table ${escapeHtml(id)} not found</div>`;
+                        const rows = Array.isArray(doc.file_content) ? doc.file_content : (Array.isArray(doc.dataset_data) ? doc.dataset_data : []);
+                        if (!rows || rows.length === 0) return '<div>No table data</div>';
+                        const keys = Object.keys(rows[0] || {});
+                        let htmlTbl = '<div class="uploaded-table-wrapper"><table style="border-collapse: collapse; width:100%;"><thead><tr>';
+                        for (const k of keys) htmlTbl += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(k)}</th>`;
+                        htmlTbl += '</tr></thead><tbody>';
+                        for (const r of rows) { htmlTbl += '<tr>'; for (const k of keys) { const val = r && typeof r === 'object' && (r[k] !== undefined && r[k] !== null) ? String(r[k]) : ''; htmlTbl += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(val)}</td>`; } htmlTbl += '</tr>'; }
+                        htmlTbl += '</tbody></table></div>';
+                        return htmlTbl;
+                    } catch (e) { return `<div>Failed to render uploaded table ${id}</div>`; }
+                });
+                return out;
+            } catch (e) { return rawHtml || ''; }
+        };
+
+        const filled = (req.body && req.body.context) ? substituteHtml(html, req.body.context) : html;
+
+        // Format-specific HTML preprocessing
+        const preprocessHtml = (htmlStr, format) => {
+            let out = String(htmlStr || '');
+
+            // Remove any editor-only guide lines so they never appear in final output
+            // matches elements with class 'editor-guide-line' and removes them
+            try {
+                out = out.replace(/<[^>]*class=["'][^"'>]*editor-guide-line[^"'>]*["'][^>]*>[\s\S]*?<\/[a-zA-Z0-9]+>/gi, '');
+                out = out.replace(/<[^>]*class=["'][^"'>]*editor-guide-line[^"'>]*["'][^>]*\/>/gi, '');
+            } catch (e) { /* ignore */ }
+
+            // Remove editor-only resize handles and visual overlays that might have been
+            // inadvertently saved into template HTML. These are small absolutely-positioned
+            // divs added by the canvas for resizing (cursor:*resize*) and selection borders.
+            try {
+                // remove inner handle elements inside tpl-blocks (match common resize cursor styles)
+                out = out.replace(/(<div[^>]*class=["']?tpl-block["']?[^>]*>)([\s\S]*?)(<\/div>)/gi, (m, open, inner, close) => {
+                    try {
+                        // strip child elements that have resize cursors
+                        const cleanedInner = inner.replace(/<div[^>]*style=["'][^"']*cursor:\s*(?:se-resize|sw-resize|ne-resize|nw-resize|e-resize|w-resize|n-resize|s-resize|ew-resize|ns-resize)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '');
+                        // remove any inline editor-only borders/handles that may have been added to the block content
+                        const cleanedInner2 = cleanedInner.replace(/<div[^>]*data-?editor-?handle[^>]*>[\s\S]*?<\/div>/gi, '');
+                        return `${open}${cleanedInner2}${close}`;
+                    } catch (e) { return m; }
+                });
+
+                // remove border/box-shadow/padding/background inline styles on tpl-block wrappers
+                out = out.replace(/(<div[^>]*class=["']?tpl-block["']?[^>]*style=["'])([^"']*)(["'][^>]*>)/gi, (m, p1, styles, p3) => {
+                    try {
+                        let s = String(styles || '');
+                        // remove border, box-shadow, padding and other editor visual styles
+                        s = s.replace(/border:[^;]+;?/gi, '');
+                        s = s.replace(/box-shadow:[^;]+;?/gi, '');
+                        s = s.replace(/padding:[^;]+;?/gi, '');
+                        s = s.replace(/background:[^;]+;?/gi, '');
+                        // collapse multiple semicolons and trim
+                        s = s.replace(/;{2,}/g, ';').replace(/^;|;$/g, '').trim();
+                        return `${p1}${s}${p3}`;
+                    } catch (e) { return m; }
+                });
+            } catch (e) { /* ignore cleaning errors */ }
+
+            // For DOCX: attempt to preserve both left/top by converting absolute positioning to
+            // margin-left / margin-top so Word can approximate object placement
+            if (format === 'docx') {
+                out = out.replace(/<div[^>]*class=["']?tpl-block["']?[^>]*style=["']([^"']*)["'][^>]*>([\s\S]*?)<\/div>/gi, (match, style, content) => {
+                    try {
+                        const leftMatch = style.match(/left:\s*([0-9.]+)px/);
+                        const topMatch = style.match(/top:\s*([0-9.]+)px/);
+                        const leftVal = leftMatch ? Math.max(0, parseInt(leftMatch[1])) : 0;
+                        const topVal = topMatch ? Math.max(0, parseInt(topMatch[1])) : 0;
+                        const marginLeft = Math.max(0, leftVal - 20);
+                        const marginTop = Math.max(0, topVal - 0);
+                        return `<div style="margin-left:${marginLeft}px;margin-top:${marginTop}px;margin-bottom:12px;page-break-inside:avoid;">${content}</div>`;
+                    } catch (e) { return `<div>${content}</div>`; }
+                });
+            }
+
+            // Remove header-only marker from uploaded tables in final output
+            // The marker was only for canvas preview
+            out = out.replace(/\s+data-header-only="true"/gi, '');
+
+            return out;
+        };
+
+        const filledProcessed = preprocessHtml(filled, fmt);
+        const wrapperHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:0;background:#fff} table{page-break-inside:auto;} tr{page-break-inside:avoid; page-break-after:auto;} </style></head><body>${filledProcessed}</body></html>`;
+
+        // Determine if the HTML contains positioned layout blocks that require screenshot fallback
+        let hasTplBlocks = false;
+        try {
+            const { JSDOM } = await import('jsdom');
+            const domForBlocks = new JSDOM(wrapperHtml);
+            hasTplBlocks = Boolean(domForBlocks.window.document.querySelector('.tpl-block'));
+        } catch (e) {
+            // ignore if jsdom isn't available; hasTplBlocks remains false
+        }
+
+        // Normalize image-like formats so callers may request 'png' or 'image'
+        const isImageRequest = (fmt === 'image' || fmt === 'jpg' || fmt === 'jpeg' || fmt === 'png');
+
+        if (fmt === 'pdf') {
+            // render PDF using puppeteer and respect paper size/orientation
+            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            const page = await browser.newPage();
+            await page.setContent(wrapperHtml, { waitUntil: 'networkidle0' });
+
+            const outName = `${safeName}_${Date.now()}.pdf`;
+            const outPath = path.join(buildsRoot, outName);
+            // puppeteer supports format and landscape
+            const pdfOptions = { path: outPath, printBackground: true, format: (paperSize || 'A4'), landscape: (orientation === 'landscape') };
+            await page.pdf(pdfOptions);
+            await browser.close();
+            const publicUrl = `/builds/${outName}`;
+            return res.json({ url: publicUrl, path: outPath });
+        }
+
+        if (isImageRequest) {
+            // render an image (JPG) of the page using puppeteer
+            try {
+                const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+                const page = await browser.newPage();
+                await page.setContent(wrapperHtml, { waitUntil: 'networkidle0' });
+                const outName = `${safeName}_${Date.now()}.${(fmt === 'png' ? 'png' : 'jpg')}`;
+                const outPath = path.join(buildsRoot, outName);
+                // Screenshot with quality settings for JPG/PNG output
+                if (fmt === 'png') {
+                    await page.screenshot({ path: outPath, fullPage: true, type: 'png' });
+                } else {
+                    await page.screenshot({ path: outPath, fullPage: true, type: 'jpeg', quality: 90 });
+                }
+                await browser.close();
+                const publicUrl = `/builds/${outName}`;
+                console.debug(`[build_report] image (jpg) generated: ${outName}`);
+                return res.json({ url: publicUrl, path: outPath });
+            } catch (e) {
+                console.error('image rendering failed', e);
+                return res.status(500).json({ error: 'Failed to generate image', details: String(e) });
+            }
+        }
+
+        if (fmt === 'docx') {
+            // If template uses positioned layout blocks, render a screenshot and embed as an image in the DOCX
+            let htmlDocx;
+            try { htmlDocx = await import('html-docx-js'); } catch (e) { return res.status(500).json({ error: 'Server missing dependency: html-docx-js. Run `npm install html-docx-js`' }); }
+            try {
+                if (hasTplBlocks) {
+                    // Render screenshot and embed as base64 image in a minimal HTML so html-docx-js will include it
+                    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+                    const page = await browser.newPage();
+                    await page.setContent(wrapperHtml, { waitUntil: 'networkidle0' });
+                    const imgName = `${safeName}_${Date.now()}.jpg`;
+                    const imgPath = path.join(buildsRoot, imgName);
+                    await page.screenshot({ path: imgPath, fullPage: true, type: 'jpeg', quality: 90 });
+                    await browser.close();
+
+                    // read file and convert to base64
+                    const imgBuf = fs.readFileSync(imgPath);
+                    const b64 = imgBuf.toString('base64');
+                    const imgHtml = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#fff;"><div><img src="data:image/jpeg;base64,${b64}" style="width:100%;height:auto;display:block"/></div></body></html>`;
+                    const docxBuffer = htmlDocx && htmlDocx.asBlob ? Buffer.from(await htmlDocx.asBlob(imgHtml).arrayBuffer()) : Buffer.from(htmlDocx.asHTML ? htmlDocx.asHTML(imgHtml) : imgHtml);
+                    const outName = `${safeName}_${Date.now()}.docx`;
+                    const outPath = path.join(buildsRoot, outName);
+                    fs.writeFileSync(outPath, docxBuffer);
+                    const publicUrl = `/builds/${outName}`;
+                    return res.json({ url: publicUrl, path: outPath });
+                } else {
+                    const docxBuffer = htmlDocx && htmlDocx.asBlob ? Buffer.from(await htmlDocx.asBlob(wrapperHtml).arrayBuffer()) : Buffer.from(htmlDocx.asHTML ? htmlDocx.asHTML(wrapperHtml) : wrapperHtml);
+                    const outName = `${safeName}_${Date.now()}.docx`;
+                    const outPath = path.join(buildsRoot, outName);
+                    fs.writeFileSync(outPath, docxBuffer);
+                    const publicUrl = `/builds/${outName}`;
+                    return res.json({ url: publicUrl, path: outPath });
+                }
+            } catch (e) {
+                console.error('docx conversion failed', e);
+                return res.status(500).json({ error: 'Failed to generate DOCX', details: String(e) });
+            }
+        }
+
+        if (fmt === 'xlsx') {
+            // Attempt to convert the first HTML table into an Excel workbook using ExcelJS
+            try {
+                const { JSDOM } = await import('jsdom');
+                const dom = new JSDOM(wrapperHtml);
+
+                // if we have positioned blocks in the HTML (tpl-block), it's likely a visual layout report
+                // In that case, render a screenshot and embed the image into a single-sheet XLSX so layout/positions are preserved visually
+                const hasBlocks = Boolean(dom.window.document.querySelector('.tpl-block'));
+                const workbook = new ExcelJS.Workbook();
+                const sheet = workbook.addWorksheet('Sheet1');
+
+                if (hasBlocks) {
+                    // render screenshot and embed as image
+                    try {
+                        const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+                        const page = await browser.newPage();
+                        await page.setContent(wrapperHtml, { waitUntil: 'networkidle0' });
+
+                        const imgName = `${safeName}_${Date.now()}.jpg`;
+                        const imgPath = path.join(buildsRoot, imgName);
+                        await page.screenshot({ path: imgPath, fullPage: true, type: 'jpeg', quality: 90 });
+                        await browser.close();
+
+                        // compute sheet image size based on paper size
+                        const paperMm = { A4: { w: 210, h: 297 }, Letter: { w: 216, h: 279 }, A3: { w: 297, h: 420 } };
+                        const mm = paperMm[paperSize] || paperMm['A4'];
+                        const physW = (orientation === 'landscape') ? mm.h : mm.w;
+                        const physH = (orientation === 'landscape') ? mm.w : mm.h;
+                        const pxPerMm = 96 / 25.4;
+                        const widthPx = Math.round(physW * pxPerMm);
+                        const heightPx = Math.round(physH * pxPerMm);
+
+                        const imageId = workbook.addImage({ filename: imgPath, extension: 'jpeg' });
+                        sheet.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: widthPx, height: heightPx } });
+
+                        const outName = `${safeName}_${Date.now()}.xlsx`;
+                        const outPath = path.join(buildsRoot, outName);
+                        await workbook.xlsx.writeFile(outPath);
+                        const publicUrl = `/builds/${outName}`;
+                        return res.json({ url: publicUrl, path: outPath });
+                    } catch (e) {
+                        console.error('xlsx (image-embed) conversion failed', e);
+                        // fall back to table/text conversion below
+                    }
+                }
+
+                // Fallback: convert first HTML table into Excel cells
+                const table = dom.window.document.querySelector('table');
+                if (table) {
+                    const rows = Array.from(table.querySelectorAll('tr'));
+                    for (const tr of rows) {
+                        const cells = Array.from(tr.querySelectorAll('th,td')).map(c => c.textContent || '');
+                        sheet.addRow(cells);
+                    }
+                } else {
+                    // no table found - write the HTML as a single cell
+                    sheet.addRow([dom.window.document.body.textContent || '']);
+                }
+
+                const outName = `${safeName}_${Date.now()}.xlsx`;
+                const outPath = path.join(buildsRoot, outName);
+                await workbook.xlsx.writeFile(outPath);
+                const publicUrl = `/builds/${outName}`;
+                return res.json({ url: publicUrl, path: outPath });
+            } catch (e) {
+                console.error('xlsx conversion failed', e);
+                return res.status(500).json({ error: 'Failed to generate XLSX', details: String(e) });
+            }
+        }
+
+        console.error(`[build_report] Unsupported format: ${fmt} (original: ${format})`);
+        return res.status(400).json({ error: 'Unsupported format', providedFormat: fmt });
+    } catch (e) {
+        console.error('build_report failed', e);
+        try { return res.status(500).json({ error: String(e) }); } catch (err) { return res.status(500).end(); }
+    }
+});
+
 // ...existing middleware registered earlier
 
 // Database Connection
@@ -499,6 +807,57 @@ async function initDb() {
             sample_rows JSONB,
             generated_at TIMESTAMP DEFAULT NOW()
         )`
+        ,
+        `CREATE TABLE IF NOT EXISTS dqai_datasets (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            dataset_fields JSONB DEFAULT '[]'::jsonb,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE TABLE IF NOT EXISTS dqai_dataset_content (
+            id SERIAL PRIMARY KEY,
+            dataset_id INTEGER REFERENCES dqai_datasets(id) ON DELETE CASCADE,
+            dataset_data JSONB,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW()
+        )`
+        , `CREATE TABLE IF NOT EXISTS dqai_reports_powerbi (
+            id SERIAL PRIMARY KEY,
+            activity_reports_id INTEGER REFERENCES dqai_activity_reports(id) ON DELETE CASCADE,
+            powerbi_link TEXT,
+            link_type TEXT,
+            mode TEXT,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW()
+        )`
+        , `CREATE TABLE IF NOT EXISTS dqai_report_templates (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
+            template_json JSONB,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW()
+        )`
+        , `CREATE TABLE IF NOT EXISTS dqai_api_connectors (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            base_url TEXT,
+            method TEXT DEFAULT 'GET',
+            auth_config JSONB,
+            expected_format TEXT,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW()
+        )`
+        , `CREATE TABLE IF NOT EXISTS dqai_api_ingests (
+            id SERIAL PRIMARY KEY,
+            connector_id INTEGER REFERENCES dqai_api_connectors(id) ON DELETE SET NULL,
+            received_at TIMESTAMP DEFAULT NOW(),
+            raw_data JSONB,
+            metadata JSONB
+        )`
     ];
 
     for (const q of queries) {
@@ -515,8 +874,14 @@ async function initDb() {
         await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS quality_improvement_followup TEXT`);
         await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS score NUMERIC`);
         await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS required BOOLEAN`);
+        // allow storing a correct answer for question types that support it
+        await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS correct_answer TEXT`);
         // Add profile_image to users
         await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS profile_image TEXT`);
+        // Add powerbi_url and related columns to activities to support activity-level Power BI embeds
+        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
+        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
+        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`);
         // Create roles, permissions and settings tables
         await pool.query(`CREATE TABLE IF NOT EXISTS dqai_roles (
             id SERIAL PRIMARY KEY,
@@ -590,6 +955,17 @@ async function initDb() {
         await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS reviewers_report TEXT`);
         await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS overall_score NUMERIC`);
         await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS reported_by INTEGER`);
+        // Add optional template association for reports
+        await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS report_template_id INTEGER`);
+        // Enhance report templates table to support paper size, orientation and images
+        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS paper_size TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS orientation TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS header_image TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS footer_image TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS watermark_image TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS assets JSONB`); } catch (e) { /* ignore */ }
+        // Allow per-row role assignments on dataset content rows
+        try { await pool.query(`ALTER TABLE dqai_dataset_content ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
     } catch (err) {
         console.error('Failed to sync reviewer/score columns between questions and answers:', err);
         throw err;
@@ -1713,6 +2089,400 @@ app.delete('/api/admin/rag_schemas/:id', requireAdmin, async (req, res) => {
     } catch (e) { console.error('Failed to delete rag schema', e); res.status(500).json({ error: 'Failed to delete rag schema' }); }
 });
 
+// Admin: Datasets CRUD
+app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM dqai_datasets ORDER BY id DESC');
+        res.json(r.rows);
+    } catch (e) { console.error('Failed to list datasets', e); res.status(500).json({ error: 'Failed to list datasets' }); }
+});
+
+app.get('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const r = await pool.query('SELECT * FROM dqai_datasets WHERE id = $1', [id]);
+        if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+        res.json(r.rows[0]);
+    } catch (e) { console.error('Failed to get dataset', e); res.status(500).json({ error: 'Failed to get dataset' }); }
+});
+
+app.post('/api/admin/datasets', requireAdmin, async (req, res) => {
+    try {
+        const { id, name, description, category, dataset_fields } = req.body || {};
+        if (!name || !String(name).trim()) return res.status(400).json({ error: 'Missing name' });
+        // Normalize dataset_fields robustly: accept JSON string, comma-separated string, array of strings, array of objects,
+        // or array of JSON-stringified objects (possibly double-encoded). Always produce an array of objects.
+        let normalizedFields = dataset_fields;
+        const tryParse = (v) => {
+            try { return JSON.parse(v); } catch (e) { return undefined; }
+        };
+        try {
+            if (typeof normalizedFields === 'string') {
+                // Try JSON parse first (covers strings like '[{"name":"x"}]' or '"[{...}]"')
+                const p = tryParse(normalizedFields);
+                if (p !== undefined && (Array.isArray(p) || typeof p === 'object')) normalizedFields = p;
+                else {
+                    // Fallback: comma-separated names
+                    normalizedFields = normalizedFields.split(',').map(s => ({ name: String(s || '').trim() })).filter(f => f.name);
+                }
+            }
+
+            if (Array.isArray(normalizedFields)) {
+                normalizedFields = normalizedFields.map(item => {
+                    if (item === null || item === undefined) return null;
+                    if (typeof item === 'object') return item;
+                    if (typeof item === 'string') {
+                        // Item might be a JSON-stringified object (possibly double-encoded), or a plain name
+                        const p1 = tryParse(item);
+                        if (p1 !== undefined) {
+                            if (typeof p1 === 'object' && p1 !== null) return p1;
+                            // p1 could be a string that itself contains JSON (double-encoded)
+                            if (typeof p1 === 'string') {
+                                const inner = tryParse(p1);
+                                if (inner !== undefined && typeof inner === 'object') return inner;
+                            }
+                        }
+                        // Try to unescape common escape sequences and parse again
+                        const unescaped = item.replace(/\\"/g, '"').replace(/\"/g, '"');
+                        const p2 = tryParse(unescaped);
+                        if (p2 !== undefined && typeof p2 === 'object') return p2;
+                        // If it looks like JSON but parsing failed, try trimming surrounding quotes and parse
+                        const trimmed = item.trim();
+                        if ((trimmed.startsWith('"{') && trimmed.endsWith('}"')) || (trimmed.startsWith('\'{') && trimmed.endsWith('}\''))) {
+                            const stripped = trimmed.slice(1, -1);
+                            const p3 = tryParse(stripped);
+                            if (p3 !== undefined && typeof p3 === 'object') return p3;
+                        }
+                        // Finally, treat it as a simple name
+                        return { name: String(item).trim() };
+                    }
+                    return null;
+                }).filter(Boolean);
+            } else {
+                normalizedFields = [];
+            }
+        } catch (e) {
+            normalizedFields = [];
+        }
+
+        // Debug preview to help diagnose malformed payloads
+        try { console.debug('Saving dataset_fields preview (type, len):', typeof normalizedFields, Array.isArray(normalizedFields) ? normalizedFields.length : '-', JSON.stringify(normalizedFields).slice(0, 1000)); } catch (e) { /* ignore */ }
+
+        try {
+            if (id) {
+                const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4 WHERE id=$5 RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), id]);
+                return res.json(r.rows[0]);
+            }
+            const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
+            const r = await pool.query('INSERT INTO dqai_datasets (name, description, category, dataset_fields, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), createdBy]);
+            res.json(r.rows[0]);
+        } catch (dbErr) {
+            console.error('Failed to save dataset, normalizedFields preview:', typeof normalizedFields, JSON.stringify(normalizedFields).slice(0, 1000));
+            console.error('DB error when saving dataset:', dbErr && dbErr.message ? dbErr.message : dbErr);
+            return res.status(500).json({ error: 'Failed to save dataset', details: String(dbErr && dbErr.message ? dbErr.message : dbErr) });
+        }
+    } catch (e) { console.error('Failed to save dataset', e); res.status(500).json({ error: 'Failed to save dataset' }); }
+});
+
+app.delete('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        await pool.query('DELETE FROM dqai_dataset_content WHERE dataset_id = $1', [id]);
+        await pool.query('DELETE FROM dqai_datasets WHERE id = $1', [id]);
+        res.json({ ok: true });
+    } catch (e) { console.error('Failed to delete dataset', e); res.status(500).json({ error: 'Failed to delete dataset' }); }
+});
+
+// Admin: dataset content endpoints
+app.get('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
+    try {
+        const datasetId = Number(req.params.id);
+        const limit = Number(req.query.limit || 200);
+        const r = await pool.query('SELECT * FROM dqai_dataset_content WHERE dataset_id = $1 ORDER BY id DESC LIMIT $2', [datasetId, limit]);
+        res.json({ rows: r.rows, count: r.rowCount });
+    } catch (e) { console.error('Failed to list dataset content', e); res.status(500).json({ error: 'Failed to list dataset content' }); }
+});
+
+app.post('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
+    try {
+        const datasetId = Number(req.params.id);
+        const payload = req.body || {};
+        if (!payload || Object.keys(payload).length === 0) return res.status(400).json({ error: 'Missing dataset_data' });
+        const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
+        const r = await pool.query('INSERT INTO dqai_dataset_content (dataset_id, dataset_data, created_by) VALUES ($1,$2,$3) RETURNING *', [datasetId, payload, createdBy]);
+        res.json(r.rows[0]);
+    } catch (e) { console.error('Failed to save dataset content', e); res.status(500).json({ error: 'Failed to save dataset content' }); }
+});
+
+// Admin: update a dataset content row (cell-level edits and role assignments)
+app.put('/api/admin/datasets/:id/content/:contentId', requireAdmin, async (req, res) => {
+    try {
+        const contentId = Number(req.params.contentId);
+        const payload = req.body || {};
+        if (!contentId) return res.status(400).json({ error: 'Missing contentId' });
+        if (!payload || Object.keys(payload).length === 0) return res.status(400).json({ error: 'Missing payload' });
+
+        const updates = [];
+        const params = [];
+        let idx = 1;
+        if (payload.dataset_data !== undefined) { updates.push(`dataset_data = $${idx}`); params.push(payload.dataset_data); idx++; }
+        if (payload.dataset_roles !== undefined) { updates.push(`dataset_roles = $${idx}`); params.push(payload.dataset_roles); idx++; }
+        if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+        params.push(contentId);
+        const q = `UPDATE dqai_dataset_content SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`;
+        const r = await pool.query(q, params);
+        if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+        res.json(r.rows[0]);
+    } catch (e) { console.error('Failed to update dataset content', e); res.status(500).json({ error: 'Failed to update dataset content' }); }
+});
+
+app.delete('/api/admin/datasets/:id/content/:contentId', requireAdmin, async (req, res) => {
+    try {
+        const contentId = Number(req.params.contentId);
+        await pool.query('DELETE FROM dqai_dataset_content WHERE id = $1', [contentId]);
+        res.json({ ok: true });
+    } catch (e) { console.error('Failed to delete dataset content', e); res.status(500).json({ error: 'Failed to delete dataset content' }); }
+});
+
+// Admin: upload Excel (base64 payload) and import rows into dataset content
+app.post('/api/admin/datasets/:id/content/upload', requireAdmin, async (req, res) => {
+    try {
+        const datasetId = Number(req.params.id);
+        const { fileName, fileBase64 } = req.body || {};
+        if (!fileBase64) return res.status(400).json({ error: 'Missing fileBase64' });
+        const buffer = Buffer.from(fileBase64, 'base64');
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+        const sheet = workbook.worksheets[0];
+        if (!sheet) return res.status(400).json({ error: 'No worksheet found in file' });
+
+        // Read header row (first non-empty row)
+        let headerRow = null;
+        for (let i = 1; i <= sheet.rowCount; i++) {
+            const row = sheet.getRow(i);
+            const hasValues = row.values && row.values.some(v => v !== null && v !== undefined && String(v).trim() !== '');
+            if (hasValues) { headerRow = row; break; }
+        }
+        if (!headerRow) return res.status(400).json({ error: 'No header row detected' });
+        const headers = (headerRow.values || []).slice(1).map(h => (h === null || h === undefined) ? '' : String(h).trim());
+
+        const inserted = [];
+        for (let r = headerRow.number + 1; r <= sheet.rowCount; r++) {
+            const row = sheet.getRow(r);
+            // skip empty rows
+            const values = row.values || [];
+            const isEmpty = values.slice(1).every(v => v === null || v === undefined || String(v).trim() === '');
+            if (isEmpty) continue;
+            const obj = {};
+            for (let c = 1; c <= headers.length; c++) {
+                const key = headers[c - 1] || (`col_${c}`);
+                const cell = row.getCell(c);
+                let val = null;
+                try {
+                    val = (cell && (cell.text !== undefined && cell.text !== null)) ? cell.text : (cell && cell.value !== undefined ? cell.value : null);
+                } catch (e) { val = cell && cell.value ? cell.value : null; }
+                obj[key] = val;
+            }
+            try {
+                const rres = await pool.query('INSERT INTO dqai_dataset_content (dataset_id, dataset_data, created_by) VALUES ($1,$2,$3) RETURNING *', [datasetId, obj, (req.session && req.session.userId) ? req.session.userId : null]);
+                inserted.push(rres.rows[0]);
+            } catch (ie) { console.error('Failed to insert dataset row', ie); }
+        }
+        res.json({ ok: true, inserted: inserted.length, sample: inserted.slice(0, 5) });
+    } catch (e) { console.error('Failed to import excel for dataset', e); res.status(500).json({ error: 'Failed to import excel', details: String(e) }); }
+});
+
+// Power BI endpoints for reports
+// Public: fetch Power BI config for a report (frontend can decide whether to render based on mode)
+app.get('/api/reports/:id/powerbi', async (req, res) => {
+    try {
+        const reportId = Number(req.params.id);
+        const r = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [reportId]);
+        if (r.rows.length === 0) return res.json(null);
+        return res.json(r.rows[0]);
+    } catch (e) {
+        console.error('Failed to fetch report powerbi', e);
+        res.status(500).json({ error: 'Failed to fetch powerbi config' });
+    }
+});
+
+// Admin: upsert Power BI config for a report
+app.post('/api/admin/reports/:id/powerbi', requireAdmin, async (req, res) => {
+    try {
+        const reportId = Number(req.params.id);
+        const { powerbi_link, link_type, mode } = req.body || {};
+        if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
+        const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
+        // Check if exists
+        const exist = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [reportId]);
+        if (exist.rows.length) {
+            const id = exist.rows[0].id;
+            const ur = await pool.query('UPDATE dqai_reports_powerbi SET powerbi_link=$1, link_type=$2, mode=$3, created_by=$4 WHERE id=$5 RETURNING *', [powerbi_link, link_type || null, mode || null, createdBy, id]);
+            return res.json(ur.rows[0]);
+        }
+        const r = await pool.query('INSERT INTO dqai_reports_powerbi (activity_reports_id, powerbi_link, link_type, mode, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *', [reportId, powerbi_link, link_type || null, mode || null, createdBy]);
+        res.json(r.rows[0]);
+    } catch (e) {
+        console.error('Failed to save report powerbi', e);
+        res.status(500).json({ error: 'Failed to save powerbi config' });
+    }
+});
+
+// Also accept PUT for admin report Power BI (some frontends use PUT)
+app.put('/api/admin/reports/:id/powerbi', requireAdmin, async (req, res) => {
+    try {
+        const reportId = Number(req.params.id);
+        const { powerbi_link, link_type, mode } = req.body || {};
+        if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
+        const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
+        // Check if exists
+        const exist = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [reportId]);
+        if (exist.rows.length) {
+            const id = exist.rows[0].id;
+            const ur = await pool.query('UPDATE dqai_reports_powerbi SET powerbi_link=$1, link_type=$2, mode=$3, created_by=$4 WHERE id=$5 RETURNING *', [powerbi_link, link_type || null, mode || null, createdBy, id]);
+            return res.json(ur.rows[0]);
+        }
+        const r = await pool.query('INSERT INTO dqai_reports_powerbi (activity_reports_id, powerbi_link, link_type, mode, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *', [reportId, powerbi_link, link_type || null, mode || null, createdBy]);
+        res.json(r.rows[0]);
+    } catch (e) {
+        console.error('Failed to save report powerbi (PUT)', e);
+        res.status(500).json({ error: 'Failed to save powerbi config' });
+    }
+});
+
+// Admin: delete a powerbi config by id
+app.delete('/api/admin/reports/:id/powerbi/:pbid', requireAdmin, async (req, res) => {
+    try {
+        const pbid = Number(req.params.pbid);
+        await pool.query('DELETE FROM dqai_reports_powerbi WHERE id = $1', [pbid]);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Failed to delete report powerbi', e);
+        res.status(500).json({ error: 'Failed to delete powerbi config' });
+    }
+});
+
+// Activity-level Power BI endpoints
+// Public: fetch Power BI embed link stored on an activity
+app.get('/api/activities/:id/powerbi', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        const r = await pool.query('SELECT powerbi_url FROM dqai_activities WHERE id = $1', [id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
+        return res.json({ powerbi_link: r.rows[0].powerbi_url || null, link_type: r.rows[0].powerbi_link_type || null, mode: r.rows[0].powerbi_mode || null });
+    } catch (e) {
+        console.error('Failed to fetch activity powerbi', e);
+        res.status(500).json({ error: 'Failed to fetch activity powerbi' });
+    }
+});
+
+// Admin: upsert Power BI link for an activity (stored in dqai_activities.powerbi_url)
+app.post('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const { powerbi_link, link_type, mode } = req.body || {};
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
+        // Ensure columns exist (safe idempotent migration)
+        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
+        const u = await pool.query('UPDATE dqai_activities SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *', [powerbi_link, link_type || null, mode || null, id]);
+        if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
+        res.json({ ok: true, activity: u.rows[0] });
+    } catch (e) {
+        console.error('Failed to save activity powerbi', e);
+        res.status(500).json({ error: 'Failed to save activity powerbi' });
+    }
+});
+
+// Also accept PUT for admin activity Power BI (some frontends call PUT)
+app.put('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const { powerbi_link, link_type, mode } = req.body || {};
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
+        // Ensure columns exist (safe idempotent migration)
+        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
+        const u = await pool.query('UPDATE dqai_activities SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *', [powerbi_link, link_type || null, mode || null, id]);
+        if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
+        res.json({ ok: true, activity: u.rows[0] });
+    } catch (e) {
+        console.error('Failed to save activity powerbi (PUT)', e);
+        res.status(500).json({ error: 'Failed to save activity powerbi' });
+    }
+});
+
+// Admin: clear activity powerbi link
+app.delete('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        await pool.query('UPDATE dqai_activities SET powerbi_url = NULL WHERE id = $1', [id]);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Failed to clear activity powerbi', e);
+        res.status(500).json({ error: 'Failed to clear activity powerbi' });
+    }
+});
+
+// Admin: Report Templates (Report Builder) CRUD
+app.get('/api/admin/report_templates', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM dqai_report_templates ORDER BY id DESC');
+        res.json(r.rows);
+    } catch (e) { console.error('Failed to list report templates', e); res.status(500).json({ error: 'Failed to list report templates' }); }
+});
+
+app.post('/api/admin/report_templates', requireAdmin, async (req, res) => {
+    try {
+        const { id, name, activity_id, template_json, paper_size, orientation, header_image, footer_image, watermark_image, assets } = req.body || {};
+        if (!name || !String(name).trim()) return res.status(400).json({ error: 'Missing name' });
+        if (id) {
+            const r = await pool.query('UPDATE dqai_report_templates SET name=$1, activity_id=$2, template_json=$3, paper_size=$4, orientation=$5, header_image=$6, footer_image=$7, watermark_image=$8, assets=$9 WHERE id=$10 RETURNING *', [name, activity_id || null, template_json || null, paper_size || null, orientation || null, header_image || null, footer_image || null, watermark_image || null, assets ? JSON.stringify(assets) : null, id]);
+            return res.json(r.rows[0]);
+        }
+        const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
+        const r = await pool.query('INSERT INTO dqai_report_templates (name, activity_id, template_json, paper_size, orientation, header_image, footer_image, watermark_image, assets, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *', [name, activity_id || null, template_json || null, paper_size || null, orientation || null, header_image || null, footer_image || null, watermark_image || null, assets ? JSON.stringify(assets) : null, createdBy]);
+        res.json(r.rows[0]);
+    } catch (e) { console.error('Failed to save report template', e); res.status(500).json({ error: 'Failed to save report template' }); }
+});
+
+// Public: list report templates optionally filtered by activity
+app.get('/api/report_templates', async (req, res) => {
+    try {
+        const { activityId } = req.query;
+        if (activityId) {
+            const r = await pool.query('SELECT * FROM dqai_report_templates WHERE activity_id = $1 ORDER BY id DESC', [activityId]);
+            return res.json(r.rows);
+        }
+        const r = await pool.query('SELECT * FROM dqai_report_templates ORDER BY id DESC');
+        res.json(r.rows);
+    } catch (e) { console.error('Failed to list public report templates', e); res.status(500).json({ error: 'Failed to list report templates' }); }
+});
+
+app.delete('/api/admin/report_templates/:id', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        await pool.query('DELETE FROM dqai_report_templates WHERE id = $1', [id]);
+        res.json({ ok: true });
+    } catch (e) { console.error('Failed to delete report template', e); res.status(500).json({ error: 'Failed to delete report template' }); }
+});
+
+// Public: get a report template by id (useful for previewing)
+app.get('/api/report_templates/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const r = await pool.query('SELECT * FROM dqai_report_templates WHERE id = $1', [id]);
+        if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+        res.json(r.rows[0]);
+    } catch (e) { console.error('Failed to fetch report template', e); res.status(500).json({ error: 'Failed to fetch report template' }); }
+});
+
 // Roles & Permissions management endpoints
 app.get('/api/admin/roles', requireAdmin, async (req, res) => {
     try { const r = await pool.query('SELECT * FROM dqai_roles ORDER BY id ASC'); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list roles' }); }
@@ -1812,7 +2582,7 @@ async function syncQuestions(activityId, formDefOrQuestions) {
     if (!activityId) return;
     try {
         await pool.query('DELETE FROM dqai_questions WHERE activity_id = $1', [activityId]);
-        const insertText = `INSERT INTO dqai_questions (id, activity_id, page_name, section_name, question_text, question_helper, answer_type, category, question_group, column_size, status, required, options, metadata, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`;
+        const insertText = `INSERT INTO dqai_questions (id, activity_id, page_name, section_name, question_text, question_helper, correct_answer, answer_type, category, question_group, column_size, status, required, options, metadata, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`;
 
         // If an array is provided, treat it as a flat list of question objects
         if (Array.isArray(formDefOrQuestions)) {
@@ -1829,10 +2599,11 @@ async function syncQuestions(activityId, formDefOrQuestions) {
                 const status = q.status || 'Active';
                 const options = q.options ? JSON.stringify(q.options) : null;
                 const metadata = q.metadata ? JSON.stringify(q.metadata) : null;
+                const correctAnswer = q.correctAnswer || q.correct_answer || q.correct || null;
                 let createdBy = q.createdBy || q.created_by || null;
                 // coerce createdBy to integer id or null to avoid invalid input syntax errors
                 const createdByParam = (createdBy === null || createdBy === undefined) ? null : (Number.isInteger(Number(createdBy)) ? Number(createdBy) : null);
-                await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdByParam]);
+                await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, correctAnswer, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdByParam]);
             }
             return;
         }
@@ -1854,9 +2625,10 @@ async function syncQuestions(activityId, formDefOrQuestions) {
                     const status = q.status || 'Active';
                     const options = q.options ? JSON.stringify(q.options) : null;
                     const metadata = q.metadata ? JSON.stringify(q.metadata) : null;
+                    const correctAnswer = q.correctAnswer || q.correct_answer || q.correct || null;
                     let createdBy = q.createdBy || null;
                     const createdByParam = (createdBy === null || createdBy === undefined) ? null : (Number.isInteger(Number(createdBy)) ? Number(createdBy) : null);
-                    await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdByParam]);
+                    await pool.query(insertText, [qId, activityId, pageName, sectionName, questionText, questionHelper, correctAnswer, answerType, category, questionGroup, columnSize, status, q.required || false, options, metadata, createdByParam]);
                 }
             }
         }
@@ -2035,6 +2807,26 @@ app.get('/api/activities', async (req, res) => {
         }));
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
+});
+
+// Get a single activity by id
+app.get('/api/activities/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).send('Invalid id');
+        const result = await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [id]);
+        if (result.rowCount === 0) return res.status(404).send('Activity not found');
+        const row = result.rows[0];
+        const mapped = {
+            ...row,
+            programId: row.program_id,
+            startDate: row.start_date,
+            endDate: row.end_date,
+            responseType: row.response_type || row.responsetype || null,
+            formDefinition: row.form_definition || null,
+        };
+        res.json(mapped);
+    } catch (e) { console.error('Failed to fetch activity', e); res.status(500).send(e.message); }
 });
 
 // Public: list activities with program and standalone form path for sharing/embed
@@ -2252,22 +3044,558 @@ app.get('/api/reports/:id', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
+// Generate PDF for a report (server-side). Requires 'puppeteer' to be installed.
+app.get('/api/reports/:id/pdf', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        const rres = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [id]);
+        if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
+        const report = rres.rows[0];
+        // fetch answers, questions and uploaded docs
+        const [aRes, qRes, dRes] = await Promise.all([
+            pool.query('SELECT * FROM dqai_answers WHERE report_id = $1 ORDER BY id ASC', [id]),
+            pool.query('SELECT * FROM dqai_questions WHERE activity_id = $1', [report.activity_id]),
+            pool.query('SELECT * FROM dqai_uploaded_docs WHERE report_id = $1', [id])
+        ]);
+        const answers = aRes.rows || [];
+        const questions = qRes.rows || [];
+        const uploadedDocs = dRes.rows || [];
+
+        // build maps for quick lookup (support various possible id fields)
+        const qMap = {};
+        for (const q of questions) {
+            try {
+                if (q.id !== undefined && q.id !== null) qMap[String(q.id)] = q;
+                if (q.qid !== undefined && q.qid !== null) qMap[String(q.qid)] = q;
+                if (q.question_id !== undefined && q.question_id !== null) qMap[String(q.question_id)] = q;
+                if (q.field_name) qMap[String(q.field_name)] = q;
+                if (q.fieldName) qMap[String(q.fieldName)] = q;
+            } catch (e) { /* ignore malformed question rows */ }
+        }
+        const answersMap = {};
+        for (const a of answers) {
+            answersMap[String(a.question_id)] = (typeof a.answer_value === 'object') ? JSON.stringify(a.answer_value) : String(a.answer_value);
+        }
+
+        // fetch facility and reporter user for display (if available)
+        let facility = null;
+        try {
+            if (report.facility_id) {
+                const fres = await pool.query('SELECT * FROM dqai_facilities WHERE id = $1', [report.facility_id]);
+                if (fres.rowCount > 0) facility = fres.rows[0];
+            }
+        } catch (e) { /* ignore */ }
+        let reportedByUser = null;
+        try {
+            if (report.reported_by) {
+                const ures = await pool.query('SELECT id, first_name, last_name, email FROM dqai_users WHERE id = $1', [report.reported_by]);
+                if (ures.rowCount > 0) reportedByUser = ures.rows[0];
+            }
+        } catch (e) { /* ignore */ }
+
+        // Helper to sanitize potentially heavy/unsafe HTML snippets (strip iframes/videos/objects/scripts and large data: URLs)
+        const sanitizeHtml = (raw) => {
+            if (!raw) return '';
+            try {
+                let s = String(raw || '');
+                s = s.replace(/<video[\s\S]*?<\/video>/gi, '');
+                s = s.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+                s = s.replace(/<object[\s\S]*?<\/object>/gi, '');
+                s = s.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+                s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
+                // strip extremely large data URLs (over ~5k chars) from src attributes
+                s = s.replace(/src=(\"|\')(data:[^\"']{5000,})(\"|\')/gi, '');
+                return s;
+            } catch (e) { return String(raw || ''); }
+        };
+
+        // Helper to escape HTML
+        const escapeHtml = (s) => {
+            if (s === null || s === undefined) return '';
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        };
+
+        // By default return the original report summary HTML (title, status, score, reviewers comment, powerbi, submitted answers, uploaded files).
+        // If the client explicitly requests the designed template via ?template=1, attempt to apply the saved template.
+        const useTemplate = (req.query && (req.query.template === '1' || req.query.template === 'true' || req.query.useTemplate === '1'));
+        const tplId = report.report_template_id || report.reportTemplateId || null;
+
+        // Fetch any Power BI embed/link configured for this report or its activity so we can include it on the default summary page.
+        let reportPowerbi = null;
+        try {
+            const pbRes = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [id]);
+            if (pbRes.rowCount > 0) reportPowerbi = pbRes.rows[0];
+        } catch (e) { /* ignore */ }
+        let activityPowerbi = null;
+        try {
+            const ap = await pool.query('SELECT powerbi_url, powerbi_link_type, powerbi_mode FROM dqai_activities WHERE id = $1', [report.activity_id]);
+            if (ap.rowCount > 0) activityPowerbi = ap.rows[0];
+        } catch (e) { /* ignore */ }
+
+        let html = '';
+        html += `<html><head><meta charset="utf-8"><title>Report ${report.id}</title><style>body{font-family:Arial,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.report-filled{margin:6px 0}.powerbi-embed{margin:12px 0;padding:8px;border:1px solid #eee;background:#fafafa}</style></head><body>`;
+        if (useTemplate && tplId) {
+            try {
+                const tplRes = await pool.query('SELECT * FROM dqai_report_templates WHERE id = $1', [tplId]);
+                if (tplRes.rowCount > 0) {
+                    const tpl = tplRes.rows[0];
+                    let tplObj = {};
+                    try { tplObj = typeof tpl.template_json === 'string' ? JSON.parse(tpl.template_json || '{}') : (tpl.template_json || {}); } catch (e) { tplObj = {}; }
+                    let tplHtml = tplObj.html || '';
+                    // perform placeholder substitution for question placeholders inserted by the canvas
+                    // replace spans with data-qid attributes
+                    tplHtml = tplHtml.replace(/<span[^>]*data-qid=["']?(\d+)["']?[^>]*>([\s\S]*?)<\/span>/gi, (m, qid, inner) => {
+                        const answerRaw = answersMap[String(qid)] || '';
+                        const answer = (answerRaw === null || answerRaw === undefined) ? '' : String(answerRaw);
+                        return `<div class="report-filled">${escapeHtml(answer)}</div>`;
+                    });
+
+                    // replace uploaded table wrappers marked with data-upload-id and render full table if data exists
+                    tplHtml = tplHtml.replace(/<div[^>]*data-upload-id=["']?(\d+)["']?[^>]*>[\s\S]*?<\/div>/gi, (m, did) => {
+                        try {
+                            const udRes = pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [Number(did)]);
+                            // udRes is a promise; but we are inside sync replace — handle by returning a placeholder and fill afterwards
+                            return `__UPLOADED_TABLE_PLACEHOLDER_${did}__`;
+                        } catch (e) { return `<div>Uploaded table ${did}</div>`; }
+                    });
+
+                    html += tplHtml;
+
+                    // now fill uploaded table placeholders synchronously by querying DB for each found placeholder
+                    // find placeholders
+                    const upMatches = html.match(/__UPLOADED_TABLE_PLACEHOLDER_(\d+)__/g) || [];
+                    for (const ph of upMatches) {
+                        const mid = ph.replace(/__UPLOADED_TABLE_PLACEHOLDER_(\d+)__/, '$1');
+                        try {
+                            const udRes2 = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [Number(mid)]);
+                            if (udRes2.rowCount === 0) {
+                                html = html.replace(ph, `<div>Uploaded table ${mid} not found</div>`);
+                                continue;
+                            }
+                            const doc = udRes2.rows[0];
+                            const rows = Array.isArray(doc.file_content) ? doc.file_content : [];
+                            if (rows.length === 0) { html = html.replace(ph, `<div>No data for uploaded table ${mid}</div>`); continue; }
+                            const cols = Object.keys(rows[0] || {});
+                            let table = `<div class="uploaded-table-wrapper"><table style="border-collapse: collapse; width:100%;"><thead><tr>`;
+                            for (const c of cols) table += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(c)}</th>`;
+                            table += `</tr></thead><tbody>`;
+                            for (const r of rows) {
+                                table += '<tr>';
+                                for (const c of cols) {
+                                    let v = r && typeof r === 'object' && (r[c] !== undefined && r[c] !== null) ? String(r[c]) : '';
+                                    table += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(v)}</td>`;
+                                }
+                                table += '</tr>';
+                            }
+                            table += `</tbody></table></div>`;
+                            html = html.replace(ph, table);
+                        } catch (e) {
+                            html = html.replace(ph, `<div>Failed to render uploaded table ${mid}</div>`);
+                        }
+                    }
+
+                } else {
+                    // template not found; fall back to simple report view below
+                    // we'll let execution continue to the summary fallback
+                    tplHtml = null;
+                }
+            } catch (e) {
+                console.error('Failed to apply template for report PDF', e);
+                // failed to apply template, continue to summary fallback
+                tplHtml = null;
+            }
+            if (tplHtml) {
+                html += tplHtml;
+
+                // now fill uploaded table placeholders synchronously by querying DB for each found placeholder
+                const upMatches = html.match(/__UPLOADED_TABLE_PLACEHOLDER_(\d+)__/g) || [];
+                for (const ph of upMatches) {
+                    const mid = ph.replace(/__UPLOADED_TABLE_PLACEHOLDER_(\d+)__/, '$1');
+                    try {
+                        const udRes2 = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [Number(mid)]);
+                        if (udRes2.rowCount === 0) {
+                            html = html.replace(ph, `<div>Uploaded table ${mid} not found</div>`);
+                            continue;
+                        }
+                        const doc = udRes2.rows[0];
+                        const rows = Array.isArray(doc.file_content) ? doc.file_content : [];
+                        if (rows.length === 0) { html = html.replace(ph, `<div>No data for uploaded table ${mid}</div>`); continue; }
+                        const cols = Object.keys(rows[0] || {});
+                        let table = `<div class="uploaded-table-wrapper"><table style="border-collapse: collapse; width:100%;"><thead><tr>`;
+                        for (const c of cols) table += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(c)}</th>`;
+                        table += `</tr></thead><tbody>`;
+                        for (const r of rows) {
+                            table += '<tr>';
+                            for (const c of cols) {
+                                let v = r && typeof r === 'object' && (r[c] !== undefined && r[c] !== null) ? String(r[c]) : '';
+                                table += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(v)}</td>`;
+                            }
+                            table += '</tr>';
+                        }
+                        table += `</tbody></table></div>`;
+                        html = html.replace(ph, table);
+                    } catch (e) {
+                        html = html.replace(ph, `<div>Failed to render uploaded table ${mid}</div>`);
+                    }
+                }
+                html += `</body></html>`;
+            } else {
+                // fall through to default summary rendering below
+            }
+        }
+
+        // If we added a template HTML and returned it, skip the fallback summary. Otherwise build the original summary page.
+        if (useTemplate && tplId && html.includes('</body></html>') && !html.includes('<h1>Report')) {
+            // template was applied and HTML assembled — continue to PDF rendering with `html`
+        } else {
+            // no template — default tabular report with title/status/score/review and Power BI if configured
+            const displayTitle = report.title || report.activity_title || (`Report ${report.id}`);
+            html += `<h1>${escapeHtml(displayTitle)}</h1>`;
+            // include facility name if available
+            const facilityName = facility ? (facility.name || facility.facility_name || facility.name) : (report.facility_name || report.facility || '');
+            html += `<p><strong>Report ID:</strong> ${escapeHtml(String(report.id))} &nbsp; <strong>Submitted:</strong> ${escapeHtml(new Date(report.submission_date).toLocaleString())}</p>`;
+            html += `<p><strong>Facility:</strong> ${escapeHtml(facilityName || '—')} &nbsp; <strong>Status:</strong> ${escapeHtml(report.status || '')} &nbsp; <strong>Overall Score:</strong> ${escapeHtml(String(report.overall_score || ''))}</p>`;
+
+            // include Power BI embed or link (prefer report-level, fallback to activity-level)
+            const pb = reportPowerbi || (activityPowerbi && activityPowerbi.powerbi_url ? { powerbi_link: activityPowerbi.powerbi_url, link_type: activityPowerbi.powerbi_link_type || null } : null);
+            if (pb && pb.powerbi_link) {
+                const link = pb.powerbi_link;
+                // Do not embed iframes in server PDF (can break PDF rendering). Show a safe link instead.
+                html += `<div class="powerbi-embed"><strong>Power BI:</strong> <a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">Open Power BI</a></div>`;
+            }
+
+            html += `<h2>Answers</h2><table><thead><tr><th>Page</th><th>Section</th><th>Question</th><th>Answer</th><th>Reviewer Comment</th><th>Followup</th></tr></thead><tbody>`;
+            for (const a of answers) {
+                const q = qMap[String(a.question_id)] || {};
+                const questionText = q.questionText || q.question_text || q.label || String(a.question_id);
+                const pageName = q.pageName || q.page_name || '';
+                const sectionName = q.sectionName || q.section_name || '';
+                const ans = (typeof a.answer_value === 'object') ? JSON.stringify(a.answer_value) : String(a.answer_value);
+                html += `<tr><td>${escapeHtml(pageName)}</td><td>${escapeHtml(sectionName)}</td><td>${escapeHtml(questionText)}</td><td>${escapeHtml(ans)}</td><td>${escapeHtml(a.reviewers_comment || '')}</td><td>${escapeHtml(a.quality_improvement_followup || '')}</td></tr>`;
+            }
+            html += `</tbody></table>`;
+            const reviewersHtml = sanitizeHtml(report.reviewers_report || report.reviewersReport || '');
+            html += `<h2>Reviewer's Report</h2>`;
+            if (reviewersHtml && String(reviewersHtml).trim()) html += `<div>${reviewersHtml}</div>`; else html += `<div><em>No review available</em></div>`;
+
+            if (uploadedDocs && uploadedDocs.length) {
+                html += `<h2>Uploaded Files</h2>`;
+                for (const d of uploadedDocs) {
+                    html += `<h3>${escapeHtml(d.filename || 'File')}</h3>`;
+                    const rows = Array.isArray(d.file_content) ? d.file_content : [];
+                    if (rows.length === 0) {
+                        html += `<pre>${escapeHtml(JSON.stringify(d.file_content || d, null, 2))}</pre>`;
+                    } else {
+                        const cols = Object.keys(rows[0] || {});
+                        html += `<table><thead><tr>`;
+                        for (const c of cols) html += `<th>${escapeHtml(c)}</th>`;
+                        html += `</tr></thead><tbody>`;
+                        for (const r of rows) {
+                            html += `<tr>`;
+                            for (const c of cols) {
+                                let v = r[c];
+                                if (v === null || v === undefined) v = '';
+                                else if (typeof v === 'object') v = JSON.stringify(v);
+                                html += `<td>${escapeHtml(String(v))}</td>`;
+                            }
+                            html += `</tr>`;
+                        }
+                        html += `</tbody></table>`;
+                    }
+                }
+            }
+        }
+        html += `</body></html>`;
+
+        // Try to use puppeteer if available to render a PDF server-side
+        try {
+            const puppeteer = await import('puppeteer');
+            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            const page = await browser.newPage();
+            await page.setContent(html, { waitUntil: 'networkidle0' });
+            const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
+            await browser.close();
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="report-${report.id}.pdf"`);
+            return res.send(pdfBuffer);
+        } catch (e) {
+            console.warn('puppeteer not available or failed:', e && e.message ? e.message : e);
+            // fallback: return HTML so client can print/download
+            res.setHeader('Content-Type', 'text/html');
+            return res.send(html);
+        }
+    } catch (e) {
+        console.error('Failed to generate report PDF', e);
+        res.status(500).json({ error: 'Failed to generate PDF' });
+    }
+});
+
+// Generate DOCX for a report by converting the applied template HTML to a .docx file
+app.get('/api/reports/:id/docx', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        // Reuse the PDF route's HTML assembly logic by requesting the internal PDF route without puppeteer
+        // Build HTML similar to /api/reports/:id/pdf but avoid duplication by calling the function or reassembling inline
+        // For simplicity, call the same handler code path by requesting the pdf route without puppeteer using internal request
+        const fetch = globalThis.fetch || require('node-fetch');
+        const base = `${req.protocol}://${req.get('host')}`;
+        const url = `${base}/api/reports/${id}/pdf?template=${req.query.template ? '1' : '0'}`;
+        // Request the HTML fallback from the pdf endpoint (it may return PDF when puppeteer available; we prefer HTML)
+        const r = await fetch(url, { headers: { Accept: 'text/html' } });
+        let html = '';
+        try { html = await r.text(); } catch (e) { html = '<html><body>Failed to build document</body></html>'; }
+        // Try dynamic import of html-docx-js
+        try {
+            const htmlDocx = await import('html-docx-js');
+            // html-docx-js exposes asBlob or asHTML depending on build; try common names
+            let docxBuffer = null;
+            try {
+                const blob = htmlDocx.asBlob ? htmlDocx.asBlob(html) : (htmlDocx.default && htmlDocx.default.asBlob ? htmlDocx.default.asBlob(html) : null);
+                if (blob) {
+                    // blob may be ArrayBuffer-like
+                    const arrayBuffer = await blob.arrayBuffer();
+                    docxBuffer = Buffer.from(arrayBuffer);
+                }
+            } catch (e) { /* ignore conversion attempt */ }
+            // Fallback attempt: some versions export a convert function
+            if (!docxBuffer) {
+                try {
+                    const converted = htmlDocx.default ? htmlDocx.default(html) : htmlDocx(html);
+                    if (converted instanceof ArrayBuffer) docxBuffer = Buffer.from(converted);
+                    else if (typeof converted === 'string') docxBuffer = Buffer.from(converted);
+                } catch (e) { /* ignore */ }
+            }
+            if (docxBuffer) {
+                res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+                res.setHeader('Content-Disposition', `attachment; filename="report-${id}.docx"`);
+                return res.send(docxBuffer);
+            }
+        } catch (e) {
+            console.warn('html-docx-js not available:', e && e.message ? e.message : e);
+        }
+        // As a graceful fallback return HTML with a .doc extension so Word can open it
+        res.setHeader('Content-Type', 'application/msword');
+        res.setHeader('Content-Disposition', `attachment; filename="report-${id}.doc"`);
+        return res.send(html);
+    } catch (e) {
+        console.error('Failed to generate DOCX', e);
+        res.status(500).json({ error: 'Failed to generate DOCX' });
+    }
+});
+
+// Generate XLSX for a report: include Answers sheet and each uploaded table as separate sheets
+app.get('/api/reports/:id/xlsx', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        const rres = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [id]);
+        if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
+        const report = rres.rows[0];
+        const [aRes, qRes, dRes] = await Promise.all([
+            pool.query('SELECT * FROM dqai_answers WHERE report_id = $1 ORDER BY id ASC', [id]),
+            pool.query('SELECT * FROM dqai_questions WHERE activity_id = $1', [report.activity_id]),
+            pool.query('SELECT * FROM dqai_uploaded_docs WHERE report_id = $1', [id])
+        ]);
+        const answers = aRes.rows || [];
+        const questions = qRes.rows || [];
+        const uploadedDocs = dRes.rows || [];
+
+        const workbook = new ExcelJS.Workbook();
+        const ansSheet = workbook.addWorksheet('Answers');
+        ansSheet.columns = [
+            { header: 'Question ID', key: 'question_id' },
+            { header: 'Question Text', key: 'question_text' },
+            { header: 'Answer', key: 'answer' },
+            { header: 'Reviewer Comment', key: 'reviewers_comment' },
+            { header: 'Followup', key: 'quality_improvement_followup' },
+            { header: 'Score', key: 'score' }
+        ];
+        const qMap = {};
+        for (const q of questions) qMap[String(q.id)] = q;
+        for (const a of answers) {
+            const q = qMap[String(a.question_id)] || {};
+            const text = q.question_text || q.questionText || String(a.question_id);
+            const val = (typeof a.answer_value === 'object') ? JSON.stringify(a.answer_value) : String(a.answer_value || '');
+            ansSheet.addRow({ question_id: a.question_id, question_text: text, answer: val, reviewers_comment: a.reviewers_comment || '', quality_improvement_followup: a.quality_improvement_followup || '', score: a.score || '' });
+        }
+
+        // Add each uploaded doc as its own sheet
+        for (const doc of uploadedDocs) {
+            const rows = Array.isArray(doc.file_content) ? doc.file_content : [];
+            const sheetName = (doc.filename || `uploaded_${doc.id}`).slice(0, 31);
+            const sheet = workbook.addWorksheet(sheetName);
+            if (rows.length === 0) {
+                sheet.addRow(['No data']);
+            } else {
+                const cols = Object.keys(rows[0] || {});
+                sheet.columns = cols.map(c => ({ header: c, key: c }));
+                for (const r of rows) sheet.addRow(r);
+            }
+        }
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="report-${id}.xlsx"`);
+        return res.send(Buffer.from(buffer));
+    } catch (e) {
+        console.error('Failed to generate XLSX', e);
+        res.status(500).json({ error: 'Failed to generate XLSX' });
+    }
+});
+
+// Generate an image representation (PNG) of the applied template via puppeteer screenshot
+app.get('/api/reports/:id/image', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        const rres = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [id]);
+        if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
+        const report = rres.rows[0];
+        // reuse the PDF HTML assembly by calling the existing route; request HTML
+        const fetch = globalThis.fetch || require('node-fetch');
+        const base = `${req.protocol}://${req.get('host')}`;
+        const url = `${base}/api/reports/${id}/pdf?template=${req.query.template ? '1' : '0'}`;
+        const r = await fetch(url, { headers: { Accept: 'text/html' } });
+        const html = await r.text();
+        try {
+            const puppeteer = await import('puppeteer');
+            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            const page = await browser.newPage();
+            await page.setContent(html, { waitUntil: 'networkidle0' });
+            const screenshot = await page.screenshot({ fullPage: true, type: 'png' });
+            await browser.close();
+            res.setHeader('Content-Type', 'image/png');
+            res.setHeader('Content-Disposition', `attachment; filename="report-${id}.png"`);
+            return res.send(screenshot);
+        } catch (e) {
+            console.warn('puppeteer not available for image export:', e && e.message ? e.message : e);
+            return res.status(501).json({ error: 'Image export requires puppeteer on the server' });
+        }
+    } catch (e) { console.error('Failed to generate image', e); res.status(500).json({ error: 'Failed to generate image' }); }
+});
+
 // Update a report (reviewers_report, overall_score, status)
 app.put('/api/reports/:id', async (req, res) => {
+    const client = await pool.connect();
     try {
-        const { reviewers_report, overall_score, status } = req.body || {};
-        const fields = [];
+        const reportId = Number(req.params.id);
+        if (!reportId) return res.status(400).send('Invalid report id');
+        const payload = req.body || {};
+
+        await client.query('BEGIN');
+
+        // Ensure report exists
+        const existing = await client.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+        if (existing.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).send('Report not found');
+        }
+
+        // Build update for top-level report fields. Accept both camelCase and snake_case keys from client.
+        const mapKeys = {
+            status: 'status',
+            reviewersReport: 'reviewers_report',
+            reviewers_report: 'reviewers_report',
+            overallScore: 'overall_score',
+            overall_score: 'overall_score',
+            activityId: 'activity_id',
+            activity_id: 'activity_id',
+            userId: 'user_id',
+            user_id: 'user_id',
+            facilityId: 'facility_id',
+            facility_id: 'facility_id',
+            answers: 'answers',
+            reportedBy: 'reported_by',
+            reported_by: 'reported_by',
+            reportTemplateId: 'report_template_id',
+            report_template_id: 'report_template_id'
+        };
+        const setParts = [];
         const params = [];
         let idx = 1;
-        if (reviewers_report !== undefined) { fields.push(`reviewers_report = $${idx++}`); params.push(reviewers_report); }
-        if (overall_score !== undefined) { fields.push(`overall_score = $${idx++}`); params.push(overall_score); }
-        if (status !== undefined) { fields.push(`status = $${idx++}`); params.push(status); }
-        if (fields.length === 0) return res.status(400).send('No fields to update');
-        params.push(req.params.id);
-        const sql = `UPDATE dqai_activity_reports SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`;
-        const result = await pool.query(sql, params);
-        if (result.rowCount === 0) return res.status(404).send('Report not found');
-        const r = result.rows[0];
+        for (const [clientKey, dbKey] of Object.entries(mapKeys)) {
+            if (Object.prototype.hasOwnProperty.call(payload, clientKey)) {
+                setParts.push(`${dbKey} = $${idx++}`);
+                if (dbKey === 'answers') params.push(JSON.stringify(payload[clientKey])); else params.push(payload[clientKey]);
+            }
+        }
+
+        if (setParts.length > 0) {
+            params.push(reportId);
+            const sql = `UPDATE dqai_activity_reports SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
+            const updated = await client.query(sql, params);
+            if (updated.rowCount === 0) {
+                await client.query('ROLLBACK');
+                return res.status(500).send('Failed to update report');
+            }
+        }
+
+        // Replace answers if provided (delete existing and re-insert)
+        if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
+            try {
+                await client.query('DELETE FROM dqai_answers WHERE report_id = $1', [reportId]);
+                const answers = payload.answers || {};
+                if (answers && typeof answers === 'object') {
+                    for (const [qId, val] of Object.entries(answers)) {
+                        try {
+                            let answerVal = val;
+                            let reviewersComment = null;
+                            let qiFollowup = null;
+                            let score = null;
+                            if (val && typeof val === 'object' && !(val instanceof Array)) {
+                                if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                                reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                                qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                                score = (typeof val.score !== 'undefined') ? val.score : null;
+                            }
+                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, JSON.stringify(answerVal), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                        } catch (ie) { console.error('Failed to insert answer during report update for question', qId, ie); }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to replace answers during report update', e);
+                await client.query('ROLLBACK');
+                return res.status(500).send('Failed to update answers');
+            }
+        }
+
+        // Replace uploaded files if provided
+        if (Object.prototype.hasOwnProperty.call(payload, 'uploadedFiles')) {
+            try {
+                // Delete existing uploaded_docs rows for this report (if column exists)
+                try {
+                    const colRes = await client.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+                    if (colRes.rowCount > 0) {
+                        await client.query('DELETE FROM dqai_uploaded_docs WHERE report_id = $1', [reportId]);
+                    } else {
+                        // fallback to JSONB field
+                        try { await client.query("DELETE FROM dqai_uploaded_docs WHERE (file_content->>'reportId') = $1", [String(reportId)]); } catch (e) { console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e); }
+                    }
+                } catch (e) { console.warn('uploaded_docs schema check failed during report update delete step', e); }
+
+                const files = payload.uploadedFiles || [];
+                if (Array.isArray(files) && files.length > 0) {
+                    for (const file of files) {
+                        try {
+                            const filename = file.name || file.filename || file.fileName || null;
+                            const content = file.content || file.data || file;
+                            await client.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [payload.activityId || payload.activity_id || existing.rows[0].activity_id, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, reportId, JSON.stringify(content), filename]);
+                        } catch (ie) { console.error('Failed to insert uploaded file during report update', ie); }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to replace uploaded files during report update', e);
+                await client.query('ROLLBACK');
+                return res.status(500).send('Failed to update uploaded files');
+            }
+        }
+
+        await client.query('COMMIT');
+        // Return updated report
+        const final = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+        const r = final.rows[0];
         res.json({
             ...r,
             activityId: r.activity_id,
@@ -2278,7 +3606,13 @@ app.put('/api/reports/:id', async (req, res) => {
             overallScore: r.overall_score,
             reportedBy: r.reported_by
         });
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        try { await client.query('ROLLBACK'); } catch (er) { /* ignore */ }
+        console.error('Failed to update report transactionally', e);
+        res.status(500).send(String(e.message || e));
+    } finally {
+        client.release();
+    }
 });
 
 // Accept base64 media uploads for reviews (images/videos). Body: { reportId, filename, contentBase64, mimeType }
@@ -2301,11 +3635,191 @@ app.post('/api/review_uploads', async (req, res) => {
         const buf = Buffer.from(base64, 'base64');
         fs.writeFileSync(filePath, buf);
         const publicUrl = `${req.protocol}://${req.get('host')}/uploads/reports/${encodeURIComponent(String(safeReportId))}/${encodeURIComponent(savedName)}`;
+        // Persist a record in dqai_uploaded_docs so uploads are discoverable and consistent
+        try {
+            await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [null, null, null, req.session && req.session.userId ? req.session.userId : null, reportId || null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
+        } catch (e) {
+            console.warn('Failed to insert review_uploads metadata into dqai_uploaded_docs', e && e.message ? e.message : e);
+        }
         res.json({ url: publicUrl, path: filePath });
     } catch (e) {
         console.error('review_uploads error', e);
         res.status(500).send(e.message);
     }
+});
+
+// Accept base64 media uploads for template assets (header/footer/watermark).
+// Public endpoint that does not require a reportId. Saves files under /uploads/templates and returns a public URL.
+app.post('/api/template_uploads', async (req, res) => {
+    try {
+        const { filename, contentBase64, mimeType } = req.body || {};
+        if (!filename || !contentBase64) return res.status(400).send('Missing parameters');
+        const folder = path.join(uploadsRoot, 'templates');
+        if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+        const ts = Date.now();
+        const ext = path.extname(filename) || '';
+        const baseName = path.basename(filename, ext).replace(/[^a-zA-Z0-9-_\.]/g, '_');
+        const savedName = `${ts}_${baseName}${ext}`;
+        const filePath = path.join(folder, savedName);
+        let base64 = contentBase64;
+        const comma = base64.indexOf(',');
+        if (comma !== -1) base64 = base64.slice(comma + 1);
+        const buf = Buffer.from(base64, 'base64');
+        fs.writeFileSync(filePath, buf);
+        const publicUrl = `${req.protocol}://${req.get('host')}/uploads/templates/${encodeURIComponent(savedName)}`;
+        // Persist a record in dqai_uploaded_docs for discoverability
+        try {
+            await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [null, null, null, req.session && req.session.userId ? req.session.userId : null, null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
+        } catch (e) {
+            console.warn('Failed to insert template_uploads metadata into dqai_uploaded_docs', e && e.message ? e.message : e);
+        }
+        res.json({ url: publicUrl, path: filePath });
+    } catch (e) {
+        console.error('template_uploads error', e);
+        res.status(500).send(e.message);
+    }
+});
+
+// Accept base64 uploads tied to an activity. Body: { activityId, filename, contentBase64, mimeType }
+app.post('/api/activity_uploads', async (req, res) => {
+    try {
+        const { activityId, filename, contentBase64, mimeType } = req.body || {};
+        if (!activityId || !filename || !contentBase64) return res.status(400).send('Missing parameters');
+        const safeActivity = String(activityId).replace(/[^a-zA-Z0-9-_\.]/g, '_');
+        const folder = path.join(uploadsRoot, 'activity', String(safeActivity));
+        if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+        const ts = Date.now();
+        const ext = path.extname(filename) || '';
+        const baseName = path.basename(filename, ext).replace(/[^a-zA-Z0-9-_\.]/g, '_');
+        const savedName = `${ts}_${baseName}${ext}`;
+        const filePath = path.join(folder, savedName);
+        let base64 = contentBase64;
+        const comma = base64.indexOf(',');
+        if (comma !== -1) base64 = base64.slice(comma + 1);
+        const buf = Buffer.from(base64, 'base64');
+        fs.writeFileSync(filePath, buf);
+        const publicUrl = `${req.protocol}://${req.get('host')}/uploads/activity/${encodeURIComponent(String(safeActivity))}/${encodeURIComponent(savedName)}`;
+        try {
+            await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [activityId || null, null, null, req.session && req.session.userId ? req.session.userId : null, null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
+        } catch (e) {
+            console.warn('Failed to insert activity_uploads metadata into dqai_uploaded_docs', e && e.message ? e.message : e);
+        }
+        res.json({ url: publicUrl, path: filePath });
+    } catch (e) {
+        console.error('activity_uploads error', e);
+        res.status(500).send(e.message);
+    }
+});
+
+// API Connectors: CRUD and trigger ingest
+app.get('/api/api_connectors', async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM dqai_api_connectors ORDER BY id DESC');
+        res.json(r.rows);
+    } catch (e) { console.error(e); res.status(500).send(e.message); }
+});
+
+app.post('/api/api_connectors', async (req, res) => {
+    try {
+        const { id, name, base_url, method, auth_config, expected_format } = req.body || {};
+        if (id) {
+            const up = await pool.query('UPDATE dqai_api_connectors SET name=$1, base_url=$2, method=$3, auth_config=$4, expected_format=$5 WHERE id=$6 RETURNING *', [name, base_url, method || 'GET', auth_config ? JSON.stringify(auth_config) : null, expected_format || null, id]);
+            return res.json(up.rows[0]);
+        }
+        const ins = await pool.query('INSERT INTO dqai_api_connectors (name, base_url, method, auth_config, expected_format, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [name, base_url, method || 'GET', auth_config ? JSON.stringify(auth_config) : null, expected_format || null, req.session && req.session.userId ? req.session.userId : null]);
+        res.json(ins.rows[0]);
+    } catch (e) { console.error(e); res.status(500).send(e.message); }
+});
+
+app.get('/api/api_connectors/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).send('Invalid id');
+        const r = await pool.query('SELECT * FROM dqai_api_connectors WHERE id = $1', [id]);
+        if (r.rowCount === 0) return res.status(404).send('Not found');
+        res.json(r.rows[0]);
+    } catch (e) { console.error(e); res.status(500).send(e.message); }
+});
+
+app.delete('/api/api_connectors/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).send('Invalid id');
+        await pool.query('DELETE FROM dqai_api_connectors WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (e) { console.error(e); res.status(500).send(e.message); }
+});
+
+// Trigger a connector fetch and persist result into api_ingests table
+app.post('/api/api_connectors/:id/trigger', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).send('Invalid id');
+        const cr = await pool.query('SELECT * FROM dqai_api_connectors WHERE id = $1', [id]);
+        if (cr.rowCount === 0) return res.status(404).send('Connector not found');
+        const conn = cr.rows[0];
+        const fetch = globalThis.fetch || require('node-fetch');
+        const method = (conn.method || 'GET').toUpperCase();
+        const headers = { 'Accept': 'application/json' };
+        let body = null;
+        try {
+            const auth = conn.auth_config ? (typeof conn.auth_config === 'string' ? JSON.parse(conn.auth_config) : conn.auth_config) : null;
+            if (auth) {
+                if (auth.type === 'bearer' && auth.token) headers['Authorization'] = `Bearer ${auth.token}`;
+                if (auth.type === 'basic' && auth.username) headers['Authorization'] = 'Basic ' + Buffer.from(`${auth.username}:${auth.password || ''}`).toString('base64');
+            }
+        } catch (e) { /* ignore parse errors */ }
+        // Allow optional body in POST trigger
+        if (method !== 'GET' && req.body && Object.keys(req.body).length > 0) {
+            body = JSON.stringify(req.body);
+            headers['Content-Type'] = 'application/json';
+        }
+                const r = await fetch(conn.base_url, { method, headers, body });
+                const text = await r.text();
+                let parsed = null;
+                try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
+                const meta = { status: r.status, statusText: r.statusText, url: conn.base_url };
+                // Upsert behavior: update latest ingest for this connector if exists, otherwise insert
+                try {
+                    const exist = await pool.query('SELECT id FROM dqai_api_ingests WHERE connector_id = $1 ORDER BY received_at DESC LIMIT 1', [id]);
+                    if (exist.rowCount > 0) {
+                        const ingestId = exist.rows[0].id;
+                        await pool.query('UPDATE dqai_api_ingests SET raw_data = $1, metadata = $2, received_at = NOW() WHERE id = $3', [JSON.stringify(parsed), JSON.stringify(meta), ingestId]);
+                        return res.json({ ok: true, status: r.status, data: parsed, ingestId });
+                    } else {
+                        const ins = await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3) RETURNING id', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
+                        return res.json({ ok: true, status: r.status, data: parsed, ingestId: ins.rows[0].id });
+                    }
+                } catch (e) {
+                    console.error('Failed to upsert api_ingest', e);
+                    // fallback to insert to avoid losing data
+                    await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3)', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
+                    return res.json({ ok: true, status: r.status, data: parsed });
+                }
+    } catch (e) { console.error(e); res.status(500).send(e.message); }
+});
+
+// Delete an ingest by id
+app.delete('/api/api_ingests/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).send('Invalid id');
+        await pool.query('DELETE FROM dqai_api_ingests WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (e) { console.error('Failed to delete ingest', e); res.status(500).send(e.message); }
+});
+
+// List ingests (optionally by connectorId)
+app.get('/api/api_ingests', async (req, res) => {
+    try {
+        const { connectorId } = req.query;
+        if (connectorId) {
+            const r = await pool.query('SELECT * FROM dqai_api_ingests WHERE connector_id = $1 ORDER BY received_at DESC', [connectorId]);
+            return res.json(r.rows);
+        }
+        const r = await pool.query('SELECT * FROM dqai_api_ingests ORDER BY received_at DESC');
+        res.json(r.rows);
+    } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
 
 // Delete a report and its associated uploaded docs and media files
@@ -2393,6 +3907,7 @@ app.get('/api/questions', async (req, res) => {
             sectionName: q.section_name,
             questionText: q.question_text,
             questionHelper: q.question_helper,
+            correctAnswer: q.correct_answer,
             answerType: q.answer_type,
             category: q.category,
             questionGroup: q.question_group,
@@ -2461,7 +3976,7 @@ app.get('/api/activity_dashboard/:activityId', async (req, res) => {
 app.put('/api/questions/:id', async (req, res) => {
     const { id } = req.params;
     const updates = req.body || {};
-    const allowed = ['status'];
+    const allowed = ['status', 'correct_answer', 'correctAnswer'];
     const setParts = [];
     const params = [];
     let idx = 1;
@@ -2546,8 +4061,104 @@ app.delete('/api/uploaded_docs/:id', async (req, res) => {
 });
 
 app.post('/api/reports', async (req, res) => {
-    const { activityId, userId, facilityId, status, answers, uploadedFiles } = req.body;
+    const { activityId, userId, facilityId, status, answers, uploadedFiles, id: maybeId, reportId: maybeReportId } = req.body;
     try {
+        // If client includes an id or reportId in the POST payload, perform an update instead of creating a duplicate
+        const incomingReportId = (maybeId || maybeReportId) ? Number(maybeId || maybeReportId) : null;
+        if (incomingReportId) {
+            // Delegate to the existing update logic to replace answers/uploaded files transactionally
+            const client = await pool.connect();
+            try {
+                const reportId = incomingReportId;
+                await client.query('BEGIN');
+                const existing = await client.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+                if (existing.rowCount === 0) { await client.query('ROLLBACK'); client.release(); return res.status(404).send('Report not found'); }
+
+                // update top-level fields if provided
+                const payload = req.body || {};
+                const mapKeys = {
+                    status: 'status',
+                    reviewersReport: 'reviewers_report',
+                    reviewers_report: 'reviewers_report',
+                    overallScore: 'overall_score',
+                    overall_score: 'overall_score',
+                    activityId: 'activity_id',
+                    activity_id: 'activity_id',
+                    userId: 'user_id',
+                    user_id: 'user_id',
+                    facilityId: 'facility_id',
+                    facility_id: 'facility_id',
+                    answers: 'answers',
+                    reportedBy: 'reported_by',
+                    reported_by: 'reported_by',
+                    reportTemplateId: 'report_template_id',
+                    report_template_id: 'report_template_id'
+                };
+                const setParts = [];
+                const params = [];
+                let idx = 1;
+                for (const [clientKey, dbKey] of Object.entries(mapKeys)) {
+                    if (Object.prototype.hasOwnProperty.call(payload, clientKey)) {
+                        setParts.push(`${dbKey} = $${idx++}`);
+                        if (dbKey === 'answers') params.push(JSON.stringify(payload[clientKey])); else params.push(payload[clientKey]);
+                    }
+                }
+                if (setParts.length > 0) {
+                    params.push(reportId);
+                    const sql = `UPDATE dqai_activity_reports SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
+                    const updated = await client.query(sql, params);
+                    if (updated.rowCount === 0) { await client.query('ROLLBACK'); client.release(); return res.status(500).send('Failed to update report'); }
+                }
+
+                // replace answers if provided
+                if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
+                    await client.query('DELETE FROM dqai_answers WHERE report_id = $1', [reportId]);
+                    const answersObj = payload.answers || {};
+                    if (answersObj && typeof answersObj === 'object') {
+                        for (const [qId, val] of Object.entries(answersObj)) {
+                            try {
+                                let answerVal = val; let reviewersComment = null; let qiFollowup = null; let score = null;
+                                if (val && typeof val === 'object' && !(val instanceof Array)) {
+                                    if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                                    reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                                    qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                                    score = (typeof val.score !== 'undefined') ? val.score : null;
+                                }
+                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, JSON.stringify(answerVal), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                            } catch (ie) { console.error('Failed to insert answer during report POST-as-update for question', qId, ie); }
+                        }
+                    }
+                }
+
+                // replace uploaded files if provided
+                if (Object.prototype.hasOwnProperty.call(payload, 'uploadedFiles')) {
+                    try {
+                        try {
+                            const colRes = await client.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+                            if (colRes.rowCount > 0) { await client.query('DELETE FROM dqai_uploaded_docs WHERE report_id = $1', [reportId]); }
+                            else { try { await client.query("DELETE FROM dqai_uploaded_docs WHERE (file_content->>'reportId') = $1", [String(reportId)]); } catch (e) { console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e); } }
+                        } catch (e) { console.warn('uploaded_docs schema check failed during report update delete step', e); }
+                        const files = payload.uploadedFiles || [];
+                        if (Array.isArray(files) && files.length > 0) {
+                            for (const file of files) {
+                                try { const filename = file.name || file.filename || file.fileName || null; const content = file.content || file.data || file; await client.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [payload.activityId || payload.activity_id || existing.rows[0].activity_id, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, reportId, JSON.stringify(content), filename]); } catch (ie) { console.error('Failed to insert uploaded file during report POST-as-update', ie); }
+                            }
+                        }
+                    } catch (e) { console.error('Failed to replace uploaded files during report POST-as-update', e); await client.query('ROLLBACK'); client.release(); return res.status(500).send('Failed to update uploaded files'); }
+                }
+
+                await client.query('COMMIT');
+                const final = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+                const r = final.rows[0];
+                client.release();
+                return res.json({ ...r, activityId: r.activity_id, userId: r.user_id, facilityId: r.facility_id, submissionDate: r.submission_date, reviewersReport: r.reviewers_report, overallScore: r.overall_score, reportedBy: r.reported_by });
+            } catch (e) {
+                try { await client.query('ROLLBACK'); } catch (er) { /* ignore */ }
+                client.release();
+                console.error('Failed to perform POST-as-update', e);
+                return res.status(500).send('Failed to update report');
+            }
+        }
         // Validate entity linking per activity response type
         try {
             const actRes = await pool.query('SELECT response_type FROM dqai_activities WHERE id = $1', [activityId]);
@@ -2558,10 +4169,11 @@ app.post('/api/reports', async (req, res) => {
         } catch (err) {
             console.error('Failed to validate activity response type', err);
         }
-        // Insert report row
+        // Insert report row (default status to 'Pending' if not provided)
+        const finalStatus = status || 'Pending';
         const result = await pool.query(
             'INSERT INTO dqai_activity_reports (activity_id, user_id, facility_id, status, answers) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [activityId, userId, facilityId, status, answers || null]
+            [activityId, userId, facilityId, finalStatus, answers || null]
         );
         const report = result.rows[0];
 

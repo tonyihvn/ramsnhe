@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import DatasetsPage from './DatasetsPage';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
 
@@ -433,7 +434,7 @@ const PermissionsList: React.FC = () => {
 
 const SettingsPage: React.FC = () => {
     const { settings, setSettings, reset } = useTheme();
-    const [tab, setTab] = useState<'database' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions'>('theme');
+    const [tab, setTab] = useState<'database' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit'>('theme');
     const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0];
         if (!f) return;
@@ -513,7 +514,10 @@ const SettingsPage: React.FC = () => {
                     <button onClick={() => setTab('rag')} className={`px-3 py-2 rounded ${tab === 'rag' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>RAG</button>
                     <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded ${tab === 'theme' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Theme</button>
                     <button onClick={() => setTab('app')} className={`px-3 py-2 rounded ${tab === 'app' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>App</button>
+                    <button onClick={() => setTab('datasets')} className={`px-3 py-2 rounded ${tab === 'datasets' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Datasets</button>
                     <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded ${tab === 'permissions' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Roles & Permissions</button>
+                    <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded ${tab === 'audit' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Audit Trails</button>
+                    <a href="#/connectors" className="px-3 py-2 rounded text-gray-600 hover:bg-gray-50">API Connectors</a>
                 </nav>
             </div>
 
@@ -731,6 +735,13 @@ const SettingsPage: React.FC = () => {
                 </Card>
             )}
 
+            {tab === 'datasets' && (
+                <Card>
+                    <h3 className="text-lg font-medium mb-2">Datasets</h3>
+                    <DatasetsPage />
+                </Card>
+            )}
+
             {tab === 'permissions' && (
                 <Card>
                     <h3 className="text-lg font-medium mb-2">Roles & Permissions</h3>
@@ -756,11 +767,70 @@ const SettingsPage: React.FC = () => {
                     </div>
                 </Card>
             )}
+
+            {tab === 'audit' && (
+                <Card>
+                    <h3 className="text-lg font-medium mb-2">Audit Trails</h3>
+                    <AuditTrails />
+                </Card>
+            )}
         </div>
     );
 };
 
 export default SettingsPage;
+
+const AuditTrails: React.FC = () => {
+    const [list, setList] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            let r = await fetch('/api/admin/audit_batches', { credentials: 'include' });
+            if (r.status === 401) r = await fetch('/api/audit_batches');
+            if (r.ok) setList(await r.json());
+            else setList([]);
+        } catch (e) { console.error('Failed to load audit batches', e); setList([]); }
+        setLoading(false);
+    };
+
+    useEffect(() => { load(); }, []);
+
+    const columns = [
+        { key: 'id', label: 'ID' },
+        { key: 'batch_name', label: 'Batch' },
+        { key: 'created_at', label: 'Created' },
+        { key: 'created_by', label: 'By' },
+        { key: 'status', label: 'Status' },
+        { key: 'details', label: 'Details' },
+    ];
+
+    const data = (list || []).map((r: any) => ({
+        id: r.id,
+        batch_name: r.batch_name || r.name || '',
+        created_at: r.created_at || r.created || '',
+        created_by: r.created_by || (r.user && (r.user.email || r.user.name)) || '',
+        status: r.status || r.state || '',
+        details: r.details ? (typeof r.details === 'object' ? JSON.stringify(r.details) : String(r.details)) : (r.description || ''),
+    }));
+
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-3">
+                <div className="font-medium">Audit Batches</div>
+                <div className="flex gap-2">
+                    <Button onClick={load}>Refresh</Button>
+                </div>
+            </div>
+            {loading && <div className="text-sm text-gray-500">Loading...</div>}
+            {!loading && data.length === 0 && <div className="text-sm text-gray-500">No audit batches found.</div>}
+            {!loading && data.length > 0 && (
+                <DataTable columns={columns} data={data} />
+            )}
+        </div>
+    );
+};
 
 const RagManager: React.FC = () => {
     const [list, setList] = useState<any[]>([]);
