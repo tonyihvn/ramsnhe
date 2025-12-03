@@ -11,12 +11,20 @@ import ConversationPanel from '../components/ui/ConversationPanel';
 
 const ReportsPage: React.FC = () => {
   const { reports, activities, users, getFormDefinition } = useMockData();
+  const { facilities } = useMockData();
   const navigate = useNavigate();
 
   const getActivityTitle = (id: string) => activities.find(a => a.id === id)?.title || id;
   const getUserName = (id?: string) => {
     const u = users.find(u => u.id === id);
     return u ? `${u.firstName} ${u.lastName}` : 'N/A';
+  }
+
+  const getFacilityName = (id?: string) => {
+    try {
+      const f = facilities.find(f => String(f.id) === String(id));
+      return f ? f.name : '—';
+    } catch (e) { return '—'; }
   }
 
   const getQuestionText = (activityId: string, qId: string) => {
@@ -57,6 +65,7 @@ const ReportsPage: React.FC = () => {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Activity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Facility Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted By</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
@@ -71,6 +80,7 @@ const ReportsPage: React.FC = () => {
                     <div className="text-sm font-medium text-gray-900">{getActivityTitle(report.activityId)}</div>
                     <div className="text-xs text-gray-500">{report.id}</div>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getFacilityName(report.facilityId)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getUserName(report.userId)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.status || 'N/A'}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.submissionDate ? new Date(report.submissionDate).toLocaleDateString() : 'N/A'}</td>

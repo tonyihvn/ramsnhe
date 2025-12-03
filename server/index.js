@@ -2675,8 +2675,12 @@ app.get('/api/indicators/compute', async (req, res) => {
         };
 
         // SQL mode: support placeholder substitution like {selected_facility_id} or {selected_facility}
-        if (String(formula).toLowerCase().startsWith('sql:')) {
-            const sql = String(formula).slice(4).trim();
+        // Accept formulas that are explicitly prefixed with 'sql:' OR where the saved formula_type is 'sql'
+        // or where the formula text itself starts with SELECT (frontend may save raw SELECT without prefix).
+        const isSqlMode = String(formula || '').toLowerCase().startsWith('sql:') || (ftype === 'sql') || String((formula || '')).trim().toLowerCase().startsWith('select');
+        if (isSqlMode) {
+            const rawSql = String(formula).toLowerCase().startsWith('sql:') ? String(formula).slice(4).trim() : String(formula).trim();
+            const sql = rawSql;
             if (!/^select\s+/i.test(sql)) return res.status(400).json({ error: 'Only SELECT SQL allowed for indicator SQL formulas' });
             try {
                 // context keys are lowercase
@@ -2696,6 +2700,7 @@ app.get('/api/indicators/compute', async (req, res) => {
                     // if SQL expects positional $1 replace we pass facilityId, otherwise run without params
                     if (/\$1/.test(sql)) execValues = [facilityId];
                 }
+                console.log(`[indicator/compute] Executing SQL for indicator ${indicatorId}, facility ${facilityId}:`, text, 'params=', execValues);
                 const result = await pool.query(text, execValues);
                 return res.json({ rows: result.rows, rowCount: result.rowCount });
             } catch (e) { console.error('Indicator SQL execution failed', e); return res.status(500).json({ error: String(e.message || e) }); }
@@ -2715,6 +2720,7 @@ app.get('/api/indicators/compute', async (req, res) => {
                     params.push(facilityId);
                 }
                 const q = `SELECT question_id, SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE NULL END) ) as sum_value FROM dqai_answers WHERE ${where} GROUP BY question_id`;
+                console.log(`[indicator/compute] Executing sum_answers for indicator ${indicatorId}, facility ${facilityId}:`, q, 'params=', params);
                 const r = await pool.query(q, params);
                 // aggregate across questions
                 let total = 0;
@@ -2747,8 +2753,10 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
             out[iid] = { indicator: ind, results: {} };
 
             // SQL mode: run per-facility (support {placeholders} substitution)
-            if (String(formula).toLowerCase().startsWith('sql:')) {
-                const sql = String(formula).slice(4).trim();
+                const isSqlModeBulk = String(formula || '').toLowerCase().startsWith('sql:') || (ftype === 'sql') || String((formula || '')).trim().toLowerCase().startsWith('select');
+            if (isSqlModeBulk) {
+                const rawSql = String(formula).toLowerCase().startsWith('sql:') ? String(formula).slice(4).trim() : String(formula).trim();
+                const sql = rawSql;
                 if (!/^select\s+/i.test(sql)) {
                     out[iid].error = 'Only SELECT SQL allowed for indicator SQL formulas';
                     continue;
@@ -2777,6 +2785,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
                         if (values.length === 0) {
                             if (/\$1/.test(sql)) execValues = [fid];
                         }
+                        console.log(`[indicator/compute_bulk] Executing SQL for indicator ${iid}, facility ${fid}:`, text, 'params=', execValues);
                         const result = await pool.query(text, execValues);
                         out[iid].results[fid] = { rows: result.rows, rowCount: result.rowCount };
                     } catch (e) {
@@ -2792,6 +2801,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
                 try {
                     const params = [qids, facilityIds];
                     const q = `SELECT facility_id, SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE NULL END) ) as sum_value FROM dqai_answers WHERE question_id = ANY($1::text[]) AND facility_id = ANY($2::int[]) GROUP BY facility_id`;
+                    console.log(`[indicator/compute_bulk] Executing sum_answers for indicator ${iid} across facilities:`, q, 'params=', params);
                     const r = await pool.query(q, params);
                     // map by facility
                     const sums = {};

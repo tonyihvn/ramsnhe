@@ -44,13 +44,15 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
 
         // Discover indicators attached to activities referenced by these reports
         try {
-          const activityIds = Array.from(new Set((j.reports || []).map((r: any) => r.activityId).filter(Boolean)));
+          const activityIds = Array.from(new Set((j.reports || []).map((r: any) => (r.activity_id || r.activityId || r.activity || null)).filter(Boolean)));
           if (activityIds.length > 0) {
             const indResp = await fetch('/api/indicators');
             if (indResp.ok) {
               const allInd = await indResp.json();
+              // Build a string Set for robust ID comparisons (handle number/string mismatches)
+              const actSet = new Set(activityIds.map((a: any) => String(a)));
               // filter indicators tied to any of these activities
-              let tied = (allInd || []).filter((ind: any) => activityIds.includes(ind.activity_id || ind.activityId || null));
+              let tied = (allInd || []).filter((ind: any) => actSet.has(String(ind.activity_id || ind.activityId || ind.activity || '')));
               // If the map view provided a visibleActivities list, filter out indicators whose activity is unchecked
               try {
                 // If visibleActivities is provided (even an empty array), treat it as the
@@ -73,19 +75,40 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
                     const cbj = await cb.json();
                     const computed: Record<string, any> = {};
                     if (cbj && cbj.computed) {
+                      // Debug: surface server compute_bulk response in browser console
+                      try { console.debug('[FacilityCard] compute_bulk response for facility', fid, cbj); } catch (e) { }
                       for (const iid of Object.keys(cbj.computed)) {
                         const entry = cbj.computed[iid];
                         const resForFacility = entry.results && (entry.results[String(fid)] || entry.results[fid]) ? (entry.results[String(fid)] || entry.results[fid]) : null;
-                        let value = null;
+                        let value: any = null;
                         if (resForFacility) {
-                          if (resForFacility.value !== undefined) value = resForFacility.value;
-                          else if (resForFacility.rows && Array.isArray(resForFacility.rows) && resForFacility.rows.length > 0) {
+                          if (resForFacility.value !== undefined) {
+                            value = resForFacility.value;
+                          } else if (resForFacility.rows && Array.isArray(resForFacility.rows) && resForFacility.rows.length > 0) {
                             const r0 = resForFacility.rows[0];
-                            value = Object.values(r0)[0];
-                          } else if (typeof resForFacility === 'number' || typeof resForFacility === 'string') value = resForFacility;
+                            // Prefer a property named 'answer_value' or 'value' if present
+                            if (r0 && typeof r0 === 'object') {
+                              if (Object.prototype.hasOwnProperty.call(r0, 'answer_value')) value = r0['answer_value'];
+                              else if (Object.prototype.hasOwnProperty.call(r0, 'value')) value = r0['value'];
+                              else value = Object.values(r0)[0];
+                            } else {
+                              value = r0;
+                            }
+                          } else if (typeof resForFacility === 'number' || typeof resForFacility === 'string') {
+                            value = resForFacility;
+                          }
+
+                          // normalize numeric-like strings to numbers
+                          try {
+                            if (typeof value === 'string' && value.trim() !== '') {
+                              const n = Number(value);
+                              if (!Number.isNaN(n)) value = n;
+                            }
+                          } catch (e) { /* ignore coercion errors */ }
                         }
                         computed[iid] = value;
                       }
+                      try { console.debug('[FacilityCard] computed indicators mapping', computed); } catch (e) { }
                     }
                     setActivityIndicatorValues(computed);
                   }
@@ -107,7 +130,7 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 800, fontSize: 16 }}>{facility.name}</div>
-          <div style={{ fontSize: 12, color: '#666' }}>{facility.tier} — {facility.ownership}</div>
+          {/* <div style={{ fontSize: 12, color: '#666' }}>{facility.tier} — {facility.ownership}</div> */}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', maxWidth: 280 }}>
           {indicators.filter((ind: any) => (visibleIndicators ? (visibleIndicators[ind.id] ?? true) : true)).map((ind: any) => {

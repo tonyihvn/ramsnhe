@@ -3,26 +3,73 @@ import { Link, useLocation } from 'react-router-dom';
 import { ChartPieIcon, DocumentPlusIcon, DocumentTextIcon, BuildingOfficeIcon, UserGroupIcon, FolderIcon, ClipboardDocumentListIcon, Cog6ToothIcon, UserIcon, ChevronDownIcon, ChevronRightIcon, MapIcon } from '@heroicons/react/24/outline';
 import { useMockData } from '../../hooks/useMockData';
 import { useTheme } from '../../hooks/useTheme';
+import { useEffect, useState } from 'react';
 
 const navigationStatic = [
-  { key: 'dashboard', defaultName: 'Dashboard', href: '/dashboard', icon: ChartPieIcon },
-  { key: 'map_dashboard', defaultName: 'Map Dashboard', href: '/map-dashboard', icon: MapIcon },
-  { key: 'programs', defaultName: 'Programs', href: '/programs', icon: FolderIcon },
-  { key: 'activities', defaultName: 'Activities', href: '/activities', icon: ClipboardDocumentListIcon },
-  { key: 'reports', defaultName: 'Reports', href: '/reports', icon: DocumentTextIcon },
-  { key: 'indicators', defaultName: 'Indicators', href: '/indicators', icon: ChartPieIcon },
-  { key: 'facilities', defaultName: 'Facilities', href: '/facilities', icon: BuildingOfficeIcon },
-  { key: 'users', defaultName: 'Users', href: '/users', icon: UserGroupIcon },
-  { key: 'settings', defaultName: 'Settings', href: '/settings', icon: Cog6ToothIcon },
-  { key: 'profile', defaultName: 'Profile', href: '/profile', icon: UserIcon },
+  { key: 'dashboard', page_key: '/dashboard', defaultName: 'Dashboard', href: '/dashboard', icon: ChartPieIcon },
+  { key: 'map_dashboard', page_key: '/map-dashboard', defaultName: 'Map Dashboard', href: '/map-dashboard', icon: MapIcon },
+  { key: 'programs', page_key: '/programs', defaultName: 'Programs', href: '/programs', icon: FolderIcon },
+  { key: 'activities', page_key: '/activities', defaultName: 'Activities', href: '/activities', icon: ClipboardDocumentListIcon },
+  { key: 'reports', page_key: '/reports', defaultName: 'Reports', href: '/reports', icon: DocumentTextIcon },
+  { key: 'indicators', page_key: '/indicators', defaultName: 'Indicators', href: '/indicators', icon: ChartPieIcon },
+  { key: 'facilities', page_key: '/facilities', defaultName: 'Facilities', href: '/facilities', icon: BuildingOfficeIcon },
+  { key: 'users', page_key: '/users', defaultName: 'Users', href: '/users', icon: UserGroupIcon },
+  { key: 'settings', page_key: '/settings', defaultName: 'Settings', href: '/settings', icon: Cog6ToothIcon },
+  { key: 'profile', page_key: '/profile', defaultName: 'Profile', href: '/profile', icon: UserIcon },
 ];
 
 const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: () => void }> = ({ collapsed = false, mobileOpen = false, onClose }) => {
   const location = useLocation();
   const sidebarWidthClass = collapsed ? 'md:w-20' : 'md:w-64';
   const { settings } = useTheme();
-  const { activities } = useMockData();
+  const { activities, currentUser } = useMockData();
   const [activitiesOpen, setActivitiesOpen] = React.useState(false);
+  const [pagePerms, setPagePerms] = useState<any[] | null>(null);
+
+  // Fetch page permissions for current user's role (if available)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!currentUser || !currentUser.role) return;
+        const roleName = String(currentUser.role || '').trim();
+        if (!roleName) return;
+        const resp = await fetch(`/api/page_permissions?role=${encodeURIComponent(roleName)}`);
+        if (!resp.ok) return;
+        const j = await resp.json();
+        if (!cancelled) setPagePerms(j);
+      } catch (e) { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser && currentUser.role]);
+
+  const normalizePageKey = (k: string) => {
+    if (!k) return k;
+    return '/' + k.split('/').map(seg => seg.startsWith(':') ? '' : seg).filter(Boolean).join('/');
+  };
+
+  const hasPermissionFlag = (flag: 'can_view' | 'can_create' | 'can_edit' | 'can_delete', pageKey: string, sectionKey?: string) => {
+    try {
+      if (!pagePerms) return true; // default allow when no permissions set
+      const norm = normalizePageKey(pageKey || '');
+      // exact match first (page+section)
+      for (const p of pagePerms) {
+        const pk = normalizePageKey(p.page_key || p.pageKey || '');
+        const sk = p.section_key || p.sectionKey || p.section || null;
+        const skClean = sk ? String(sk) : null;
+        if (skClean) {
+          if (pk === norm && skClean === (sectionKey || null)) return !!p[flag];
+        }
+      }
+      // then match by page prefix
+      for (const p of pagePerms) {
+        const pk = normalizePageKey(p.page_key || p.pageKey || '');
+        if (!pk) continue;
+        if (norm.startsWith(pk)) return !!p[flag];
+      }
+      return true;
+    } catch (e) { return true; }
+  };
 
   // Mobile drawer
   const mobileDrawer = mobileOpen ? (
@@ -39,7 +86,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-4">
             <nav className="space-y-1">
-              {navigationStatic.map((item) => {
+              {navigationStatic.filter(item => hasPermissionFlag('can_view', item.page_key || item.href)).map((item) => {
                 const isActive = location.pathname.startsWith(item.href);
                 const label = (item.key === 'programs' ? ((settings as any).programsLabel || item.defaultName) : (item.key === 'activities' ? ((settings as any).activitiesLabel || item.defaultName) : (item.defaultName)));
                 return (
@@ -76,7 +123,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
 
           <div className="mt-0 flex-1 flex flex-col">
             <nav className="flex-1 px-2 pb-4 space-y-1">
-              {navigationStatic.map((item) => {
+              {navigationStatic.filter(item => hasPermissionFlag('can_view', item.page_key || item.href)).map((item) => {
                 // Render Activities special case with expandable published activities
                 const label = (item.key === 'programs' ? ((settings as any).programsLabel || item.defaultName) : (item.key === 'activities' ? ((settings as any).activitiesLabel || item.defaultName) : (item.defaultName)));
                 if (item.key === 'activities') {

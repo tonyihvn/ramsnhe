@@ -22,11 +22,15 @@ const ClusterLayer: React.FC<{ locations: Location[]; popupRenderer?: (loc: Loca
         const marker = icon ? L.marker([loc.lat, loc.lng], { icon, riseOnHover: true, riseOffset: 250 }) : L.marker([loc.lat, loc.lng], { riseOnHover: true, riseOffset: 250 });
         // create an empty div as popup container so we can mount React into it
         const popupContainer = document.createElement('div');
-        // allow the popup to size to its content and overflow the map if necessary
-        popupContainer.style.minWidth = 'auto';
+        // make the popup container roomy by default so long code blocks and the
+        // indicators panel can fit without causing Leaflet to aggressively pan.
+        popupContainer.className = 'nherams-popup-container';
+        popupContainer.style.minWidth = '280px';
+        popupContainer.style.maxWidth = '520px';
         popupContainer.style.width = 'auto';
         popupContainer.style.overflow = 'visible';
-        marker.bindPopup(popupContainer, { autoPan: true, keepInView: false });
+        // Bind popup with explicit sizing options and gentle autoPan padding
+        marker.bindPopup(popupContainer, { autoPan: true, keepInView: true, minWidth: 280, maxWidth: 520, autoPanPadding: [40, 40] });
 
         if (popupRenderer) {
           marker.on('popupopen', (e: any) => {
@@ -67,7 +71,12 @@ const ClusterLayer: React.FC<{ locations: Location[]; popupRenderer?: (loc: Loca
             } catch (e) { /* ignore */ }
           });
           marker.on('click', () => {
-            try { marker.bringToFront && marker.bringToFront(); } catch (e) { }
+            try {
+              // ensure popup opens immediately on click rather than relying on default
+              // behaviour which may be interfered with by cluster or map handlers
+              marker.bringToFront && marker.bringToFront();
+              marker.openPopup && marker.openPopup();
+            } catch (e) { }
           });
         } catch (e) { /* ignore */ }
 

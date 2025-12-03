@@ -99,9 +99,17 @@
   .leaflet-container {
     overflow: visible !important;
   }
-  .leaflet-popup {
-    z-index: 200000 !important;
+  /* Ensure popups appear above all page elements by using a very large z-index. */
+  .leaflet-popup,
+  .leaflet-popup-tip,
+  .leaflet-popup-content-wrapper,
+  .nherams-popup-container {
+    z-index: 2147483647 !important;
     overflow: visible !important;
+  }
+  /* Also raise the popup pane so Leaflet positions popups above other panes */
+  .leaflet-popup-pane {
+    z-index: 2147483647 !important;
   }
   /* Make popups grow to fit their inner content and avoid child overflow.
      Use inline-block so the wrapper sizes to content width, but cap at a large
@@ -137,5 +145,18 @@
   .leaflet-popup-content > * {
     width: 100% !important;
     box-sizing: border-box !important;
+  }
+
+  /* Popup container used by ClusterLayer for React-rendered popups */
+  .nherams-popup-container {
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+    max-width: 820px !important;
+  }
+  .nherams-popup-container pre {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
   }
 }

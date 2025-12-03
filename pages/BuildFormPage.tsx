@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
 import { FormDefinition, FormPage, FormSection, Question, AnswerType } from '../types';
-import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import * as ExcelJS from 'exceljs';
@@ -363,6 +363,12 @@ const BuildFormPage: React.FC = () => {
   const [selectedValueField, setSelectedValueField] = useState<string>('');
   const [datasetSampleRows, setDatasetSampleRows] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
+  const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+  const [roleModalTarget, setRoleModalTarget] = useState<{ type: 'page' | 'section'; pageIndex: number; sectionIndex?: number } | null>(null);
+  const [roleModalPageKey, setRoleModalPageKey] = useState<string>('');
+  const [roleModalSectionKey, setRoleModalSectionKey] = useState<string | null>(null);
+  const [rolePerms, setRolePerms] = useState<Record<string, { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean }>>({});
+  const [rolePermsLoading, setRolePermsLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, QuestionErrors>>({});
 
   useEffect(() => {
@@ -403,6 +409,90 @@ const BuildFormPage: React.FC = () => {
       }
     })();
   }, []);
+
+  const normalizePageKey = (k: string) => {
+    if (!k) return '';
+    return String(k).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '');
+  };
+
+  const loadRolePermsForTarget = async (pageKey: string, sectionKey: string | null) => {
+    setRolePermsLoading(true);
+    const out: Record<string, { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean }> = {};
+    try {
+      // initialize defaults (no permissions)
+      for (const r of roles) {
+        const roleName = (r && (r.name || r)) ? (r.name || r) : String(r || '');
+        out[roleName] = { can_create: false, can_view: false, can_edit: false, can_delete: false };
+      }
+
+      // fetch page_permissions per role (server supports GET /api/page_permissions?role=...)
+      await Promise.all((roles || []).map(async (r: any) => {
+        try {
+          const rn = (r && (r.name || r)) ? (r.name || r) : String(r || '');
+          const res = await fetch(`/api/page_permissions?role=${encodeURIComponent(rn)}`);
+          if (!res.ok) return;
+          const rows = await res.json();
+          if (!Array.isArray(rows)) return;
+          const match = rows.find((row: any) => String(row.page_key || row.pageKey || row.page || '').toLowerCase() === String(pageKey || '').toLowerCase() && (String(row.section_key || row.sectionKey || row.section || '') === String(sectionKey || '') || (!row.section_key && !sectionKey)));
+          if (match) {
+            out[rn] = { can_create: !!match.can_create, can_view: !!match.can_view, can_edit: !!match.can_edit, can_delete: !!match.can_delete };
+          }
+        } catch (e) {
+          // ignore per-role errors
+        }
+      }));
+    } catch (e) {
+      console.error('Failed to load page/section permissions', e);
+    }
+    setRolePerms(out);
+    setRolePermsLoading(false);
+  };
+
+  const openRoleModalForPage = async (pageIndex: number) => {
+    if (!formDef) return;
+    const page = formDef.pages[pageIndex];
+    const pk = normalizePageKey(page.name || page.id || `page-${pageIndex}`);
+    setRoleModalPageKey(pk);
+    setRoleModalSectionKey(null);
+    setRoleModalTarget({ type: 'page', pageIndex });
+    setIsRoleModalOpen(true);
+    // load existing perms
+    await loadRolePermsForTarget(pk, null);
+  };
+
+  const openRoleModalForSection = async (pageIndex: number, sectionIndex: number) => {
+    if (!formDef) return;
+    const page = formDef.pages[pageIndex];
+    const section = page.sections[sectionIndex];
+    const pk = normalizePageKey(page.name || page.id || `page-${pageIndex}`);
+    const sk = normalizePageKey(section.name || section.id || `section-${sectionIndex}`);
+    setRoleModalPageKey(pk);
+    setRoleModalSectionKey(sk);
+    setRoleModalTarget({ type: 'section', pageIndex, sectionIndex });
+    setIsRoleModalOpen(true);
+    await loadRolePermsForTarget(pk, sk);
+  };
+
+  const handleSaveRolePerms = async () => {
+    if (!roleModalTarget) return alert('No target selected');
+    const payload: any[] = [];
+    for (const [roleName, permsAny] of Object.entries(rolePerms || {})) {
+      const perms = permsAny as { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean };
+      payload.push({ page_key: roleModalPageKey, section_key: roleModalSectionKey || null, role_name: roleName, can_create: !!perms.can_create, can_view: !!perms.can_view, can_edit: !!perms.can_edit, can_delete: !!perms.can_delete });
+    }
+    try {
+      const res = await fetch('/api/admin/page_permissions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j && j.error ? j.error : 'Failed to save permissions');
+      }
+      alert('Permissions saved.');
+      setIsRoleModalOpen(false);
+    } catch (e) {
+      console.error('Failed to save permissions', e);
+      alert('Failed to save permissions. See console for details.');
+    }
+  };
 
   const validateForm = (): boolean => {
     if (!formDef) return false;

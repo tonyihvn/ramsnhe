@@ -174,7 +174,6 @@ const LLMSettingsForm: React.FC = () => {
                     }
                 }}>Save LLM Settings</Button>
             </div>
-            <BandEditor isOpen={bandsOpen} onClose={() => setBandsOpen(false)} />
         </div>
     );
 };

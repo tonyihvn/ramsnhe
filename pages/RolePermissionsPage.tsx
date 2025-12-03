@@ -57,7 +57,19 @@ const RolePermissionsPage: React.FC = () => {
         <div className="grid grid-cols-4 gap-2 items-end">
           <div>
             <label className="text-sm">Page Key</label>
-            <input className="mt-1 p-2 border rounded w-full" value={newRow.page_key} onChange={e => setNewRow(s => ({ ...s, page_key: e.target.value }))} placeholder="/activities/fill/:activityId" />
+            <input list="nav-pages" className="mt-1 p-2 border rounded w-full" value={newRow.page_key} onChange={e => setNewRow(s => ({ ...s, page_key: e.target.value }))} placeholder="/activities/fill/:activityId" />
+            <datalist id="nav-pages">
+              <option value="/dashboard" />
+              <option value="/map-dashboard" />
+              <option value="/programs" />
+              <option value="/activities" />
+              <option value="/reports" />
+              <option value="/indicators" />
+              <option value="/facilities" />
+              <option value="/users" />
+              <option value="/settings" />
+              <option value="/profile" />
+            </datalist>
           </div>
           <div>
             <label className="text-sm">Section Key (optional)</label>

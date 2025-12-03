@@ -1,6 +1,58 @@
-import React from 'react';
+import React, { useState } from 'react';
+import Modal from '../components/ui/Modal';
+import Button from '../components/ui/Button';
+import MarkdownIt from 'markdown-it';
 
 const DocsPage: React.FC = () => {
+    const [indicatorsOpen, setIndicatorsOpen] = useState(false);
+    const [indicatorsHtml, setIndicatorsHtml] = useState<string>('');
+    const [indicatorsLoading, setIndicatorsLoading] = useState(false);
+
+    const sanitizeHtml = (raw: any) => {
+        if (!raw) return '';
+        let out = String(raw || '');
+        out = out.replace(/<script[\s\S]*?<\/script>/gi, '');
+        out = out.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+        out = out.replace(/<video[\s\S]*?<\/video>/gi, '');
+        out = out.replace(/<object[\s\S]*?<\/object>/gi, '');
+        out = out.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+        out = out.replace(/on[a-zA-Z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+        out = out.replace(/src=("|')(data:[^"']{5000,})("|')/gi, '');
+        return out;
+    };
+
+    const loadIndicatorsDoc = async () => {
+        try {
+            setIndicatorsLoading(true);
+            // Try to fetch the markdown file from the repo path
+            const res = await fetch('/docs/INDICATORS.md');
+            if (!res.ok) {
+                const txt = await res.text().catch(() => '');
+                setIndicatorsHtml(`<pre>Failed to load docs/INDICATORS.md: ${res.status} ${res.statusText}\n${txt}</pre>`);
+                setIndicatorsOpen(true);
+                setIndicatorsLoading(false);
+                return;
+            }
+            const mdText = await res.text();
+            const md = new MarkdownIt({ html: true });
+            const rendered = md.render(mdText || '');
+            setIndicatorsHtml(sanitizeHtml(rendered));
+            setIndicatorsOpen(true);
+        } catch (e: any) {
+            setIndicatorsHtml(`<pre>Failed to load docs/INDICATORS.md: ${String(e?.message || e)}</pre>`);
+            setIndicatorsOpen(true);
+        } finally {
+            setIndicatorsLoading(false);
+        }
+    };
+
+    // Listen for custom event triggered by the link
+    React.useEffect(() => {
+        const handler = () => { loadIndicatorsDoc(); };
+        window.addEventListener('openIndicatorsDoc', handler as EventListener);
+        return () => window.removeEventListener('openIndicatorsDoc', handler as EventListener);
+    }, []);
+
     return (
         <div className="flex h-full">
                 <aside className="w-64 border-r bg-white p-4 overflow-y-auto sticky top-0 h-screen">
@@ -155,8 +207,35 @@ const denom = Number(r.rows[0].denom || 0);
 return denom === 0 ? 0 : (num / denom) * 100;`}</pre>
 
                     <p className="mt-2">When building indicators for activities, set the indicator's <strong>Activity</strong> in the admin UI to make it available in activity popups and to filter facilities in the Test Runner. Use the <strong>Unit Of Measurement</strong> field to describe how values should be displayed (%, people, tests, mL, etc.).</p>
-                    <p className="text-xs text-gray-500">See full examples and migration notes in <code>docs/INDICATORS.md</code></p>
+                                        <p className="text-xs text-gray-500">See full examples and migration notes in <code>docs/INDICATORS.md</code></p>
+                                        <div className="mt-2">
+                                            <button className="text-sm text-primary-600 hover:underline" onClick={async (e) => {
+                                                e.preventDefault();
+                                            }}
+                                                onMouseDown={(e) => e.preventDefault()}
+                                            >
+                                                {/* placeholder to keep layout for modal trigger below */}
+                                            </button>
+                                            <div className="text-sm mt-1">
+                                                <a href="#" className="text-primary-600 hover:underline" onClick={(ev) => { ev.preventDefault(); window.dispatchEvent(new CustomEvent('openIndicatorsDoc')); }}>Open Indicators docs (docs/INDICATORS.md)</a>
+                                            </div>
+                                        </div>
                 </section>
+
+                                {/* Indicators docs modal: listens for custom event to open */}
+                                <Modal isOpen={!!indicatorsOpen} onClose={() => setIndicatorsOpen(false)} title="Indicators — Documentation (docs/INDICATORS.md)" size="2xl" footer={(
+                                    <div className="flex justify-end">
+                                        <Button variant="secondary" onClick={() => setIndicatorsOpen(false)}>Close</Button>
+                                    </div>
+                                )}>
+                                    <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                                        {indicatorsLoading ? (
+                                            <div className="text-sm text-gray-500">Loading...</div>
+                                        ) : (
+                                            <div className="prose max-w-full" dangerouslySetInnerHTML={{ __html: indicatorsHtml || '<div class="text-sm text-gray-500">No content</div>' }} />
+                                        )}
+                                    </div>
+                                </Modal>
 
                 <section id="llm-rag" className="mb-8">
                     <h3 className="text-xl font-semibold">RAG & LLM SQL Flow</h3>
