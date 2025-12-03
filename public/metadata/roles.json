@@ -1,0 +1,7 @@
+[
+  { "id": "public", "name": "Public", "defaultRoute": "/map-dashboard" },
+  { "id": "controller", "name": "DHPRS Controller", "defaultRoute": "/dashboard" },
+  { "id": "state_analyst", "name": "State Analyst", "defaultRoute": "/dashboard" },
+  { "id": "vendor_reviewer", "name": "Vendor Reviewer", "defaultRoute": "/dashboard" },
+  { "id": "financier", "name": "Financier", "defaultRoute": "/dashboard" }
+]

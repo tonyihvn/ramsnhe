@@ -6,7 +6,8 @@ import Modal from '../components/ui/Modal';
 import RichTextEditor from '../components/ui/RichTextEditor';
 import WysiwygEditor from '../components/ui/WysiwygEditor';
 import CanvasEditor from '../components/ui/CanvasEditor';
-// import WysiwygEditor from '../components/ui/WysiwygEditor';
+import ImageCropper from '../components/ui/ImageCropper';
+import ShapeStyleEditor from '../components/ui/ShapeStyleEditor';
 import { apiFetch, getApiBase } from '../utils/api';
 
 const ReportBuilderPage: React.FC = () => {
@@ -53,6 +54,8 @@ const ReportBuilderPage: React.FC = () => {
   const [panelShown, setPanelShown] = useState<boolean>(false); // only show floating panel after New/Edit clicked
   const [richTextMode, setRichTextMode] = useState<'wysiwyg' | 'builtin' | 'none'>(() => { try { const r = localStorage.getItem('reportBuilderRichTextMode'); return (r as any) || 'wysiwyg'; } catch (e) { return 'wysiwyg'; } });
   const [disableRichText, setDisableRichText] = useState<boolean>(() => { try { return localStorage.getItem('reportBuilderDisableRichText') === '1'; } catch (e) { return false; } });
+  const [isCropperOpen, setIsCropperOpen] = useState(false);
+  const [cropperImageSrc, setCropperImageSrc] = useState<string>('');
   // (Placeholders removed) Questions are dragged directly into the canvas as editable spans with `data-qid`.
 
   useEffect(() => {
@@ -489,7 +492,7 @@ const ReportBuilderPage: React.FC = () => {
                   <div className="w-full">
                     <div className="mt-2 w-full">
                       <div className="border rounded p-2 min-h-[320px] bg-white w-full">
-                        {/* CanvasEditor is the primary design surface. TinyMCE is used only inside the CanvasEditor when inserting rich text blocks. */}
+                        {/* CanvasEditor is the primary design surface. Rich text editors (Quill, Editor.js, Summernote) are used inside the CanvasEditor when inserting rich text blocks. */}
                         <CanvasEditor
                           value={(getTplObj(editing.template_json).html) || ''}
                           initialBlocks={(getTplObj(editing.template_json).blocks) || []}
@@ -696,6 +699,24 @@ const ReportBuilderPage: React.FC = () => {
                         <WysiwygEditor value={blockEditHtml || ''} onChange={v => setBlockEditHtml(v)} />
                       </div>
                     </div>
+
+                    {/* Shape Style Editor for SVG shapes */}
+                    {blockEditHtml && blockEditHtml.includes('<svg') && (
+                      <ShapeStyleEditor
+                        html={blockEditHtml}
+                        shapeType={
+                          blockEditHtml.includes('<rect') ? 'rect' :
+                            blockEditHtml.includes('<circle') ? 'circle' :
+                              blockEditHtml.includes('<line') ? 'line' :
+                                blockEditHtml.includes('<polygon') ? 'polygon' :
+                                  'unknown'
+                        }
+                        onChange={(updatedHtml, style) => {
+                          setBlockEditHtml(updatedHtml);
+                        }}
+                      />
+                    )}
+
                     <div className="flex gap-2 justify-end items-center">
                       <div className="flex items-center gap-1 mr-1">
                         <button title="Send backward" className="p-1 border rounded text-xs" onClick={() => { try { canvasRef.current?.sendBackward?.(selectedBlock.id); setSelectedBlock(prev => prev ? { ...prev } : prev); } catch (e) { console.error(e); } }}>
@@ -748,7 +769,7 @@ const ReportBuilderPage: React.FC = () => {
                 <div>
                   <label className="block text-xs text-gray-500">Rich Text Editor</label>
                   <select className="mt-1 block w-full border rounded p-2 text-sm" value={richTextMode} onChange={e => { setRichTextMode(e.target.value as any); try { localStorage.setItem('reportBuilderRichTextMode', e.target.value); } catch (err) { } }}>
-                    <option value="wysiwyg">TinyMCE / WYSIWYG</option>
+                    <option value="wysiwyg">Rich Text Editor (Quill)</option>
                     <option value="builtin">Built-in RichTextEditor</option>
                     <option value="none">Disable rich text</option>
                   </select>
@@ -763,16 +784,16 @@ const ReportBuilderPage: React.FC = () => {
 
                   {/* Vector shape buttons */}
                   <button title="Insert Rectangle" className="p-2 border rounded hover:bg-gray-100" onClick={() => { try { (canvasRef.current as any)?.insertShape?.('rect', { width: 160, height: 100, fill: 'none', stroke: '#111' }); } catch (e) { console.error(e); } }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="5" width="16" height="12" rx="1" ry="1"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="5" width="16" height="12" rx="1" ry="1" /></svg>
                   </button>
                   <button title="Insert Circle" className="p-2 border rounded hover:bg-gray-100" onClick={() => { try { (canvasRef.current as any)?.insertShape?.('circle', { width: 96, height: 96, fill: 'none', stroke: '#111' }); } catch (e) { console.error(e); } }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="6"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="6" /></svg>
                   </button>
                   <button title="Insert Triangle" className="p-2 border rounded hover:bg-gray-100" onClick={() => { try { const svg = `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"140\" height=\"100\" viewBox=\"0 0 140 100\"><polygon points=\"70,8 132,92 8,92\" fill=\"none\" stroke=\"#111\"/></svg>`; (canvasRef.current as any)?.insertBlock?.({ html: svg, left: 40, top: 40 }); } catch (e) { console.error(e); } }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3l9 16H3l9-16z"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3l9 16H3l9-16z" /></svg>
                   </button>
                   <button title="Insert Line" className="p-2 border rounded hover:bg-gray-100" onClick={() => { try { (canvasRef.current as any)?.insertShape?.('line', { width: 160, height: 12, stroke: '#111' }); } catch (e) { console.error(e); } }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12h16"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12h16" /></svg>
                   </button>
 
                   <button title="Undo" className="p-2 border rounded hover:bg-gray-100" onClick={() => { try { canvasRef.current?.undo?.(); } catch (e) { document.execCommand && document.execCommand('undo'); } }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7v6h6M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" /></svg></button>
@@ -1251,6 +1272,23 @@ const ReportBuilderPage: React.FC = () => {
                 <button className="text-left px-3 py-2 hover:bg-gray-100" onClick={() => { try { canvasRef.current?.sendToBack?.(selectedBlock.id); } catch (e) { console.error(e); } setContextMenuPos({ open: false }); }}>Send to back</button>
                 <button className="text-left px-3 py-2 hover:bg-gray-100" onClick={() => { try { canvasRef.current?.bringForward?.(selectedBlock.id); } catch (e) { console.error(e); } setContextMenuPos({ open: false }); }}>Bring forward</button>
                 <button className="text-left px-3 py-2 hover:bg-gray-100" onClick={() => { try { canvasRef.current?.sendBackward?.(selectedBlock.id); } catch (e) { console.error(e); } setContextMenuPos({ open: false }); }}>Send backward</button>
+                {selectedBlock?.html && selectedBlock.html.includes('<img') && (
+                  <>
+                    <div className="border-t" />
+                    <button className="text-left px-3 py-2 hover:bg-gray-100" onClick={() => {
+                      try {
+                        const imgMatch = selectedBlock.html.match(/src=["'](.*?)["']/);
+                        if (imgMatch && imgMatch[1]) {
+                          setCropperImageSrc(imgMatch[1]);
+                          setIsCropperOpen(true);
+                          setContextMenuPos({ open: false });
+                        }
+                      } catch (e) {
+                        console.error(e);
+                      }
+                    }}>Crop Image</button>
+                  </>
+                )}
                 <div className="border-t" />
                 <button className="text-left px-3 py-2 text-red-600 hover:bg-gray-100" onClick={() => { try { canvasRef.current?.deleteBlock?.(selectedBlock.id); setSelectedBlock(null); } catch (e) { console.error(e); } setContextMenuPos({ open: false }); }}>Delete</button>
               </div>
@@ -1264,6 +1302,32 @@ const ReportBuilderPage: React.FC = () => {
       >
         {/* ...inspector contents (includes WysiwygEditor/Rich text editors) */}
       </aside>
+
+      {/* Image Cropper Modal */}
+      <Modal isOpen={isCropperOpen} onClose={() => setIsCropperOpen(false)} title="Crop Image" size="2xl">
+        <ImageCropper
+          imageSrc={cropperImageSrc}
+          onCropComplete={(croppedDataUrl) => {
+            try {
+              if (selectedBlock) {
+                // Update the block's HTML with the new cropped image
+                const newHtml = selectedBlock.html.replace(
+                  /src=["'](.*?)["']/,
+                  `src="${croppedDataUrl}"`
+                );
+                canvasRef.current?.updateBlock?.(selectedBlock.id, { html: newHtml });
+                setSelectedBlock({ ...selectedBlock, html: newHtml });
+                setIsCropperOpen(false);
+                setToasts(t => [...t, { id: Date.now(), text: 'Image cropped and applied' }]);
+              }
+            } catch (e) {
+              console.error('Error applying cropped image:', e);
+              setToasts(t => [...t, { id: Date.now(), text: 'Error applying cropped image' }]);
+            }
+          }}
+          onCancel={() => setIsCropperOpen(false)}
+        />
+      </Modal>
     </div>
   );
 };

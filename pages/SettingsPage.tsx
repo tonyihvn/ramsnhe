@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import Modal from '../components/ui/Modal';
+import DataTable from '../components/ui/DataTable';
+import BandEditor from '../components/ui/BandEditor';
 import DatasetsPage from './DatasetsPage';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
@@ -39,13 +42,39 @@ const LLMSettingsForm: React.FC = () => {
         setDetectedModels([]);
         setSelectedDetected(null);
         try {
-            // try admin endpoint first then fallback to public detect endpoint
+            // try server admin detect endpoint first then fallback to public detect endpoint
             let r = await fetch('/api/admin/detect-ollama', { credentials: 'include' });
             if (r.status === 401) r = await fetch('/api/detect-ollama');
-            if (!r.ok) { alert('No local Ollama detected or not authorized'); return; }
+
+            // if server endpoints failed or returned no models, try direct local Ollama tag endpoint
+            if (!r.ok) {
+                try {
+                    const direct = await fetch('http://127.0.0.1:11434/api/tags');
+                    if (direct.ok) {
+                        const jd = await direct.json();
+                        if (jd && Array.isArray(jd.models) && jd.models.length) {
+                            setDetectedModels(jd.models.map((m: any) => m.name || m.id || String(m)));
+                            setDetecting(false);
+                            return;
+                        }
+                    }
+                } catch (e) { /* ignore local probe failure */ }
+                alert('No local Ollama detected or not authorized');
+                return;
+            }
+
             const j = await r.json();
-            if (j && j.ok && Array.isArray(j.models) && j.models.length) setDetectedModels(j.models);
-            else alert('No local Ollama models detected');
+            // admin/public detect returns { ok: true, models: [...] } or { ok: true, version: ... }
+            if (j && j.ok && Array.isArray(j.models) && j.models.length) {
+                // may already be an array of names or objects
+                const models = j.models.map((m: any) => (typeof m === 'string' ? m : (m.name || m.id || String(m))));
+                setDetectedModels(models as string[]);
+            } else if (j && j.ok && j.version) {
+                // version found but no models; notify user
+                alert('Ollama detected (version info found), but no models installed locally. Use /api/pull to install models.');
+            } else {
+                alert('No local Ollama models detected');
+            }
         } catch (e) {
             console.error(e);
             alert('Error detecting local Ollama: ' + String(e));
@@ -145,6 +174,172 @@ const LLMSettingsForm: React.FC = () => {
                     }
                 }}>Save LLM Settings</Button>
             </div>
+            <BandEditor isOpen={bandsOpen} onClose={() => setBandsOpen(false)} />
+        </div>
+    );
+};
+
+// DBMS Tab Component: sidebar list of tables, SQL textarea and results with pagination
+const DBMSTab: React.FC = () => {
+    const [tables, setTables] = React.useState<string[]>([]);
+    const [selectedTable, setSelectedTable] = React.useState<string | null>(null);
+    const [sql, setSql] = React.useState('');
+    const [rows, setRows] = React.useState<any[]>([]);
+    const [columns, setColumns] = React.useState<string[]>([]);
+    const [columnFilters, setColumnFilters] = React.useState<Record<string,string>>({});
+    const [limit, setLimit] = React.useState(50);
+    const [offset, setOffset] = React.useState(0);
+    const [search, setSearch] = React.useState('');
+    const [info, setInfo] = React.useState<any>(null);
+    const [loading, setLoading] = React.useState(false);
+
+    const loadTables = async () => {
+        try {
+            let r = await fetch('/api/admin/db/tables', { credentials: 'include' });
+            if (r.status === 401) r = await fetch('/api/rag_schemas');
+            if (!r.ok) { setTables([]); return; }
+            const j = await r.json();
+            if (Array.isArray(j.tables)) setTables(j.tables);
+            else if (Array.isArray(j)) setTables(j.map((x: any) => x.table_name || x));
+            else if (Array.isArray(j)) setTables(j.map((x: any) => x.table_name || x));
+        } catch (e) { console.error('loadTables', e); setTables([]); }
+    };
+
+    useEffect(() => { loadTables(); }, []);
+
+    const loadTableInfo = async (t: string) => {
+        try {
+            const r = await fetch('/api/admin/db/table/' + encodeURIComponent(t) + '/info', { credentials: 'include' });
+            if (!r.ok) return setInfo(null);
+            const j = await r.json(); setInfo(j);
+        } catch (e) { setInfo(null); }
+    };
+
+    const runQuery = async (overrideSql?: string) => {
+        try {
+            setLoading(true);
+            const run = overrideSql || sql || (selectedTable ? `SELECT * FROM "${selectedTable}" LIMIT ${limit} OFFSET ${offset}` : '');
+            if (!run) { setRows([]); setColumns([]); setLoading(false); return; }
+            let r = await fetch('/api/admin/db/query', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql: run }) });
+            if (r.status === 401) {
+                // fallback to public execute_sql endpoint
+                r = await fetch('/api/execute_sql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql: run }) });
+            }
+            if (!r.ok) { const txt = await r.text(); alert('Query failed: ' + txt); setLoading(false); return; }
+            const j = await r.json(); setRows(j.rows || j || []);
+            if ((j.rows || []).length > 0) setColumns(Object.keys((j.rows || [])[0]));
+            else setColumns([]);
+        } catch (e) { console.error('runQuery', e); alert('Query error: ' + String(e)); }
+        setLoading(false);
+    };
+
+    useEffect(() => {
+        if (selectedTable) {
+            const base = `SELECT * FROM "${selectedTable}"`;
+            // build where clause from columnFilters
+            const filters = Object.entries(columnFilters || {}).map(([c, v]) => {
+                const vv = String(v || '').trim();
+                if (!vv) return null;
+                // safe-ish escaping for single quotes
+                const esc = vv.replace(/'/g, "''");
+                return `CAST(\"${c}\" AS TEXT) ILIKE '%${esc}%'`;
+            }).filter(Boolean);
+            const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
+            const built = `${base}${where} LIMIT ${limit} OFFSET ${offset}`;
+            setSql(built);
+            loadTableInfo(selectedTable);
+            // immediately run the query to preview the table when clicked or filters change
+            runQuery(built);
+        }
+    }, [selectedTable, limit, offset]);
+
+    // Re-run query when column filters change
+    useEffect(() => {
+        if (!selectedTable) return;
+        const base = `SELECT * FROM "${selectedTable}"`;
+        const filters = Object.entries(columnFilters || {}).map(([c, v]) => {
+            const vv = String(v || '').trim();
+            if (!vv) return null;
+            const esc = vv.replace(/'/g, "''");
+            return `CAST(\"${c}\" AS TEXT) ILIKE '%${esc}%'`;
+        }).filter(Boolean);
+        const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
+        const built = `${base}${where} LIMIT ${limit} OFFSET ${offset}`;
+        setSql(built);
+        runQuery(built);
+    }, [columnFilters]);
+
+    return (
+        <div className="grid grid-cols-4 gap-4">
+            <div className="col-span-1">
+                <div className="font-medium mb-2">Tables</div>
+                <div className="border rounded max-h-[60vh] overflow-auto bg-white">
+                    {tables.map(t => <div key={t} className={`p-2 cursor-pointer hover:bg-gray-50 ${t===selectedTable?'bg-gray-50 font-medium':''}`} onClick={() => setSelectedTable(t)}>{t}</div>)}
+                </div>
+            </div>
+            <div className="col-span-3">
+                <div className="grid grid-cols-1 gap-2">
+                    <div className="flex gap-2">
+                        <input className="flex-1 p-2 border rounded" value={sql} onChange={e=>setSql(e.target.value)} placeholder="Enter SELECT SQL or use table preview" />
+                        <Button onClick={() => runQuery()}>Run</Button>
+                        <Button variant="secondary" onClick={() => { setOffset(0); runQuery(); }}>Run (from start)</Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-sm">Search</label>
+                        <input className="p-2 border rounded" value={search} onChange={e=>setSearch(e.target.value)} placeholder="text search across text columns" />
+                        <label className="text-sm">Limit</label>
+                        <input type="number" className="p-2 border rounded w-28" value={limit} onChange={e=>setLimit(Number(e.target.value||50))} />
+                        <label className="text-sm">Offset</label>
+                        <input type="number" className="p-2 border rounded w-28" value={offset} onChange={e=>setOffset(Number(e.target.value||0))} />
+                    </div>
+
+                    <div className="mt-2">
+                        {loading && <div className="text-sm text-gray-500">Running query...</div>}
+                        {/* Column-level filters */}
+                        {columns.length > 0 && (
+                            <div className="mt-2 mb-2 p-2 bg-gray-50 border rounded">
+                                <div className="text-sm font-medium mb-2">Column Filters</div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                    {columns.map(c => (
+                                        <div key={c} className="flex items-center gap-2">
+                                            <label className="text-xs w-28 text-gray-600">{c}</label>
+                                            <input className="flex-1 p-2 border rounded" value={columnFilters[c] || ''} onChange={e => setColumnFilters(prev => ({ ...(prev || {}), [c]: e.target.value }))} placeholder={`Filter ${c}`} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {!loading && rows.length === 0 && <div className="text-sm text-gray-500">No rows to display.</div>}
+                        {!loading && rows.length > 0 && (
+                            <div>
+                                <div className="overflow-auto max-h-[50vh] border rounded bg-white">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="bg-gray-50 text-xs text-gray-600">
+                                            <tr>{columns.map(c => <th key={c} className="p-2 border">{c}</th>)}</tr>
+                                        </thead>
+                                        <tbody>
+                                            {rows.map((r, i) => (
+                                                <tr key={i} className="border-t">
+                                                    {columns.map(c => <td key={c} className="p-2 align-top">{typeof r[c] === 'object' ? JSON.stringify(r[c]).slice(0,200) : String(r[c])}</td>)}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="mt-2 text-sm text-gray-600">Returned {rows.length} rows.</div>
+                            </div>
+                        )}
+                    </div>
+
+                    {info && (
+                        <div className="mt-3 p-2 border rounded bg-gray-50">
+                            <div className="font-medium">Table Info</div>
+                            <div className="text-sm">Primary Keys: {(info.primaryKeys || []).join(', ') || '—'}</div>
+                            <div className="text-sm">Foreign Keys: {(info.foreignKeys || []).map((fk:any)=> `${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`).join('; ') || '—'}</div>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 };
@@ -192,6 +387,24 @@ const RolesList: React.FC = () => {
                 setRolePerms(perms.map((p: any) => p.id));
             } else setRolePerms([]);
         } catch (e) { console.error(e); setRolePerms([]); }
+    };
+
+    const toggleSelectAll = async () => {
+        if (!manageRole) return;
+        try {
+            const allSelected = allPerms.length > 0 && rolePerms.length === allPerms.length;
+            if (allSelected) {
+                // remove all
+                const toRemove = [...rolePerms];
+                await Promise.all(toRemove.map(pid => fetch('/api/admin/role_permissions/remove', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roleId: manageRole.id, permissionId: pid }) })));
+                setRolePerms([]);
+            } else {
+                // add all
+                const toAdd = allPerms.map(p => p.id).filter((id: number) => !rolePerms.includes(id));
+                await Promise.all(toAdd.map(pid => fetch('/api/admin/role_permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roleId: manageRole.id, permissionId: pid }) })));
+                setRolePerms(allPerms.map(p => p.id));
+            }
+        } catch (e) { console.error(e); alert('Failed to update permissions'); }
     };
 
     const togglePerm = async (permId: number) => {
@@ -243,6 +456,12 @@ const RolesList: React.FC = () => {
                         </div>
                     </div>
                     <div className="mt-3 grid grid-cols-1 gap-2">
+                        <div className="flex items-center gap-2">
+                            <label className="inline-flex items-center">
+                                <input type="checkbox" checked={allPerms.length > 0 && rolePerms.length === allPerms.length} onChange={() => toggleSelectAll()} />
+                                <span className="ml-2 text-sm">Select All</span>
+                            </label>
+                        </div>
                         {allPerms.map(p => (
                             <label key={p.id} className="flex items-center gap-2">
                                 <input type="checkbox" checked={rolePerms.includes(p.id)} onChange={() => togglePerm(p.id)} />
@@ -434,7 +653,22 @@ const PermissionsList: React.FC = () => {
 
 const SettingsPage: React.FC = () => {
     const { settings, setSettings, reset } = useTheme();
-    const [tab, setTab] = useState<'database' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit'>('theme');
+    const [tab, setTab] = useState<'database' | 'dbms' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit' | 'email'>('theme');
+    const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+    const [bandsOpen, setBandsOpen] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const r = await fetch('/api/current_user', { credentials: 'include' });
+                if (r.ok) {
+                    const j = await r.json();
+                    const role = j && (j.role || '').toString().toLowerCase();
+                    setIsAdmin(role === 'admin');
+                } else setIsAdmin(false);
+            } catch (e) { setIsAdmin(false); }
+        })();
+    }, []);
     const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0];
         if (!f) return;
@@ -501,6 +735,17 @@ const SettingsPage: React.FC = () => {
         })();
     }, []);
 
+    if (isAdmin === false) {
+        return (
+            <div className="p-6">
+                <Card>
+                    <h2 className="text-lg font-medium">Access Restricted</h2>
+                    <p className="text-sm text-gray-600 mt-2">Settings are restricted to users with the Admin role. Contact an administrator if you need access.</p>
+                </Card>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -510,10 +755,12 @@ const SettingsPage: React.FC = () => {
             <div className="bg-white rounded shadow p-2">
                 <nav className="flex space-x-2">
                     <button onClick={() => setTab('database')} className={`px-3 py-2 rounded ${tab === 'database' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Database</button>
+                    <button onClick={() => setTab('dbms')} className={`px-3 py-2 rounded ${tab === 'dbms' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>DBMS</button>
                     <button onClick={() => setTab('llm')} className={`px-3 py-2 rounded ${tab === 'llm' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>LLM</button>
                     <button onClick={() => setTab('rag')} className={`px-3 py-2 rounded ${tab === 'rag' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>RAG</button>
                     <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded ${tab === 'theme' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Theme</button>
                     <button onClick={() => setTab('app')} className={`px-3 py-2 rounded ${tab === 'app' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>App</button>
+                    <button onClick={() => setTab('email')} className={`px-3 py-2 rounded ${tab === 'email' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Email / SMTP</button>
                     <button onClick={() => setTab('datasets')} className={`px-3 py-2 rounded ${tab === 'datasets' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Datasets</button>
                     <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded ${tab === 'permissions' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Roles & Permissions</button>
                     <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded ${tab === 'audit' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Audit Trails</button>
@@ -602,6 +849,13 @@ const SettingsPage: React.FC = () => {
                 </Card>
             )}
 
+            {tab === 'dbms' && (
+                <Card>
+                    <h3 className="text-lg font-medium mb-2">DBMS Browser</h3>
+                    <DBMSTab />
+                </Card>
+            )}
+
             {tab === 'llm' && (
                 <Card>
                     <h3 className="text-lg font-medium mb-2">LLM Settings</h3>
@@ -657,12 +911,36 @@ const SettingsPage: React.FC = () => {
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Upload Logo</label>
                             <input type="file" accept="image/*" onChange={handleLogoUpload} className="mt-2" />
-                            <p className="text-xs text-gray-500">Uploaded logo will be stored in browser localStorage (data URL).</p>
+                            <div className="mt-2">
+                                <label className="block text-sm font-medium text-gray-700">Background Image (login page)</label>
+                                <input type="file" accept="image/*" onChange={async (e) => {
+                                    const f = e.target.files?.[0];
+                                    if (!f) return;
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => {
+                                        const dataUrl = ev.target?.result as string;
+                                        setSettings({ backgroundImage: dataUrl });
+                                    };
+                                    reader.readAsDataURL(f);
+                                }} className="mt-2" />
+                                <p className="text-xs text-gray-500 mt-1">Optional background image used on the login page. Saved to theme settings (localStorage) and can be persisted to server via Save.</p>
+                            </div>
+                            <p className="text-xs text-gray-500">Uploaded logo will be saved to application settings (persisted to server on Save).</p>
                         </div>
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Logo Text</label>
                             <input type="text" value={settings.logoText} onChange={e => setSettings({ logoText: e.target.value })} className="mt-2 block w-full p-2 border rounded" />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Programs Link Label</label>
+                            <input type="text" value={(settings as any).programsLabel || 'Programs'} onChange={e => setSettings({ ...(settings as any), programsLabel: e.target.value })} className="mt-2 block w-full p-2 border rounded" />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Activities Link Label</label>
+                            <input type="text" value={(settings as any).activitiesLabel || 'Activities'} onChange={e => setSettings({ ...(settings as any), activitiesLabel: e.target.value })} className="mt-2 block w-full p-2 border rounded" />
                         </div>
 
                         <div>
@@ -700,11 +978,44 @@ const SettingsPage: React.FC = () => {
                                 <div className="text-sm">{fontPx}px</div>
                             </div>
                         </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Default Rich Text Editor</label>
+                            <select value={(settings as any).defaultRichTextEditor || 'editorjs'} onChange={e => setSettings({ ...(settings as any), defaultRichTextEditor: e.target.value })} className="mt-2 block w-full p-2 border rounded">
+                                <option value="editorjs">Editor.js (recommended - block-based)</option>
+                                <option value="summernote">Summernote (jQuery)</option>
+                                <option value="taptap">TapTap / Tiptap (inline-rich)</option>
+                                <option value="tinymce">TinyMCE (self-hosted)</option>
+                                <option value="ckeditor">CKEditor (classic)</option>
+                                <option value="basic">Basic (fallback)</option>
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">Choose the default rich text editor for paragraph elements and form builders.</p>
+                        </div>
                     </div>
 
                     <div className="mt-6 flex space-x-3">
                         <Button onClick={() => reset()}>Reset to Defaults</Button>
-                        <Button variant="secondary" onClick={() => alert('Theme saved to localStorage')}>Save</Button>
+                        <Button variant="secondary" onClick={async () => {
+                            try {
+                                // Persist full settings object to admin settings endpoint
+                                const payload = settings || {};
+                                let r = await fetch('/api/admin/settings', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                if (r.status === 401) {
+                                    alert('Not authorized to save settings on server. Please login as Admin to persist settings.');
+                                    return;
+                                }
+                                if (!r.ok) {
+                                    const txt = await r.text();
+                                    alert('Failed to save settings: ' + txt);
+                                    return;
+                                }
+                                alert('Theme saved to server');
+                            } catch (e) {
+                                console.error('Failed to save theme settings', e);
+                                alert('Failed to save theme settings: ' + String(e));
+                            }
+                        }}>Save</Button>
+                        <Button variant="secondary" onClick={() => setBandsOpen(true)}>Edit Bands</Button>
                     </div>
 
                     <div className="mt-4">
@@ -731,6 +1042,46 @@ const SettingsPage: React.FC = () => {
                                 <option value="/reports">Reports</option>
                             </select>
                         </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Default Map Provider</label>
+                                    <select value={(settings as any).defaultMapProvider || 'leaflet'} onChange={e => setSettings({ ...(settings as any), defaultMapProvider: e.target.value })} className="mt-1 block p-2 border rounded">
+                                        <option value="leaflet">Leaflet / OpenStreetMap</option>
+                                        <option value="osmand">OsmAnd</option>
+                                        <option value="organic">Organic Maps</option>
+                                        <option value="herewego">HERE WeGo (requires API key)</option>
+                                        <option value="google">Google Maps (requires API key)</option>
+                                    </select>
+                                    <p className="text-xs text-gray-500 mt-1">Choose the default map implementation used when picking locations or viewing dashboards.</p>
+
+                                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">HERE Maps API Key</label>
+                                            <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).hereApiKey || ''} onChange={e => setSettings({ ...(settings as any), hereApiKey: e.target.value })} placeholder="Paste HERE API key (optional)" />
+                                            <p className="text-xs text-gray-400 mt-1">Required only if you select HERE WeGo as the default provider.</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Google Maps API Key</label>
+                                            <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).googleMapsApiKey || ''} onChange={e => setSettings({ ...(settings as any), googleMapsApiKey: e.target.value })} placeholder="Paste Google Maps API key (optional)" />
+                                            <p className="text-xs text-gray-400 mt-1">Required only if you select Google Maps as the default provider.</p>
+                                        </div>
+                                    </div>
+                                <p className="text-xs text-gray-500 mt-1">Choose the default map implementation used when picking locations or viewing dashboards.</p>
+                            </div>
+                    </div>
+                    <div className="mt-6">
+                        <label className="block text-sm font-medium text-gray-700">Organization Name (shown on map header)</label>
+                        <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).organizationName || ''} onChange={e => setSettings({ ...(settings as any), organizationName: e.target.value })} placeholder="Organization name" />
+                        <p className="text-xs text-gray-500 mt-1">This value will be displayed above the map as the controller/organization ribbon.</p>
+                    </div>
+                </Card>
+            )}
+
+            {tab === 'email' && (
+                <Card>
+                    <h3 className="text-lg font-medium mb-2">Email / SMTP Settings</h3>
+                    <div className="space-y-3">
+                        <p className="text-sm text-gray-500">Configure SMTP used for password resets and notifications.</p>
+                        <SMTPSettings />
                     </div>
                 </Card>
             )}
@@ -778,11 +1129,127 @@ const SettingsPage: React.FC = () => {
     );
 };
 
+function SMTPSettings() {
+    const [smtp, setSmtp] = useState<any>(null);
+    const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [testTo, setTestTo] = useState('');
+    const [showHelp, setShowHelp] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                let r = await fetch('/api/admin/smtp', { credentials: 'include' });
+                if (r.status === 401) r = await fetch('/api/smtp');
+                if (r.ok) setSmtp(await r.json());
+            } catch (e) { /* ignore */ }
+        })();
+    }, []);
+
+    const save = async () => {
+        setSaving(true);
+        try {
+            const r = await fetch('/api/admin/smtp', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(smtp || {}) });
+            if (!r.ok) return alert('Failed to save: ' + await r.text());
+            alert('Saved');
+        } catch (e) { alert('Save failed: ' + String(e)); }
+        setSaving(false);
+    };
+
+    const test = async () => {
+        setTesting(true);
+        try {
+            const payload = { to: testTo || ((smtp && smtp.from) ? smtp.from : ''), subject: 'Test email', text: 'Test message' };
+            const r = await fetch('/api/admin/test-smtp', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!r.ok) return alert('Test failed: ' + await r.text());
+            alert('Test email sent');
+        } catch (e) { alert('Test failed: ' + String(e)); }
+        setTesting(false);
+    };
+
+    const applyGmailDefaults = () => {
+        setSmtp({ ...(smtp || {}), host: 'smtp.gmail.com', port: 465, secure: true, from: (smtp && smtp.user) ? smtp.user : (smtp && smtp.from) || '' });
+        setShowHelp(true);
+    };
+
+    return (
+        <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">SMTP Host</label>
+                    <input className="mt-1 block w-full p-2 border rounded" value={(smtp && smtp.host) || ''} onChange={e => setSmtp({ ...(smtp || {}), host: e.target.value })} />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Port</label>
+                    <input className="mt-1 block w-full p-2 border rounded" value={(smtp && smtp.port) || ''} onChange={e => setSmtp({ ...(smtp || {}), port: e.target.value })} />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Secure (TLS)</label>
+                    <div className="mt-1"><input type="checkbox" checked={(smtp && smtp.secure) || false} onChange={e => setSmtp({ ...(smtp || {}), secure: e.target.checked })} /></div>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">User</label>
+                    <input className="mt-1 block w-full p-2 border rounded" value={(smtp && smtp.user) || ''} onChange={e => setSmtp({ ...(smtp || {}), user: e.target.value })} />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Password</label>
+                    <input type="password" className="mt-1 block w-full p-2 border rounded" value={(smtp && smtp.pass) || ''} onChange={e => setSmtp({ ...(smtp || {}), pass: e.target.value })} />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">From address</label>
+                    <input className="mt-1 block w-full p-2 border rounded" value={(smtp && smtp.from) || ''} onChange={e => setSmtp({ ...(smtp || {}), from: e.target.value })} />
+                </div>
+                <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700">Admin emails (comma separated)</label>
+                    <input className="mt-1 block w-full p-2 border rounded" value={(smtp && smtp.admins) ? (Array.isArray(smtp.admins) ? smtp.admins.join(',') : smtp.admins) : ''} onChange={e => {
+                        const v = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                        setSmtp({ ...(smtp || {}), admins: v });
+                    }} />
+                </div>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+                <Button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save SMTP Settings'}</Button>
+                <Button variant="secondary" onClick={test} disabled={testing}>{testing ? 'Testing...' : 'Send test email'}</Button>
+                <Button variant="secondary" onClick={applyGmailDefaults}>Use Gmail defaults</Button>
+                <input className="p-2 border rounded" placeholder="Test recipient (optional)" value={testTo} onChange={e => setTestTo(e.target.value)} />
+            </div>
+
+            {/* Help / guidance for common providers (Gmail) */}
+            <div className="mt-3 text-sm text-gray-700">
+                <button className="text-sm text-primary-600 hover:underline" onClick={() => setShowHelp(s => !s)}>{showHelp ? 'Hide' : 'Show'} SMTP help</button>
+                {showHelp && (
+                    <div className="mt-2 p-3 bg-gray-50 border rounded text-sm text-gray-700">
+                        <div className="font-medium">Gmail (smtp.gmail.com) notes</div>
+                        <ul className="list-disc pl-5 mt-2">
+                            <li>For Gmail use <strong>Host</strong>: <code>smtp.gmail.com</code>.</li>
+                            <li>If using SSL set <strong>Port</strong> to <code>465</code> and <strong>Secure</strong> to true; for STARTTLS use port <code>587</code> and secure=false.</li>
+                            <li>If your Google account has 2-step verification enabled, create an <strong>App Password</strong> and use it as the SMTP password (recommended).</li>
+                            <li>Google blocks simple username/password auth for many accounts; if you see <code>530 Authentication Required</code> obtain an App Password or use OAuth2.</li>
+                            <li>After saving settings click <strong>Send test email</strong> and check server logs for nodemailer errors.</li>
+                        </ul>
+                        <div className="mt-2 text-xs text-gray-500">See: <a className="text-primary-600 hover:underline" href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noreferrer">Google App Passwords</a></div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default SettingsPage;
 
 const AuditTrails: React.FC = () => {
     const [list, setList] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [jsonViewerOpen, setJsonViewerOpen] = useState(false);
+    const [jsonViewerContent, setJsonViewerContent] = useState<any>(null);
+    const [datasetModalOpen, setDatasetModalOpen] = useState(false);
+    const [datasetName, setDatasetName] = useState('');
+    const [datasetNamePlaceholder, setDatasetNamePlaceholder] = useState('');
+    const [datasetCategory, setDatasetCategory] = useState('');
+    const [datasetPreview, setDatasetPreview] = useState<any[] | null>(null);
+    const [creatingDataset, setCreatingDataset] = useState(false);
 
     const load = async () => {
         setLoading(true);
@@ -797,13 +1264,73 @@ const AuditTrails: React.FC = () => {
 
     useEffect(() => { load(); }, []);
 
+    const startCreateDatasetFromRow = (raw: any) => {
+        // normalize candidate rows from raw.events or raw.details
+        const payload = raw.events || raw.details || [];
+        const rows = Array.isArray(payload) ? payload : (payload && typeof payload === 'object' ? [payload] : []);
+        const placeholder = `audit_batch_${raw.id || Date.now()}`;
+        setDatasetNamePlaceholder(placeholder);
+        setDatasetName(placeholder);
+        setDatasetCategory('audit');
+        setDatasetPreview(rows);
+        setDatasetModalOpen(true);
+    };
+
+    const createDatasetFromPreview = async () => {
+        if (!datasetPreview || datasetPreview.length === 0) return alert('No rows to create dataset from');
+        const name = datasetName && String(datasetName).trim() ? datasetName.trim() : datasetNamePlaceholder || `dataset_${Date.now()}`;
+        setCreatingDataset(true);
+        try {
+            // create dataset
+            const r = await fetch('/api/admin/datasets', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, category: datasetCategory || null, dataset_fields: [] }) });
+            if (r.status === 401) { alert('Unauthorized - admin required to create dataset'); setCreatingDataset(false); return; }
+            if (!r.ok) { alert('Failed to create dataset: ' + await r.text()); setCreatingDataset(false); return; }
+            const created = await r.json();
+            const dsId = created.id;
+            // push rows as content (one by one) - server accepts JSON body for content
+            let inserted = 0;
+            for (const row of datasetPreview) {
+                try {
+                    const rc = await fetch(`/api/admin/datasets/${dsId}/content`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(row) });
+                    if (rc.ok) inserted++;
+                } catch (e) { /* ignore row-level failures */ }
+            }
+            alert(`Dataset created (id=${dsId}). Inserted ${inserted}/${datasetPreview.length} rows.`);
+            setDatasetModalOpen(false);
+            // refresh datasets? not necessary here; user can view datasets in settings
+        } catch (e) {
+            console.error('Failed to create dataset from audit', e);
+            alert('Failed to create dataset: ' + String(e));
+        }
+        setCreatingDataset(false);
+    };
+
     const columns = [
         { key: 'id', label: 'ID' },
         { key: 'batch_name', label: 'Batch' },
         { key: 'created_at', label: 'Created' },
         { key: 'created_by', label: 'By' },
         { key: 'status', label: 'Status' },
-        { key: 'details', label: 'Details' },
+        {
+            key: 'details', label: 'Details', render: (row: any) => {
+                // If the original raw row contains structured JSON, show a View link
+                const raw = row._raw || {};
+                const payload = raw.events || raw.details || raw;
+                const isStructured = payload && (typeof payload === 'object');
+                if (isStructured) return <button className="text-xs text-blue-600" onClick={() => { setJsonViewerContent(payload); setJsonViewerOpen(true); }}>View</button>;
+                return <span className="text-sm text-gray-600">{row.details || ''}</span>;
+            }
+        },
+        {
+            key: '__actions', label: '', render: (row: any) => (
+                <div className="flex items-center gap-2">
+                    <button className="text-xs text-blue-600" onClick={() => { const raw = row._raw || {}; setJsonViewerContent(raw.events || raw.details || raw); setJsonViewerOpen(true); }}>View</button>
+                    {row._raw && (row._raw.events || row._raw.details) && (
+                        <button className="text-xs text-green-600" onClick={() => startCreateDatasetFromRow(row._raw)}>Create Dataset</button>
+                    )}
+                </div>
+            )
+        }
     ];
 
     const data = (list || []).map((r: any) => ({
@@ -812,7 +1339,8 @@ const AuditTrails: React.FC = () => {
         created_at: r.created_at || r.created || '',
         created_by: r.created_by || (r.user && (r.user.email || r.user.name)) || '',
         status: r.status || r.state || '',
-        details: r.details ? (typeof r.details === 'object' ? JSON.stringify(r.details) : String(r.details)) : (r.description || ''),
+        details: (r.details && typeof r.details !== 'object') ? String(r.details) : (r.description || ''),
+        _raw: r
     }));
 
     return (
@@ -826,8 +1354,120 @@ const AuditTrails: React.FC = () => {
             {loading && <div className="text-sm text-gray-500">Loading...</div>}
             {!loading && data.length === 0 && <div className="text-sm text-gray-500">No audit batches found.</div>}
             {!loading && data.length > 0 && (
-                <DataTable columns={columns} data={data} />
+                <>
+                    <DataTable columns={columns} data={data} />
+                    <Modal isOpen={jsonViewerOpen} onClose={() => setJsonViewerOpen(false)} title="Audit Events">
+                        <div>
+                            <JSONTableViewer data={jsonViewerContent} />
+                            <div className="flex justify-end mt-2">
+                                <Button onClick={() => setJsonViewerOpen(false)}>Close</Button>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    {/* Dataset creation modal for audit batches */}
+                    <Modal isOpen={datasetModalOpen} onClose={() => setDatasetModalOpen(false)} title="Create Dataset from Audit">
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-sm font-medium">Dataset Name</label>
+                                <input className="mt-1 block w-full p-2 border rounded" value={datasetName} onChange={e => setDatasetName(e.target.value)} placeholder={datasetNamePlaceholder} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium">Category (optional)</label>
+                                <input className="mt-1 block w-full p-2 border rounded" value={datasetCategory} onChange={e => setDatasetCategory(e.target.value)} placeholder="e.g. audit_events" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium">Preview (first 5 rows)</label>
+                                <pre className="whitespace-pre-wrap text-sm bg-gray-50 p-3 rounded" style={{ maxHeight: 200, overflow: 'auto' }}>{datasetPreview ? JSON.stringify(datasetPreview.slice(0,5), null, 2) : 'No preview'}</pre>
+                            </div>
+                            <div className="flex justify-end gap-2">
+                                <Button variant="secondary" onClick={() => setDatasetModalOpen(false)}>Cancel</Button>
+                                <Button onClick={createDatasetFromPreview} disabled={creatingDataset}>{creatingDataset ? 'Creating...' : 'Create Dataset'}</Button>
+                            </div>
+                        </div>
+                    </Modal>
+                </>
             )}
+        </div>
+    );
+};
+
+// Small JSON-to-table viewer with search, nested drill and download
+const JSONTableViewer: React.FC<{ data: any }> = ({ data }) => {
+    const [stack, setStack] = React.useState<any[]>([data]);
+    const [filter, setFilter] = React.useState('');
+    const cur = stack[stack.length - 1] || null;
+
+    React.useEffect(() => { setStack([data]); setFilter(''); }, [data]);
+
+    const flatten = (obj: any) => {
+        if (obj === null || obj === undefined) return [{ path: '(root)', value: '' }];
+        if (typeof obj !== 'object') return [{ path: '(root)', value: String(obj) }];
+        const rows: { path: string; value: any }[] = [];
+        const walk = (v: any, p: string) => {
+            if (v === null || v === undefined) { rows.push({ path: p, value: '' }); return; }
+            if (typeof v !== 'object') { rows.push({ path: p, value: v }); return; }
+            if (Array.isArray(v)) {
+                for (let i = 0; i < v.length; i++) walk(v[i], `${p}[${i}]`);
+                return;
+            }
+            for (const k of Object.keys(v)) walk(v[k], p ? `${p}.${k}` : k);
+        };
+        walk(obj, '');
+        return rows;
+    };
+
+    const rows = React.useMemo(() => flatten(cur).filter(r => {
+        if (!filter) return true;
+        const q = filter.toLowerCase();
+        try { return String(r.path).toLowerCase().includes(q) || String(r.value).toLowerCase().includes(q); } catch (e) { return false; }
+    }), [cur, filter]);
+
+    const downloadCurrent = () => {
+        const blob = new Blob([JSON.stringify(cur, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'audit.json'; a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    return (
+        <div>
+            <div className="flex gap-2 items-center mb-2">
+                <input className="p-2 border rounded flex-1" placeholder="Filter path or value" value={filter} onChange={e => setFilter(e.target.value)} />
+                <Button onClick={downloadCurrent}>Download JSON</Button>
+            </div>
+            <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+                <table className="min-w-full text-sm">
+                    <thead>
+                        <tr className="text-left text-xs text-gray-500">
+                            <th className="px-2 py-1">Path</th>
+                            <th className="px-2 py-1">Value / Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((r, idx) => (
+                            <tr key={idx} className="border-t">
+                                <td className="px-2 py-1 align-top text-xs text-gray-700 break-all" style={{ maxWidth: 420 }}>{r.path || '(root)'}</td>
+                                <td className="px-2 py-1 align-top">
+                                    {r.value !== null && typeof r.value === 'object' ? (
+                                        <div>
+                                            <span className="text-xs text-gray-600 mr-2">{Array.isArray(r.value) ? `[Array ${r.value.length}]` : '[Object]'}</span>
+                                            <button className="text-xs text-blue-600" onClick={() => setStack(s => [...s, r.value])}>View</button>
+                                        </div>
+                                    ) : (
+                                        <div className="text-xs text-gray-700 break-all">{String(r.value)}</div>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            <div className="mt-2 flex gap-2">
+                <Button variant="secondary" onClick={() => setStack([data])} disabled={stack.length === 1}>Back to root</Button>
+                <Button variant="secondary" onClick={() => setStack(s => s.slice(0, Math.max(1, s.length - 1)))} disabled={stack.length <= 1}>Up</Button>
+            </div>
         </div>
     );
 };

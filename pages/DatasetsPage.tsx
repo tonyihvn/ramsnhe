@@ -12,6 +12,8 @@ const DatasetsPage: React.FC = () => {
   const [contentDatasetId, setContentDatasetId] = useState<number | null>(null);
   const [contentDatasetName, setContentDatasetName] = useState<string | null>(null);
   const [isContentModalOpen, setIsContentModalOpen] = useState(false);
+  const [isAddRowModalOpen, setIsAddRowModalOpen] = useState(false);
+  const [manualRowFields, setManualRowFields] = useState<Array<{ key: string; value: string }>>([]);
 
   const loadDatasets = async () => {
     setLoading(true);
@@ -50,7 +52,7 @@ const DatasetsPage: React.FC = () => {
       const r = await fetch(`/api/admin/datasets/${id}/content?limit=500`);
       const j = await r.json();
       // Flatten rows so each row exposes dataset fields at top-level, but keep a __dc_id and __roles for updates
-      const rows = Array.isArray(j.rows) ? j.rows.map((rr:any) => ({ __dc_id: rr.id, __roles: rr.dataset_roles || [], ... (rr.dataset_data || {}) })) : [];
+      const rows = Array.isArray(j.rows) ? j.rows.map((rr: any) => ({ __dc_id: rr.id, __roles: rr.dataset_roles || [], ... (rr.dataset_data || {}) })) : [];
       setContentRows(rows);
       setContentDatasetId(id);
       setContentDatasetName(meta && meta.name ? meta.name : null);
@@ -97,13 +99,15 @@ const DatasetsPage: React.FC = () => {
               { key: 'name', label: 'Name' },
               { key: 'description', label: 'Description' },
               { key: 'category', label: 'Category' },
-              { key: 'actions', label: 'Actions', render: (row:any) => (
-                <div className="flex gap-2">
-                  <button onClick={() => { setEditing(row); setIsEditModalOpen(true); }} className="text-sm text-primary-600">Edit</button>
-                  <button onClick={() => viewContent(row.id)} className="text-sm text-gray-600">Content</button>
-                  <button onClick={() => deleteDataset(row.id)} className="text-sm text-red-600">Delete</button>
-                </div>
-              ) }
+              {
+                key: 'actions', label: 'Actions', render: (row: any) => (
+                  <div className="flex gap-2">
+                    <button onClick={() => { setEditing(row); setIsEditModalOpen(true); }} className="text-sm text-primary-600">Edit</button>
+                    <button onClick={() => viewContent(row.id)} className="text-sm text-gray-600">Content</button>
+                    <button onClick={() => deleteDataset(row.id)} className="text-sm text-red-600">Delete</button>
+                  </div>
+                )
+              }
             ]}
             data={datasets}
           />
@@ -126,17 +130,15 @@ const DatasetsPage: React.FC = () => {
                   if (!contentDatasetId) { alert('No dataset selected'); return; }
                   // Collect column keys from existing rows (ignore metadata keys)
                   const keys = contentRows[0] ? Object.keys(contentRows[0]).filter(k => k !== '__dc_id' && k !== '__roles') : [];
-                  let dataToSave: Record<string, any> = {};
                   if (keys.length === 0) {
-                    const raw = window.prompt('No columns detected. Enter JSON object for the new row (e.g. {"col1":"value"})');
-                    if (!raw) return;
-                    try { const parsed = JSON.parse(raw); if (parsed && typeof parsed === 'object') dataToSave = parsed; else { alert('Invalid JSON'); return; } } catch (e) { alert('Invalid JSON'); return; }
-                  } else {
-                    for (const k of keys) dataToSave[k] = '';
+                    // open modal allowing user to define columns and values
+                    setManualRowFields([{ key: '', value: '' }]);
+                    setIsAddRowModalOpen(true);
+                    return;
                   }
-                  const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dataToSave) });
-                  if (!res.ok) { const txt = await res.text().catch(()=>null); alert('Failed to add row: ' + (txt || res.statusText)); return; }
-                  await viewContent(contentDatasetId);
+                  // build empty fields for known keys
+                  setManualRowFields(keys.map(k => ({ key: k, value: '' })));
+                  setIsAddRowModalOpen(true);
                 } catch (err) { console.error('Add row failed', err); alert('Add row failed'); }
               }}>Add Row</button>
               <button className="ml-2 px-3 py-1 bg-gray-100 rounded text-sm" onClick={() => {
@@ -157,7 +159,7 @@ const DatasetsPage: React.FC = () => {
                   const html = `
                     <html><head><title>${contentDatasetName || 'Dataset'}</title>
                       <style>table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ccc;padding:6px;text-align:left;font-size:12px;}</style>
-                    </head><body><h3>${contentDatasetName || 'Dataset'}</h3><table><thead><tr>${keys.map(k=>`<th>${k}</th>`).join('')}</tr></thead><tbody>${contentRows.map(r=>`<tr>${keys.map(k=>`<td>${String(r[k] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
+                    </head><body><h3>${contentDatasetName || 'Dataset'}</h3><table><thead><tr>${keys.map(k => `<th>${k}</th>`).join('')}</tr></thead><tbody>${contentRows.map(r => `<tr>${keys.map(k => `<td>${String(r[k] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
                   const w = window.open('', '_blank'); if (!w) { alert('Unable to open print window'); return; } w.document.write(html); w.document.close(); w.focus(); w.print();
                 } catch (err) { console.error(err); alert('Print failed'); }
               }}>Print / PDF</button>
@@ -172,29 +174,31 @@ const DatasetsPage: React.FC = () => {
                 columns={(() => {
                   const keys = Object.keys(contentRows[0] || {}).filter(k => k !== '__dc_id' && k !== '__roles');
                   const cols = keys.map(k => ({ key: k, label: k, editable: true }));
-                  cols.push({ key: '__actions', label: 'Actions', render: (row:any) => (
-                    <div className="flex gap-2">
-                      <button className="text-xs text-primary-600" onClick={async () => {
-                        const roles = (row.__roles || []).join(',');
-                        const edited = window.prompt('Edit roles (comma-separated)', roles);
-                        if (edited === null) return;
-                        const newRoles = edited.split(',').map((s:string)=>s.trim()).filter(Boolean);
-                        try {
-                          const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content/${row.__dc_id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataset_roles: newRoles }) });
-                          if (res.ok) {
-                            // refresh view
-                            await viewContent(contentDatasetId!);
-                          } else {
-                            alert('Failed to update roles');
-                          }
-                        } catch (err) { console.error(err); alert('Failed to update roles'); }
-                      }}>Roles</button>
-                      <button className="text-xs text-gray-600" onClick={async () => {
-                        if (!confirm('Delete this row?')) return;
-                        try { const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content/${row.__dc_id}`, { method: 'DELETE' }); if (res.ok) await viewContent(contentDatasetId!); else alert('Delete failed'); } catch (err) { console.error(err); alert('Delete failed'); }
-                      }}>Delete</button>
-                    </div>
-                  ) });
+                  cols.push({
+                    key: '__actions', label: 'Actions', render: (row: any) => (
+                      <div className="flex gap-2">
+                        <button className="text-xs text-primary-600" onClick={async () => {
+                          const roles = (row.__roles || []).join(',');
+                          const edited = window.prompt('Edit roles (comma-separated)', roles);
+                          if (edited === null) return;
+                          const newRoles = edited.split(',').map((s: string) => s.trim()).filter(Boolean);
+                          try {
+                            const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content/${row.__dc_id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataset_roles: newRoles }) });
+                            if (res.ok) {
+                              // refresh view
+                              await viewContent(contentDatasetId!);
+                            } else {
+                              alert('Failed to update roles');
+                            }
+                          } catch (err) { console.error(err); alert('Failed to update roles'); }
+                        }}>Roles</button>
+                        <button className="text-xs text-gray-600" onClick={async () => {
+                          if (!confirm('Delete this row?')) return;
+                          try { const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content/${row.__dc_id}`, { method: 'DELETE' }); if (res.ok) await viewContent(contentDatasetId!); else alert('Delete failed'); } catch (err) { console.error(err); alert('Delete failed'); }
+                        }}>Delete</button>
+                      </div>
+                    )
+                  });
                   return cols;
                 })()}
                 data={contentRows}
@@ -223,15 +227,49 @@ const DatasetsPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      <Modal isOpen={isAddRowModalOpen} title={contentDatasetName ? `Add Row — ${contentDatasetName}` : 'Add Row'} onClose={() => { setIsAddRowModalOpen(false); setManualRowFields([]); }}>
+        <div className="space-y-3">
+          <div className="text-sm text-gray-600">Enter values for the new row. Add or remove columns as needed.</div>
+          <div className="space-y-2">
+            {manualRowFields.map((f, idx) => (
+              <div key={idx} className="flex gap-2 items-center">
+                <input placeholder="column name" value={f.key} onChange={e => setManualRowFields(prev => prev.map((p, i) => i === idx ? { ...p, key: e.target.value } : p))} className="p-2 border rounded w-1/3" />
+                <input placeholder="value" value={f.value} onChange={e => setManualRowFields(prev => prev.map((p, i) => i === idx ? { ...p, value: e.target.value } : p))} className="p-2 border rounded flex-1" />
+                <button className="text-red-500" onClick={() => setManualRowFields(prev => prev.filter((_, i) => i !== idx))}>Remove</button>
+              </div>
+            ))}
+            <div>
+              <button className="text-sm text-primary-600" onClick={() => setManualRowFields(prev => [...prev, { key: '', value: '' }])}>+ Add Column</button>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => { setIsAddRowModalOpen(false); setManualRowFields([]); }}>Cancel</Button>
+            <Button onClick={async () => {
+              try {
+                if (!contentDatasetId) return alert('No dataset selected');
+                const dataToSave: Record<string, any> = {};
+                for (const f of manualRowFields) {
+                  if (f.key && f.key.trim()) dataToSave[f.key.trim()] = f.value;
+                }
+                const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dataToSave) });
+                if (!res.ok) { const txt = await res.text().catch(() => null); alert('Failed to add row: ' + (txt || res.statusText)); return; }
+                setIsAddRowModalOpen(false); setManualRowFields([]);
+                await viewContent(contentDatasetId);
+              } catch (err) { console.error('Add row save failed', err); alert('Add row failed'); }
+            }}>Save Row</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
 
-const DatasetEditor: React.FC<{ dataset?: any; onSave: (d:any)=>void; onCancel: ()=>void }> = ({ dataset, onSave, onCancel }) => {
+const DatasetEditor: React.FC<{ dataset?: any; onSave: (d: any) => void; onCancel: () => void }> = ({ dataset, onSave, onCancel }) => {
   const [name, setName] = useState(dataset?.name || '');
   const [description, setDescription] = useState(dataset?.description || '');
   const [category, setCategory] = useState(dataset?.category || '');
-  const [fieldsText, setFieldsText] = useState((Array.isArray(dataset?.dataset_fields) ? dataset.dataset_fields.map((f:any)=>f.name).join(',') : ''));
+  const [fieldsText, setFieldsText] = useState((Array.isArray(dataset?.dataset_fields) ? dataset.dataset_fields.map((f: any) => f.name).join(',') : ''));
 
   return (
     <div className="space-y-3">
@@ -254,7 +292,7 @@ const DatasetEditor: React.FC<{ dataset?: any; onSave: (d:any)=>void; onCancel: 
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => onSave({ id: dataset?.id, name, description, category, dataset_fields: fieldsText.split(',').map(s => ({ name: s.trim() })).filter((f:any)=>f.name) })}>Save</Button>
+        <Button onClick={() => onSave({ id: dataset?.id, name, description, category, dataset_fields: fieldsText.split(',').map(s => ({ name: s.trim() })).filter((f: any) => f.name) })}>Save</Button>
       </div>
     </div>
   );

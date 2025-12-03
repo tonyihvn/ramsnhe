@@ -20,6 +20,8 @@ interface DataTableProps<T> {
 export default function DataTable<T extends Record<string, any>>({ columns, data, onCellEdit, pageSize = 100, persistKey }: DataTableProps<T>) {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showControls, setShowControls] = useState(false);
+  const [page, setPage] = useState(1);
+  const [localPageSize, setLocalPageSize] = useState<number>(pageSize);
 
   // compute a stable storage key when not provided
   const computedKey = persistKey || `datatable_visible_${columns.map(c => c.key).join('__')}`;
@@ -68,8 +70,14 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
         if (val === null || typeof val === 'undefined') return false;
         return String(val).toLowerCase().includes(String(f).toLowerCase());
       });
-    }).slice(0, pageSize);
-  }, [data, filters, columns, pageSize, visibleMap]);
+    });
+  }, [data, filters, columns, visibleMap]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / Math.max(1, localPageSize)));
+  const paged = useMemo(() => {
+    const start = (page - 1) * localPageSize;
+    return filtered.slice(start, start + localPageSize);
+  }, [filtered, page, localPageSize]);
 
   const handleChange = (key: string, v: string) => setFilters(prev => ({ ...prev, [key]: v }));
 
@@ -118,14 +126,14 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {filtered.map((row, rIdx) => (
-              <tr key={rIdx}>
+            {paged.map((row, rIdx) => (
+              <tr key={rIdx} data-row-index={rIdx}>
                 {visibleColumns.map(col => (
                   <td key={col.key} className="px-2 py-2 align-top text-sm">
                     {col.editable && onCellEdit ? (
                       <input
                         value={row[col.key] ?? ''}
-                        onChange={e => onCellEdit(rIdx, col.key, e.target.value)}
+                        onChange={e => onCellEdit?.((page - 1) * localPageSize + rIdx, col.key, e.target.value)}
                         className="w-full border-gray-200 rounded text-sm px-2 py-1"
                       />
                     ) : col.render ? (
@@ -139,6 +147,26 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <div className="text-sm text-gray-600">Showing {filtered.length === 0 ? 0 : Math.min(filtered.length, (page - 1) * localPageSize + 1)} - {Math.min(filtered.length, (page) * localPageSize)} of {filtered.length}</div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button disabled={page <= 1} onClick={() => setPage(1)} className="px-2 py-1 border rounded text-sm">«</button>
+            <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="px-2 py-1 border rounded text-sm">‹</button>
+            <span className="px-2 text-sm">Page</span>
+            <input type="number" value={page} onChange={e => setPage(Math.max(1, Math.min(totalPages, Number(e.target.value || 1))))} className="w-16 p-1 border rounded text-sm" />
+            <span className="px-2 text-sm">of {totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="px-2 py-1 border rounded text-sm">›</button>
+            <button disabled={page >= totalPages} onClick={() => setPage(totalPages)} className="px-2 py-1 border rounded text-sm">»</button>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm">Per page</label>
+            <select value={localPageSize} onChange={e => { setLocalPageSize(Number(e.target.value || 50)); setPage(1); }} className="p-1 border rounded text-sm">
+              {[10,20,50,100,250].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
     </div>
   );

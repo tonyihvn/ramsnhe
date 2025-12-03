@@ -45,9 +45,16 @@ const ActivitySubmittedAnswersPage: React.FC = () => {
   const qMap: Record<string, any> = {};
   for (const q of questions) {
     try {
-      if (q && q.id !== undefined) qMap[String(q.id)] = q;
+      // map by several possible keys so we can match answers stored as 'q123', numeric ids, or by fieldName
+      if (q && q.id !== undefined) {
+        qMap[String(q.id)] = q;
+        qMap[`q${String(q.id)}`] = q;
+      }
       if (q && q.qid !== undefined) qMap[String(q.qid)] = q;
       if (q && q.question_id !== undefined) qMap[String(q.question_id)] = q;
+      if (q && (q.fieldName || q.field_name)) {
+        qMap[String(q.fieldName || q.field_name)] = q;
+      }
     } catch (e) { }
   }
   const fMap: Record<string, any> = {};

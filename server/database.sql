@@ -1,5 +1,13 @@
 -- Schema for Intelliform (reference)
 
+-- NOTE: This SQL references the default table prefix 'dqai_'.
+-- If you use a different TABLE_PREFIX in the server environment, the
+-- server will (when configured) create an additional set of tables with
+-- that prefix on startup. To manually create prefixed tables from this
+-- file, replace occurrences of 'dqai_' with your desired prefix before
+-- running the SQL (or run the server with TABLE_PREFIX set so it creates
+-- the prefixed tables automatically).
+
 CREATE TABLE IF NOT EXISTS dqai_users (
   id SERIAL PRIMARY KEY,
   first_name TEXT,

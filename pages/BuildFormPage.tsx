@@ -6,6 +6,7 @@ import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUp
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import * as ExcelJS from 'exceljs';
+import UnifiedRichTextEditor from '../components/ui/UnifiedRichTextEditor';
 
 const makeFieldName = (text: string) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `f_${Date.now()}`;
 // --- Types for Validation ---
@@ -28,10 +29,11 @@ interface QuestionEditorProps {
   deleteQuestion: (p: number, s: number, q: number) => void;
   updateQuestion: (p: number, s: number, q: number, val: Partial<Question>) => void;
   onOpenDatasetModal?: (p: number, s: number, q: number) => void;
+  roles?: any[];
 }
 
 const QuestionEditor: React.FC<QuestionEditorProps> = ({
-  question, pIdx, sIdx, qIdx, isFirst, isLast, errors, moveQuestion, deleteQuestion, updateQuestion, onOpenDatasetModal
+  question, pIdx, sIdx, qIdx, isFirst, isLast, errors, moveQuestion, deleteQuestion, updateQuestion, onOpenDatasetModal, roles
 }) => {
   const hasOptions = [AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(question.answerType);
   const isFile = question.answerType === AnswerType.FILE;
@@ -91,8 +93,8 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 
       {!collapsed ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">          
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700">
                 Question Text <span className="text-red-500">*</span>
               </label>
@@ -121,7 +123,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
                 </p>
               )}
             </div>
-            <div>
+            <div className="md:col-span-1">
               <label className="block text-sm font-medium text-gray-700">Field Name (machine-friendly)</label>
               <input type="text" value={question.fieldName || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { fieldName: e.target.value })} className={`mt-1 block w-full shadow-sm sm:text-sm rounded-md ${errors?.fieldName ? 'border-red-500 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary-500 focus:border-primary-500'}`} />
               <p className="text-xs text-gray-500 mt-1">Used in computed formulas and exports. Use letters, numbers and underscores only.</p>
@@ -188,11 +190,23 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
               )}
               <div className="mt-2">
                 <div className="mb-2 text-xs text-gray-600">Or create options manually:</div>
+                <div className="mt-2 mb-2">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!(question.metadata && question.metadata.searchable)}
+                      onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), searchable: e.target.checked } })}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-xs text-gray-700">Searchable (enable type-to-filter in form)</span>
+                  </label>
+                </div>
                 <div className="space-y-2">
                   {(question.options || []).map((o: any, i: number) => (
                     <div key={i} className="flex gap-2 items-center">
-                      <input className="border px-2 py-1 rounded w-1/2" value={o.label} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, label: e.target.value } : opt) })} />
-                      <input className="border px-2 py-1 rounded w-1/2" value={o.value} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, value: e.target.value } : opt) })} />
+                      <input className="border px-2 py-1 rounded w-1/3" value={o.label} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, label: e.target.value } : opt) })} />
+                      <input className="border px-2 py-1 rounded w-1/3" value={o.value} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, value: e.target.value } : opt) })} />
+                      <input type="number" step="any" className="border px-2 py-1 rounded w-1/6" value={o.score ?? ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, score: e.target.value === '' ? undefined : Number(e.target.value) } : opt) })} placeholder="score" />
                       <button className="text-red-500" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).filter((_: any, idx: number) => idx !== i) })}>Remove</button>
                     </div>
                   ))}
@@ -204,13 +218,25 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
             </div>
           )}
 
-            {/* Dataset modal is rendered at the page level to avoid referencing page-level state from inside QuestionEditor */}
+          {/* Dataset modal is rendered at the page level to avoid referencing page-level state from inside QuestionEditor */}
 
           {question.answerType === AnswerType.COMPUTED && (
             <div className="mt-4">
               <label className="block text-sm font-medium text-gray-700">Computed Formula</label>
               <p className="text-xs text-gray-500 mb-1">Enter a JavaScript-like expression using other field names as variables. Example: <code>field_a + field_b * 2</code>. Use only numbers for arithmetic. The result will be computed at fill-time.</p>
               <textarea rows={3} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300 font-mono text-sm" value={(question.metadata && question.metadata.computedFormula) || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), computedFormula: e.target.value } })} />
+            </div>
+          )}
+
+          {question.answerType === AnswerType.PARAGRAPH && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Paragraph Content (Rich Text)</label>
+              <p className="text-xs text-gray-500 mb-2">Add formatted instruction text. This will display as read-only content in the form (the question text label above will be hidden).</p>
+              <UnifiedRichTextEditor
+                value={(question.metadata && question.metadata.content) || ''}
+                onChange={(content) => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), content } })}
+                height={300}
+              />
             </div>
           )}
 
@@ -253,6 +279,48 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
                 />
               </div>
             )}
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!(question.metadata && question.metadata.show_on_map)}
+                onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), show_on_map: e.target.checked } })}
+              />
+              <span className="text-xs text-gray-700">Show this question's answer on the map popup</span>
+            </label>
+            {/* Role-restriction UI for show_on_map */}
+            {question.metadata && question.metadata.show_on_map && (
+              <div className="mt-2">
+                <div className="text-xs text-gray-500 mb-1">Restrict map visibility to roles (optional):</div>
+                <div className="flex flex-wrap gap-2">
+                  {!roles || roles.length === 0 ? (
+                    <div className="text-xs text-gray-400">No roles loaded.</div>
+                  ) : (
+                    roles.map((r: any) => {
+                      const roleName = r.name || r;
+                      const selected: string[] = Array.isArray(question.metadata && question.metadata.show_on_map_roles) ? (question.metadata.show_on_map_roles || []) : [];
+                      const checked = selected.map((s: any) => String(s).toLowerCase()).includes(String(roleName).toLowerCase());
+                      return (
+                        <label key={roleName} className="inline-flex items-center gap-2 text-xs bg-gray-100 px-2 py-1 rounded">
+                          <input type="checkbox" checked={checked} onChange={e => {
+                            const cur = Array.isArray(question.metadata && question.metadata.show_on_map_roles) ? (question.metadata.show_on_map_roles || []) : [];
+                            let next: string[] = [];
+                            if (checked) {
+                              // currently checked, so uncheck
+                              next = cur.filter((x: any) => String(x).toLowerCase() !== String(roleName).toLowerCase());
+                            } else {
+                              next = [...cur, roleName];
+                            }
+                            updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), show_on_map_roles: next } });
+                          }} />
+                          <span>{roleName}</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-gray-500">Leave none selected to make the answer visible to everyone.</div>
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -285,11 +353,16 @@ const BuildFormPage: React.FC = () => {
   const [isDatasetModalOpen, setIsDatasetModalOpen] = useState(false);
   const [datasetsList, setDatasetsList] = useState<any[]>([]);
   const [dsLoading, setDsLoading] = useState(false);
-  const [dsSelectedForQuestion, setDsSelectedForQuestion] = useState<{pIdx:number,sIdx:number,qIdx:number} | null>(null);
+  const [activitiesList, setActivitiesList] = useState<any[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
+  const [selectedActivityForAnswers, setSelectedActivityForAnswers] = useState<number | null>(null);
+  const [answersSampleRows, setAnswersSampleRows] = useState<any[]>([]);
+  const [dsSelectedForQuestion, setDsSelectedForQuestion] = useState<{ pIdx: number, sIdx: number, qIdx: number } | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
   const [selectedLabelField, setSelectedLabelField] = useState<string>('');
   const [selectedValueField, setSelectedValueField] = useState<string>('');
   const [datasetSampleRows, setDatasetSampleRows] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
   const [validationErrors, setValidationErrors] = useState<Record<string, QuestionErrors>>({});
 
   useEffect(() => {
@@ -313,6 +386,23 @@ const BuildFormPage: React.FC = () => {
       }
     }
   }, [activityId, getActivity, getFormDefinition]);
+
+  useEffect(() => {
+    // load roles for form builder (to allow setting show_on_map_roles)
+    (async () => {
+      try {
+        let r = await fetch('/api/admin/roles');
+        if (r.status === 401) r = await fetch('/api/roles');
+        if (r.ok) {
+          const j = await r.json();
+          setRoles(Array.isArray(j) ? j : []);
+        }
+      } catch (e) {
+        console.error('Failed to load roles for form builder', e);
+        setRoles([]);
+      }
+    })();
+  }, []);
 
   const validateForm = (): boolean => {
     if (!formDef) return false;
@@ -738,16 +828,37 @@ const BuildFormPage: React.FC = () => {
         {(formDef.pages?.[activePageIndex]?.sections || []).map((section, sIdx) => (
           <div key={section.id} className="bg-white shadow rounded-lg overflow-hidden">
             <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-              <input
-                type="text"
-                value={section.name}
-                onChange={(e) => {
-                  const newDef = { ...formDef };
-                  newDef.pages[activePageIndex].sections[sIdx].name = e.target.value;
-                  updateFormDef(newDef);
-                }}
-                className="bg-transparent border-none focus:ring-0 font-medium text-gray-900 w-1/2"
-              />
+              <div className="flex items-center gap-3 flex-1">
+                <input
+                  type="text"
+                  value={section.name}
+                  onChange={(e) => {
+                    const newDef = { ...formDef };
+                    newDef.pages[activePageIndex].sections[sIdx].name = e.target.value;
+                    updateFormDef(newDef);
+                  }}
+                  className="bg-transparent border-none focus:ring-0 font-medium text-gray-900 w-1/2"
+                />
+                <label className="flex items-center gap-2 text-sm text-gray-600 whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={section.isRepeatable || false}
+                    onChange={(e) => {
+                      const newDef = { ...formDef };
+                      newDef.pages[activePageIndex].sections[sIdx].isRepeatable = e.target.checked;
+                      if (e.target.checked && !section.groupName) {
+                        const groupName = `${section.name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`;
+                        newDef.pages[activePageIndex].sections[sIdx].groupName = groupName;
+                      } else if (!e.target.checked) {
+                        newDef.pages[activePageIndex].sections[sIdx].groupName = undefined;
+                      }
+                      updateFormDef(newDef);
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  Add More
+                </label>
+              </div>
               <div className="flex space-x-2">
                 <button onClick={() => moveSection(activePageIndex, sIdx, 'up')} disabled={sIdx === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowUpIcon className="h-5 w-5" /></button>
                 <button onClick={() => moveSection(activePageIndex, sIdx, 'down')} disabled={sIdx === formDef.pages[activePageIndex].sections.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowDownIcon className="h-5 w-5" /></button>
@@ -768,6 +879,7 @@ const BuildFormPage: React.FC = () => {
                   moveQuestion={moveQuestion}
                   deleteQuestion={deleteQuestion}
                   updateQuestion={updateQuestion}
+                  roles={roles}
                   onOpenDatasetModal={(p, s, q) => { setDsSelectedForQuestion({ pIdx: p, sIdx: s, qIdx: q }); setIsDatasetModalOpen(true); setDatasetsList([]); }}
                 />
               ))}
@@ -865,16 +977,16 @@ const BuildFormPage: React.FC = () => {
                         const details = await detailsRes.json();
                         let fields: string[] = [];
                         if (Array.isArray(details.dataset_fields) && details.dataset_fields.length) {
-                          fields = details.dataset_fields.map((f:any) => f.name).filter(Boolean);
+                          fields = details.dataset_fields.map((f: any) => f.name).filter(Boolean);
                         }
                         const contentRes = await fetch(`/api/admin/datasets/${ds.id}/content?limit=50`);
                         const contentJson = await contentRes.json();
-                        const sampleRows = Array.isArray(contentJson.rows) ? contentJson.rows.map((rr:any) => rr.dataset_data || {}) : [];
+                        const sampleRows = Array.isArray(contentJson.rows) ? contentJson.rows.map((rr: any) => rr.dataset_data || {}) : [];
                         setDatasetSampleRows(sampleRows || []);
                         // If no dataset_fields, infer from sample
                         if (!fields.length) {
                           const inferred = new Set<string>();
-                          (sampleRows || []).slice(0,5).forEach((r:any) => { if (r && typeof r === 'object') Object.keys(r).forEach(k => inferred.add(k)); });
+                          (sampleRows || []).slice(0, 5).forEach((r: any) => { if (r && typeof r === 'object') Object.keys(r).forEach(k => inferred.add(k)); });
                           fields = Array.from(inferred);
                         }
                         // populate selects defaults
@@ -891,6 +1003,59 @@ const BuildFormPage: React.FC = () => {
             </div>
           </div>
 
+          <div className="mt-4 border-t pt-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Or: Load from Answers (activity)</h3>
+              <button className="text-sm text-gray-500" onClick={async () => {
+                setActivitiesLoading(true);
+                try {
+                  const r = await fetch('/api/activities');
+                  const j = await r.json();
+                  setActivitiesList(Array.isArray(j) ? j : []);
+                } catch (e) { console.error('Failed to fetch activities', e); setActivitiesList([]); }
+                setActivitiesLoading(false);
+              }}>Refresh Activities</button>
+            </div>
+            <div className="mt-2">
+              {activitiesLoading && <div className="text-sm text-gray-500">Loading activities...</div>}
+              {!activitiesLoading && activitiesList.length === 0 && <div className="text-sm text-gray-400">No activities found. Try Refresh.</div>}
+              {!activitiesLoading && activitiesList.length > 0 && (
+                <div className="space-y-2 max-h-40 overflow-auto">
+                  {activitiesList.map(act => (
+                    <div key={act.id} className={`p-2 border rounded ${selectedActivityForAnswers === act.id ? 'border-primary-500 bg-primary-50' : 'border-gray-200'}`} onClick={async () => {
+                      setSelectedActivityForAnswers(act.id);
+                      try {
+                        const res = await fetch(`/api/answers?activityId=${act.id}`);
+                        const ans = await res.json();
+                        // Map answers to simple values — try answer_value, answer
+                        const rows = Array.isArray(ans) ? ans.map((a: any) => {
+                          const val = (a.answer_value && typeof a.answer_value === 'object') ? (a.answer_value.value ?? JSON.stringify(a.answer_value)) : (a.answer_value ?? a.answer ?? '');
+                          return { answer: val, created_at: a.created_at };
+                        }) : [];
+                        setAnswersSampleRows(rows.slice(0, 200));
+                      } catch (e) { console.error('Failed to fetch answers', e); setAnswersSampleRows([]); }
+                    }}>
+                      <div className="text-sm font-medium">{act.title || act.name || act.activityTitle || `Activity ${act.id}`}</div>
+                      <div className="text-xs text-gray-500">{act.description || ''}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3">
+              <div className="text-sm text-gray-500">Preview (first 10 answers):</div>
+              <div className="max-h-28 overflow-auto bg-white border rounded p-2 mt-2 text-xs">
+                {answersSampleRows.length === 0 && <div className="text-xs text-gray-400">No answers loaded.</div>}
+                {answersSampleRows.length > 0 && (
+                  <ul className="list-disc ml-6">
+                    {answersSampleRows.slice(0, 10).map((r, i) => <li key={i} className="truncate max-w-full">{String(r.answer ?? '')}</li>)}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs text-gray-500">Label Field</label>
             <select className="mt-1 block w-full border-gray-300 rounded" value={selectedLabelField} onChange={e => setSelectedLabelField(e.target.value)}>
@@ -898,7 +1063,7 @@ const BuildFormPage: React.FC = () => {
               {(() => {
                 // build options from sample rows keys
                 const keys = new Set<string>();
-                datasetSampleRows.slice(0,10).forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
+                datasetSampleRows.slice(0, 10).forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
                 return Array.from(keys).map(k => <option key={k} value={k}>{k}</option>);
               })()}
             </select>
@@ -910,7 +1075,7 @@ const BuildFormPage: React.FC = () => {
               <option value="">-- select --</option>
               {(() => {
                 const keys = new Set<string>();
-                datasetSampleRows.slice(0,10).forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
+                datasetSampleRows.slice(0, 10).forEach(r => { if (r && typeof r === 'object') Object.keys(r).forEach(k => keys.add(k)); });
                 return Array.from(keys).map(k => <option key={k} value={k}>{k}</option>);
               })()}
             </select>
@@ -925,8 +1090,8 @@ const BuildFormPage: React.FC = () => {
                   <tr>{Object.keys(datasetSampleRows[0] || {}).map(k => <th key={k} className="px-1 text-left font-semibold">{k}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {datasetSampleRows.slice(0,5).map((r, idx) => (
-                    <tr key={idx} className="border-t"><td className="px-1">{Object.values(r).map((v:any,i:number)=> <div key={i} className="truncate max-w-xs">{String(v ?? '')}</div>)}</td></tr>
+                  {datasetSampleRows.slice(0, 5).map((r, idx) => (
+                    <tr key={idx} className="border-t"><td className="px-1">{Object.values(r).map((v: any, i: number) => <div key={i} className="truncate max-w-xs">{String(v ?? '')}</div>)}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -937,18 +1102,27 @@ const BuildFormPage: React.FC = () => {
             <Button variant="secondary" onClick={() => { setIsDatasetModalOpen(false); setSelectedDatasetId(null); setDatasetSampleRows([]); }}>Cancel</Button>
             <Button onClick={async () => {
               if (!dsSelectedForQuestion) return alert('No question selected');
-              if (!selectedDatasetId) return alert('Select a dataset');
-              if (!selectedLabelField || !selectedValueField) return alert('Choose label and value fields');
-              // build options from sample rows
               try {
+                if (selectedActivityForAnswers) {
+                  // build options from loaded answers preview
+                  if (!answersSampleRows || answersSampleRows.length === 0) return alert('No answers loaded for selected activity');
+                  const opts = answersSampleRows.map((r: any) => ({ label: String(r.answer ?? ''), value: String(r.answer ?? '') })).filter(o => o.value !== '');
+                  updateQuestion(dsSelectedForQuestion.pIdx, dsSelectedForQuestion.sIdx, dsSelectedForQuestion.qIdx, { options: opts });
+                  setIsDatasetModalOpen(false);
+                  return;
+                }
+
+                if (!selectedDatasetId) return alert('Select a dataset');
+                if (!selectedLabelField || !selectedValueField) return alert('Choose label and value fields');
+                // build options from sample rows
                 const res = await fetch(`/api/admin/datasets/${selectedDatasetId}/content?limit=100`);
                 const j = await res.json();
-                const rows = Array.isArray(j.rows) ? j.rows.map((r:any) => (r.dataset_data ? r.dataset_data : r.dataset_data === undefined ? {} : {})) : [];
-                const opts = (rows || []).map((r:any) => ({ label: String(r[selectedLabelField] ?? ''), value: String(r[selectedValueField] ?? '') })).filter(o => o.value !== '');
+                const rows = Array.isArray(j.rows) ? j.rows.map((r: any) => (r.dataset_data ? r.dataset_data : r.dataset_data === undefined ? {} : {})) : [];
+                const opts = (rows || []).map((r: any) => ({ label: String(r[selectedLabelField] ?? ''), value: String(r[selectedValueField] ?? '') })).filter(o => o.value !== '');
                 // update the target question's options
                 updateQuestion(dsSelectedForQuestion.pIdx, dsSelectedForQuestion.sIdx, dsSelectedForQuestion.qIdx, { options: opts });
                 setIsDatasetModalOpen(false);
-              } catch (e) { console.error('Failed to build options from dataset', e); alert('Failed to build options from dataset'); }
+              } catch (e) { console.error('Failed to build options from dataset/answers', e); alert('Failed to build options from dataset/answers'); }
             }}>Insert Options</Button>
           </div>
         </div>

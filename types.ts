@@ -33,7 +33,9 @@ export enum AnswerType {
   CHECKBOX = 'checkbox',
   RADIO = 'radio',
   FILE = 'file', // Generic file upload within form
-  COMPUTED = 'computed' // Computed / formula-driven field
+  COMPUTED = 'computed', // Computed / formula-driven field
+  PARAGRAPH = 'paragraph', // Display-only paragraph/instructions
+  LOCATION = 'location' // Location picker with map
 }
 
 export interface Question {
@@ -45,7 +47,7 @@ export interface Question {
   questionText: string;
   questionHelper?: string;
   answerType: AnswerType;
-  options?: { label: string; value: string }[];
+  options?: { label: string; value: string; score?: number }[];
   category?: string;
   questionGroup?: string;
   columnSize: number; // Bootstrap 12-grid value: 12 (full), 6 (half), 4 (third), 3 (quarter)
@@ -59,6 +61,8 @@ export interface FormSection {
   id: string;
   name: string;
   questions: Question[];
+  isRepeatable?: boolean; // If true, user can add multiple rows of this section
+  groupName?: string; // Auto-generated group name for repeatable sections (e.g. "products_section_1234")
 }
 
 export interface FormPage {
@@ -117,6 +121,8 @@ export interface Facility {
   contactPerson?: string;
   category?: string;
   remarks?: string;
+  location?: string; // stored as "lat,lng"
+  show_on_map?: boolean;
 }
 
 export type UserRole = 'Admin' | 'Form Builder' | 'Data Collector' | 'Viewer' | 'Responder';
@@ -136,4 +142,6 @@ export interface User {
   profileImage?: string;
   role: UserRole;
   status: 'Active' | 'Inactive';
+  location?: string; // stored as "lat,lng"
+  show_on_map?: boolean;
 }

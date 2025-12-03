@@ -14,9 +14,10 @@ type Props = {
     rows?: number;
     name?: string;
     className?: string;
+    disabled?: boolean;
 };
 
-const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, options = [], placeholder, required, rows = 3, name, className }) => {
+const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, options = [], placeholder, required, rows = 3, name, className, disabled = false }) => {
     const rootRef = useRef<HTMLDivElement | null>(null);
 
     // Materialize removed: no initialization needed
@@ -38,7 +39,7 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
         return (
             <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
                 {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
-                <textarea id={inputId} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500" value={value ?? ''} onChange={handleChange} rows={rows} placeholder={placeholder} />
+                <textarea id={inputId} className={`border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 ${disabled ? 'bg-gray-100' : ''}`} value={value ?? ''} onChange={handleChange} rows={rows} placeholder={placeholder} disabled={disabled} />
             </div>
         );
     }
@@ -47,7 +48,7 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
         return (
             <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
                 {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
-                <select id={inputId} value={value ?? ''} onChange={handleChange} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                <select id={inputId} value={value ?? ''} onChange={handleChange} className={`border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 ${disabled ? 'bg-gray-100' : ''}`} disabled={disabled}>
                     <option value="" disabled>{placeholder ?? 'Choose an option'}</option>
                     {options.map((opt) => (
                         <option key={String(opt.value)} value={opt.value}>{opt.label}</option>
@@ -61,7 +62,7 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
         return (
             <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
                 {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
-                <input id={inputId} type="file" onChange={handleChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
+                <input id={inputId} type="file" onChange={handleChange} className={`block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 ${disabled ? 'opacity-60 pointer-events-none' : ''}`} disabled={disabled} />
             </div>
         );
     }
@@ -69,8 +70,8 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
     if (type === 'radio' || type === 'checkbox') {
         return (
             <label className="inline-flex items-center gap-2">
-                <input id={inputId} name={name} type={type} checked={!!value} onChange={handleChange} className="form-checkbox h-4 w-4 text-primary-600 border-gray-300 rounded" />
-                <span className="text-sm text-gray-700">{label}</span>
+                <input id={inputId} name={name} type={type} checked={!!value} onChange={handleChange} className="form-checkbox h-4 w-4 text-primary-600 border-gray-300 rounded" disabled={disabled} />
+                <span className={`text-sm ${disabled ? 'text-gray-500' : 'text-gray-700'}`}>{label}</span>
             </label>
         );
     }
@@ -80,14 +81,14 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
         return (
             <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
                 {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
-                <input id={inputId} type="date" value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                <input id={inputId} type="date" value={value ?? ''} onChange={handleChange} placeholder={placeholder} className={`border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 ${disabled ? 'bg-gray-100' : ''}`} disabled={disabled} />
             </div>
         );
     }
     return (
         <div ref={rootRef} className={`flex flex-col gap-1 ${className || ''}`}>
             {label && <label htmlFor={inputId} className="font-medium text-sm text-gray-700">{label}{required ? '*' : ''}</label>}
-            <input id={inputId} type={type} value={value ?? ''} onChange={handleChange} placeholder={placeholder} className="border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            <input id={inputId} type={type} value={value ?? ''} onChange={handleChange} placeholder={placeholder} className={`border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 ${disabled ? 'bg-gray-100' : ''}`} disabled={disabled} />
         </div>
     );
 };

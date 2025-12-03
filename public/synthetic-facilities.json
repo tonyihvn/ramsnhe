@@ -1,0 +1,78 @@
+[
+  {
+    "id": "f1",
+    "name": "Pilot Tertiary Hospital A",
+    "lat": 9.0765,
+    "lng": 7.3986,
+    "tier": "tertiary",
+    "ownership": "federal",
+    "indicators": {
+      "energy_resilience": { "band": "green" },
+      "compliance_status": { "band": "yellow" },
+      "telemetry_uptime": 98
+    },
+    "evidence": { "certificates": [{ "id": "CERT-001", "note": "synthetic" }], "targets_met": true, "sampling_note": "sampled by pilot team" },
+    "resilience_targets": { "energy": "80% uptime" },
+    "signoffs": [{ "by": "Controller (synthetic)", "date": "2025-11-01" }]
+  },
+  {
+    "id": "f2",
+    "name": "Pilot Primary Clinic B",
+    "lat": 9.1,
+    "lng": 7.4,
+    "tier": "primary",
+    "ownership": "state",
+    "indicators": { "energy_resilience": { "band": "red" }, "compliance_status": { "band": "red" }, "telemetry_uptime": 60 },
+    "evidence": { "certificates": [], "targets_met": false },
+    "resilience_targets": { "energy": "50% uptime" },
+    "signoffs": []
+  },
+  {
+    "id": "f3",
+    "name": "Pilot Secondary Hospital C",
+    "lat": 9.2,
+    "lng": 7.45,
+    "tier": "secondary",
+    "ownership": "lga",
+    "indicators": { "energy_resilience": { "band": "yellow" }, "compliance_status": { "band": "green" }, "telemetry_uptime": 88 },
+    "evidence": { "certificates": [{ "id": "CERT-003", "note": "synthetic" }], "targets_met": false },
+    "resilience_targets": { "energy": "70% uptime" },
+    "signoffs": [{ "by": "Vendor (synthetic)", "date": "2025-10-20" }]
+  },
+  {
+    "id": "f4",
+    "name": "Pilot Tertiary Hospital D",
+    "lat": 9.05,
+    "lng": 7.5,
+    "tier": "tertiary",
+    "ownership": "private",
+    "indicators": { "energy_resilience": { "band": "green" }, "compliance_status": { "band": "green" }, "telemetry_uptime": 99 },
+    "evidence": { "certificates": [{ "id": "CERT-004", "note": "synthetic" }], "targets_met": true },
+    "resilience_targets": { "energy": "90% uptime" },
+    "signoffs": [{ "by": "Controller (synthetic)", "date": "2025-11-15" }]
+  },
+  {
+    "id": "f5",
+    "name": "Pilot Primary Clinic E",
+    "lat": 9.3,
+    "lng": 7.6,
+    "tier": "primary",
+    "ownership": "faith_based",
+    "indicators": { "energy_resilience": { "band": "yellow" }, "compliance_status": { "band": "yellow" }, "telemetry_uptime": 82 },
+    "evidence": { "certificates": [], "targets_met": false },
+    "resilience_targets": { "energy": "65% uptime" },
+    "signoffs": []
+  },
+  {
+    "id": "f6",
+    "name": "Pilot Private Clinic F",
+    "lat": 9.4,
+    "lng": 7.35,
+    "tier": "secondary",
+    "ownership": "private",
+    "indicators": { "energy_resilience": { "band": "green" }, "compliance_status": { "band": "yellow" }, "telemetry_uptime": 90 },
+    "evidence": { "certificates": [{ "id": "CERT-006", "note": "synthetic" }], "targets_met": true },
+    "resilience_targets": { "energy": "85% uptime" },
+    "signoffs": [{ "by": "Vendor (synthetic)", "date": "2025-11-10" }]
+  }
+]

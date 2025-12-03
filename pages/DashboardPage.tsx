@@ -41,6 +41,9 @@ const DashboardPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="px-3 py-2 bg-primary-500 text-white rounded" onClick={() => { window.location.hash = '#/map-dashboard'; }}>Open Map Dashboard</button>
+      </div>
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total Programs" value={programs.length} icon={<FolderIcon className="h-6 w-6" />} to="/programs" />

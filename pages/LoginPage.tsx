@@ -1,33 +1,104 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMockData } from '../hooks/useMockData';
+import { useMetadata } from '../contexts/MetadataContext';
+import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
 import { UserCircleIcon } from '@heroicons/react/24/outline';
 import { useTheme } from '../hooks/useTheme';
+import Modal from '../components/ui/Modal';
+
+const Typewriter: React.FC<{ text?: string }> = ({ text }) => {
+  const [pos, setPos] = useState(0);
+  useEffect(() => {
+    setPos(0);
+    if (!text) return;
+    const id = setInterval(() => {
+      setPos(p => {
+        if (p >= (text || '').length) { clearInterval(id); return p; }
+        return p + 1;
+      });
+    }, 60);
+    return () => clearInterval(id);
+  }, [text]);
+  return <div className="text-center text-lg font-semibold" aria-hidden>{text ? text.slice(0, pos) : ''}</div>;
+};
 
 const LoginPage: React.FC = () => {
   const { login } = useMockData();
+  const { meta } = useMetadata();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { settings } = useTheme();
+  const [regOpen, setRegOpen] = useState(false);
+  const [regFirst, setRegFirst] = useState('');
+  const [regLast, setRegLast] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regLoading, setRegLoading] = useState(false);
+  const [regMessage, setRegMessage] = useState<string | null>(null);
+  const [regError, setRegError] = useState<string | null>(null);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    await login(email, password);
+    const user = await login(email, password);
+    // perform role-based redirect using metadata
+    if (user) {
+      try {
+        const roleMeta = meta.roles?.find((r: any) => r.id === user.role) || meta.roles?.find((r: any) => String(r.name).toLowerCase() === String(user.role).toLowerCase());
+        const route = roleMeta?.defaultRoute || '/dashboard';
+        navigate(route);
+      } catch (e) {
+        navigate('/dashboard');
+      }
+    }
+  };
+
+  const doRegister = async () => {
+    setRegLoading(true);
+    setRegError(null);
+    setRegMessage(null);
+    try {
+      const r = await fetch('/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstName: regFirst, lastName: regLast, email: regEmail, password: regPassword }) });
+      if (!r.ok) {
+        let txt = '';
+        try { txt = await r.text(); } catch (e) { txt = String(e); }
+        // try parse json
+        try {
+          const j = JSON.parse(txt);
+          txt = j.error || j.message || JSON.stringify(j);
+        } catch (e) { /* not json */ }
+        setRegError(txt || 'Registration failed');
+        setRegLoading(false);
+        return;
+      }
+      const j = await r.json();
+      setRegMessage(j.message || 'Registration successful. Please check your email for verification if required.');
+      // keep modal open so user sees the message; optionally auto-close after a short delay
+      setTimeout(() => { setRegOpen(false); }, 3000);
+    } catch (e) {
+      setRegError(String(e));
+    }
+    setRegLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-lg shadow-md">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: settings?.backgroundImage ? `url(${settings.backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+      <div className="max-w-md w-full space-y-8 bg-white bg-opacity-90 p-10 rounded-lg shadow-md" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.15)', backdropFilter: 'blur(4px)' }}>
         <div>
           <div className="mx-auto h-12 w-12 text-primary-600 flex justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-            </svg>
+            {settings?.logoDataUrl ? <img src={settings.logoDataUrl!} alt="logo" className="w-12 h-12 object-contain" /> : (
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+              </svg>
+            )}
           </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Sign in to {settings?.logoText || ''}
-          </h2>
+          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in</h2>
+          <div className="mt-2 text-center">
+            <div className="text-sm text-gray-600">{settings?.logoText || ''}</div>
+            <div className="mt-1"><Typewriter text={settings?.organizationName} /></div>
+          </div>
           <p className="mt-2 text-center text-sm text-gray-600">
             Enter your email and password to sign in.
           </p>
@@ -45,10 +116,27 @@ const LoginPage: React.FC = () => {
             </Button>
           </div>
         </form>
-
-        <div className="text-xs text-gray-500 mt-4 bg-blue-50 p-3 rounded border border-blue-200">
-          <strong>Dev Note:</strong> Use the default admin credentials from `.env.local` (DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD) or create a user from the Users page.
+        <div className="flex items-center justify-between mt-2">
+          <button className="text-sm text-primary-600 hover:underline" onClick={() => setRegOpen(true)}>Register</button>
+          <a className="text-sm text-primary-600 hover:underline" href="#/request-reset">Forgot password?</a>
         </div>
+
+        <Modal isOpen={regOpen} onClose={() => setRegOpen(false)} title="Register">
+          <div className="space-y-3">
+            {regMessage ? <div className="p-2 text-green-700 bg-green-100 rounded">{regMessage}</div> : null}
+            {regError ? <div className="p-2 text-red-700 bg-red-100 rounded">{regError}</div> : null}
+            <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
+            <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
+            <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
+            <input className="p-2 border rounded w-full" placeholder="Password" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setRegOpen(false)}>Cancel</Button>
+              <Button onClick={doRegister} disabled={regLoading || !!regMessage}>{regLoading ? 'Registering...' : 'Register'}</Button>
+            </div>
+          </div>
+        </Modal>
+
+
       </div>
     </div>
   );

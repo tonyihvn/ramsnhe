@@ -3,10 +3,10 @@ import React from 'react';
 const DocsPage: React.FC = () => {
     return (
         <div className="flex h-full">
-            <aside className="w-64 border-r bg-white p-4 overflow-y-auto sticky top-0 h-screen">
+                <aside className="w-64 border-r bg-white p-4 overflow-y-auto sticky top-0 h-screen">
                 <h2 className="text-lg font-semibold mb-4">Docs</h2>
                 <nav className="space-y-2 text-sm">
-                    {['getting-started', 'installation', 'run-dev', 'frontend', 'backend', 'api-reference', 'llm-rag', 'activities', 'excel-import', 'security', 'troubleshooting', 'faq', 'contact'].map(id => (
+                    {['getting-started', 'installation', 'run-dev', 'frontend', 'backend', 'api-reference', 'indicators', 'llm-rag', 'activities', 'excel-import', 'security', 'troubleshooting', 'faq', 'contact'].map(id => (
                         <a key={id} href={`#/docs#${id}`} className="block text-gray-700 hover:text-primary-600" onClick={(e) => { e.preventDefault(); const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}>{id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</a>
                     ))}
                 </nav>
@@ -124,6 +124,38 @@ Response:
 POST /api/admin/rag_schemas  { table_name, schema: {...}, sample_rows: [...] }
 DELETE /api/admin/rag_schemas/:id
 `}</pre>
+                </section>
+
+                <section id="indicators" className="mb-8">
+                    <h3 className="text-xl font-semibold">Indicators</h3>
+                    <p className="mt-2">Indicators are computed metrics built from form answers or other DB fields. Indicators support two main formula styles:</p>
+                    <ul className="list-disc list-inside mt-2">
+                        <li><strong>SQL</strong> — a SELECT query that returns a numeric `value` (or named columns for numerator/denominator). Prefix SQL formulas with <code>sql:</code> when saving in the admin UI to ensure the server treats the string as SQL.</li>
+                        <li><strong>Expression</strong> — JavaScript-like code executed on the server; expressions may call an internal `executeSql` helper to run queries and compute derived values.</li>
+                    </ul>
+                    <p className="mt-2">Use the placeholder <code>{'{selected_facility_id}'}</code> in SQL (and similar placeholders in expressions) so the indicator is evaluated in context (map popup, facility dashboard, test-runner).</p>
+
+                    <h4 className="mt-4 font-semibold">SQL example</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm whitespace-pre-wrap break-words">{`sql:SELECT SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE 0 END) ) as value FROM dqai_answers WHERE question_id = 'q1764684635235' AND facility_id = {selected_facility_id}`}</pre>
+
+                    <h4 className="mt-4 font-semibold">Numerator / Denominator (SQL)</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm whitespace-pre-wrap break-words">{`sql:SELECT
+    SUM(CASE WHEN answer_value::text::numeric >= 1 THEN 1 ELSE 0 END) AS num,
+    COUNT(*) AS denom
+FROM dqai_answers
+WHERE question_id = 'q1764684635235' AND facility_id = {selected_facility_id};
+
+-- You can compute percentage in an expression or in SQL by wrapping this as a subquery and dividing.`}</pre>
+
+                    <h4 className="mt-4 font-semibold">Expression example</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm whitespace-pre-wrap break-words">{`// This expression runs on the server and can use executeSql(...) to fetch rows
+const r = await executeSql("SELECT SUM(...) AS num, COUNT(*) AS denom FROM dqai_answers WHERE facility_id = {selected_facility_id}");
+const num = Number(r.rows[0].num || 0);
+const denom = Number(r.rows[0].denom || 0);
+return denom === 0 ? 0 : (num / denom) * 100;`}</pre>
+
+                    <p className="mt-2">When building indicators for activities, set the indicator's <strong>Activity</strong> in the admin UI to make it available in activity popups and to filter facilities in the Test Runner. Use the <strong>Unit Of Measurement</strong> field to describe how values should be displayed (%, people, tests, mL, etc.).</p>
+                    <p className="text-xs text-gray-500">See full examples and migration notes in <code>docs/INDICATORS.md</code></p>
                 </section>
 
                 <section id="llm-rag" className="mb-8">

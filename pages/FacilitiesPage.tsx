@@ -42,6 +42,7 @@ const FacilitiesPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dashboard</th>
                 {canEdit && <th className="relative px-6 py-3"><span className="sr-only">Actions</span></th>}
               </tr>
             </thead>
@@ -52,6 +53,9 @@ const FacilitiesPage: React.FC = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.category}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.lga}, {facility.state}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.address}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <a href={`#/facilities/${facility.id}/dashboard`} className="text-primary-600 hover:underline">Open Dashboard</a>
+                  </td>
                   {canEdit && (
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                         <button onClick={() => openModal(facility)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5"/></button>
@@ -102,6 +106,18 @@ const FacilitiesPage: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700">Address</label>
                   <input type="text" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm" 
                         value={currentFacility.address || ''} onChange={(e) => setCurrentFacility({...currentFacility, address: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-2 gap-4 items-center">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Location (lat,lng)</label>
+                  <input type="text" placeholder="e.g. 9.0820,8.6753" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm" 
+                        value={currentFacility.location || ''} onChange={(e) => setCurrentFacility({...currentFacility, location: e.target.value})} />
+                </div>
+                <div className="flex items-center">
+                  <input id="fac-show-map" type="checkbox" checked={currentFacility.show_on_map === undefined ? true : Boolean(currentFacility.show_on_map)}
+                    onChange={(e) => setCurrentFacility({...currentFacility, show_on_map: e.target.checked})} />
+                  <label htmlFor="fac-show-map" className="ml-2 text-sm text-gray-700">Show on map</label>
+                </div>
               </div>
           </div>
       </Modal>

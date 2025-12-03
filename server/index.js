@@ -6,19 +6,62 @@ import cookieSession from 'cookie-session';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import ExcelJS from 'exceljs';
 import puppeteer from 'puppeteer';
+import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import { MemoryVectorStore } from 'langchain/vectorstores/memory';
+import { OpenAIEmbeddings } from '@langchain/openai';
 dotenv.config();
 
+// ESM: provide __dirname/__filename helpers since Node ESM doesn't provide them by default
+const __filename = typeof fileURLToPath === 'function' ? fileURLToPath(import.meta.url) : undefined;
+const __dirname = __filename ? path.dirname(__filename) : process.cwd();
+
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.SERVER_PORT || process.env.PORT) || 3000;
 // Allow public admin-like endpoints in development or when explicitly enabled
 const allowPublicAdmin = (process.env.ALLOW_PUBLIC_ADMIN === 'true') || (process.env.NODE_ENV !== 'production');
 
 // Middleware - MUST be registered before route handlers so req.body is available
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+// CORS handling: allow localhost and common local network origins during development.
+// In production, only allow explicitly configured hosts via `FRONTEND_HOSTS` or `FRONTEND_HOST`.
+const frontendPort = process.env.FRONTEND_PORT ? Number(process.env.FRONTEND_PORT) : undefined;
+app.use(cors({
+    origin: (origin, callback) => {
+        // If no origin (server-to-server or curl), allow
+        if (!origin) return callback(null, true);
+        try {
+            const u = new URL(origin);
+            const hostname = u.hostname;
+
+            // Always allow localhost loopback
+            if (hostname === 'localhost' || hostname === '127.0.0.1') return callback(null, origin);
+
+            // In non-production (development/testing) allow private LAN IP ranges so
+            // frontend served on an internal address (e.g., http://172.16.x.x:9090)
+            // can call the backend without CORS blocking.
+            if (process.env.NODE_ENV !== 'production') {
+                // match 10.x.x.x, 192.168.x.x, and 172.16.0.0 - 172.31.255.255
+                if (/^(10|127)\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)) return callback(null, origin);
+                // support an explicit all-origins flag for development convenience
+                if (process.env.ALLOW_ALL_ORIGINS === 'true') return callback(null, origin);
+            }
+
+            // Allow explicitly configured frontend hosts (comma-separated list) in production
+            const allowedHosts = (process.env.FRONTEND_HOSTS || process.env.FRONTEND_HOST || '').split(',').map(s => s.trim()).filter(Boolean);
+            if (allowedHosts.length) {
+                if (allowedHosts.includes(origin) || allowedHosts.includes(hostname)) return callback(null, origin);
+            }
+        } catch (e) {
+            /* fallthrough - deny below */
+        }
+        return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Simple Session Setup (No Passport needed for dev mode)
@@ -40,15 +83,7 @@ const buildsRoot = path.join(process.cwd(), 'public', 'builds');
 if (!fs.existsSync(buildsRoot)) fs.mkdirSync(buildsRoot, { recursive: true });
 app.use('/builds', express.static(buildsRoot));
 
-// Public endpoint to expose limited client environment (TinyMCE API key) to the frontend
-app.get('/api/client_env', async (req, res) => {
-    try {
-        return res.json({ TINYMCE_API_KEY: process.env.TINYMCE_API_KEY || '' });
-    } catch (e) {
-        console.error('Failed to serve client_env', e);
-        return res.json({ TINYMCE_API_KEY: '' });
-    }
-});
+
 
 // LLM SQL generation endpoint (provider dispatch + fallback)
 async function tryCallProvider(providerRow, prompt, ragContext) {
@@ -117,65 +152,232 @@ function truncateSampleRows(rows) {
     });
 }
 
+/**
+ * Intelligent schema selector using semantic similarity and domain-specific heuristics
+ * Analyzes prompt text to intelligently select the most relevant RAG schemas
+ * Scoring factors:
+ * 1. Semantic similarity (prompt keywords in schema names, descriptions, business rules)
+ * 2. Domain-specific pattern matching (query intent analysis)
+ * 3. Relationship inference (join hints from explicit mentions)
+ * 4. Compulsory schema prioritization
+ */
+async function selectOptimalSchemas(prompt, ragRows) {
+    try {
+        // Always include compulsory schemas
+        let compulsoryRags = (ragRows || []).filter(rr => String(rr.category || '').toLowerCase() === 'compulsory');
+        if (!compulsoryRags || compulsoryRags.length === 0) {
+            const coreNames = ['dqai_activity_reports', 'dqai_answers', 'dqai_questions'];
+            compulsoryRags = ragRows.filter(rr => coreNames.includes(((rr.table_name || '')).toString()));
+        }
+
+        const lowerPrompt = String(prompt).toLowerCase();
+        const tokens = (lowerPrompt.match(/\w+/g) || []).filter(t => t.length > 2); // Filter out common 2-letter words
+
+        // Detect query intent/domain from prompt
+        const queryIntent = {
+            isScoreQuery: /\b(total|overall|score|sum|average|avg|mean|count|highest|lowest|best|worst)\b/.test(lowerPrompt),
+            isProgramQuery: /\b(program|project|campaign|initiative)\b/.test(lowerPrompt),
+            isActivityQuery: /\b(activity|activities|session|session|task|exercise|event)\b/.test(lowerPrompt),
+            isUserQuery: /\b(user|users|admin|staff|team|person|people|participant|respondent)\b/.test(lowerPrompt),
+            isFacilityQuery: /\b(facility|facilities|location|site|centre|center)\b/.test(lowerPrompt),
+            isReportQuery: /\b(report|reports|analytics|analysis|dashboard|metric|metrics)\b/.test(lowerPrompt),
+            isAnswerQuery: /\b(answer|answers|response|responses|question|questions|feedback)\b/.test(lowerPrompt),
+            isComparisonQuery: /\b(compare|comparison|vs|versus|difference|similar|like|between|across)\b/.test(lowerPrompt),
+            isTimeSeriesQuery: /\b(over time|trend|timeline|year|month|week|day|date|when|before|after)\b/.test(lowerPrompt),
+            isAggregationQuery: /\b(by|group by|grouped|per|each|breakdown|distributed)\b/.test(lowerPrompt),
+        };
+
+        // Score each schema based on multiple factors
+        const scored = ragRows.map(r => {
+            const table = (r.table_name || '').toString().toLowerCase();
+            const summary = (r.summary_text || '').toString().toLowerCase();
+            const businessRules = (r.business_rules || '').toString().toLowerCase();
+            const cols = (r.schema || []).map(c => (c.column_name || c.name || '').toString().toLowerCase());
+            const colStr = cols.join(' ');
+
+            let score = 0;
+            let matchedTokens = 0;
+
+            // ===== SEMANTIC TOKEN MATCHING =====
+            // Exact and fuzzy token matches in table name, summary, business rules
+            for (const t of tokens) {
+                if (!t || t.length < 2) continue;
+
+                // Table name matching (highest priority)
+                if (table === t) { score += 25; matchedTokens++; }
+                else if (table.includes(t)) { score += 15; matchedTokens++; }
+
+                // Column name matching
+                for (const c of cols) {
+                    if (c === t) { score += 8; matchedTokens++; }
+                    else if (c.includes(t) || t.includes(c.substring(0, Math.floor(c.length * 0.7)))) { score += 3; }
+                }
+
+                // Summary matching (description of what table contains)
+                if (summary && summary.includes(t)) { score += 6; }
+
+                // Business rules matching
+                if (businessRules && businessRules.includes(t)) { score += 5; }
+            }
+
+            // ===== DOMAIN-SPECIFIC INTENT MATCHING =====
+            // Boost schemas based on detected query intent
+            if (queryIntent.isScoreQuery) {
+                if (cols.some(c => c.includes('score'))) { score += 80; }
+                if (cols.some(c => c.includes('overall'))) { score += 60; }
+                if (cols.some(c => c.includes('answer'))) { score += 40; }
+                if (table.includes('answer') || table.includes('report')) { score += 35; }
+            }
+
+            if (queryIntent.isProgramQuery) {
+                if (table.includes('program') || table.includes('project')) { score += 70; }
+                if (cols.some(c => c.includes('program'))) { score += 40; }
+            }
+
+            if (queryIntent.isActivityQuery) {
+                if (table.includes('activity') || table.includes('session') || table.includes('task')) { score += 70; }
+                if (cols.some(c => c.includes('activity'))) { score += 40; }
+            }
+
+            if (queryIntent.isUserQuery) {
+                if (table.includes('user') || table.includes('staff') || table.includes('admin') || table.includes('team')) { score += 65; }
+            }
+
+            if (queryIntent.isFacilityQuery) {
+                if (table.includes('facility') || table.includes('location') || table.includes('site')) { score += 65; }
+            }
+
+            if (queryIntent.isReportQuery) {
+                if (table.includes('report') || table.includes('answer') || table.includes('activity')) { score += 50; }
+                if (cols.some(c => c.includes('metric') || c.includes('total'))) { score += 30; }
+            }
+
+            if (queryIntent.isAnswerQuery) {
+                if (table.includes('answer') || table.includes('question') || table.includes('response')) { score += 70; }
+                if (cols.some(c => c.includes('answer') || c.includes('response'))) { score += 40; }
+            }
+
+            if (queryIntent.isAggregationQuery) {
+                if (cols.some(c => c.includes('count') || c.includes('total') || c.includes('sum') || c.includes('average'))) { score += 40; }
+            }
+
+            // ===== RELATIONSHIP INFERENCE =====
+            // Boost tables likely needed for joins based on explicit mentions
+            if (lowerPrompt.includes('by') || lowerPrompt.includes('group')) {
+                if (table.includes('user') || table.includes('program') || table.includes('facility')) { score += 20; }
+            }
+
+            // ===== COMPULSORY BOOST =====
+            if (compulsoryRags.some(cr => cr.table_name === r.table_name)) {
+                score += 30; // Ensure compulsory tables are always included but allow better matches to rank higher
+            }
+
+            return {
+                r,
+                score,
+                matchedTokens,
+                intent: queryIntent
+            };
+        });
+
+        // Sort by score, then by matched tokens
+        scored.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return b.matchedTokens - a.matchedTokens;
+        });
+
+        // Select top schemas with diversity
+        const selected = [];
+        const selectedTableNames = new Set();
+
+        // Always include compulsory schemas
+        for (const item of scored) {
+            if (compulsoryRags.some(cr => cr.table_name === item.r.table_name)) {
+                selected.push(item.r);
+                selectedTableNames.add(item.r.table_name);
+            }
+        }
+
+        // Add highest scoring non-compulsory schemas (up to 4 total, max 3 additional)
+        for (const item of scored) {
+            if (selected.length >= 4) break;
+            if (!selectedTableNames.has(item.r.table_name) && item.score > 5) {
+                selected.push(item.r);
+                selectedTableNames.add(item.r.table_name);
+            }
+        }
+
+        // If nothing was selected, pick the top scorers
+        if (selected.length === 0) {
+            for (const item of scored.slice(0, 3)) {
+                if (!selectedTableNames.has(item.r.table_name)) {
+                    selected.push(item.r);
+                    selectedTableNames.add(item.r.table_name);
+                }
+            }
+        }
+
+        console.log(`[Schema Selection] Prompt: "${prompt.substring(0, 80)}..."`);
+        console.log(`[Schema Selection] Intent: ${JSON.stringify(queryIntent)}`);
+        console.log(`[Schema Selection] Selected: ${selected.map(s => s.table_name).join(', ')}`);
+        console.log(`[Schema Selection] Top scores: ${scored.slice(0, 5).map(s => `${s.r.table_name}:${s.score}`).join(', ')}`);
+
+        return {
+            best: scored[0]?.r,
+            selected: selected.length > 0 ? selected : [scored[0]?.r].filter(Boolean),
+            compulsory: compulsoryRags,
+            scores: scored.slice(0, 10).map(s => ({ table: s.r.table_name, score: s.score, intent: s.intent }))
+        };
+    } catch (e) {
+        console.error('selectOptimalSchemas error:', e);
+        // Fallback: return first schema and all compulsory
+        const compulsoryRags = (ragRows || []).filter(rr => String(rr.category || '').toLowerCase() === 'compulsory');
+        return {
+            best: ragRows[0],
+            selected: ragRows.slice(0, 1),
+            compulsory: compulsoryRags,
+            scores: []
+        };
+    }
+}
+
 app.post('/api/llm/generate_sql', async (req, res) => {
     try {
-        const { prompt, context, scope, providerId } = req.body || {};
+        const { prompt, context, scope, providerId, messages, overrideNote } = req.body || {};
         if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+        // Combine prior conversation messages (if any) with the current prompt to provide memory/context
+        let combinedPrompt = String(prompt);
+        try {
+            if (Array.isArray(messages) && messages.length) {
+                const hist = messages.map(m => `${m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : 'System'}: ${m.text}`).join('\n');
+                combinedPrompt = hist + '\nUser: ' + combinedPrompt;
+            }
+        } catch (e) { /* ignore */ }
 
         const rres = await pool.query('SELECT * FROM dqai_rag_schemas');
         const ragRows = rres.rows || [];
 
-        const tokens = (String(prompt).toLowerCase().match(/\w+/g) || []);
-        const lowerPrompt = String(prompt).toLowerCase();
-        const scored = ragRows.map(r => {
-            const table = (r.table_name || '').toString().toLowerCase();
-            const cols = (r.schema || []).map(c => (c.column_name || c.name || '').toString().toLowerCase());
-            let score = 0;
-            for (const t of tokens) {
-                if (!t) continue;
-                if (table === t) score += 10; // exact table name match
-                else if (table.includes(t)) score += 5; // table name contains token
-                for (const c of cols) {
-                    if (c === t) score += 3;
-                    else if (c.includes(t)) score += 1;
-                }
-            }
-            // Heuristics for statistical/score queries: boost schemas that contain score-like columns
-            try {
-                if (/\b(total|total score|overall score|score|sum|average|avg|mean)\b/.test(lowerPrompt)) {
-                    const lowCols = cols;
-                    if (lowCols.includes('overall_score') || lowCols.includes('overallscore')) score += 80;
-                    if (lowCols.includes('score') || lowCols.includes('scores') || lowCols.includes('score_value')) score += 50;
-                    if (lowCols.some(c => c.includes('answer') || c.includes('answer_value') || c.includes('answers'))) score += 40;
-                    if (table.includes('report')) score += 30;
-                    if (table.includes('answer') || table.includes('answers')) score += 30;
-                }
-            } catch (e) { }
-            return { r, score, cols };
-        });
+        // Use intelligent schema selector
+        const schemaSelection = await selectOptimalSchemas(combinedPrompt, ragRows);
+        const best = schemaSelection.best;
+        const selectedSchemas = schemaSelection.selected;
+        const compulsoryRags = schemaSelection.compulsory;
 
-        scored.sort((a, b) => (b.score - a.score));
-        const best = scored[0];
-        if (!best || best.score <= 0) {
+        if (!best || !selectedSchemas || selectedSchemas.length === 0) {
             const available = ragRows.map(rr => rr.table_name).filter(Boolean).slice(0, 50);
-            return res.json({ text: `I couldn't confidently match your request to any table schema. Please clarify which table/fields you mean. Available tables: ${available.join(', ')}` });
+            return res.json({
+                text: `I couldn't confidently match your request to any table schema. Please clarify which table/fields you mean. Available tables: ${available.join(', ')}`,
+                selectedSchemas: [],
+                selectedBusinessRules: []
+            });
         }
 
-        // Choose the table to use (allow keyword-driven overrides)
-        let tableName = best.r.table_name;
-        let overrideNote = '';
-        try {
-            const wantsProgram = tokens.some(t => t === 'program' || t === 'programs');
-            if (wantsProgram) {
-                const progRow = ragRows.find(rr => ((rr.table_name || '').toString().toLowerCase().includes('program')));
-                if (progRow) {
-                    tableName = progRow.table_name;
-                    overrideNote = `Overrode initial match because prompt explicitly mentions programs; using table "${tableName}" from RAG records.`;
-                }
-            }
-        } catch (e) { /* ignore */ }
+        // Choose the primary table to use
+        let tableName = best.table_name;
+        const chosenRow = selectedSchemas.find(rr => (rr.table_name || '') === tableName) || best;
 
-        const chosenRow = ragRows.find(rr => (rr.table_name || '') === tableName) || best.r;
+        // Re-extract tokens for column matching
+        const tokens = (String(combinedPrompt).toLowerCase().match(/\w+/g) || []);
         const matchedCols = [];
         for (const c of (chosenRow.schema || [])) {
             const cname = (c.column_name || c.name || '').toString();
@@ -184,14 +386,9 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         }
 
         // Include any RAG records marked as 'Compulsory' into the LLM context so the model always sees them
-        let compulsoryRags = (ragRows || []).filter(rr => String(rr.category || '').toLowerCase() === 'compulsory');
-        // If no explicit compulsory entries exist, prefer core tables that are likely required for SQL generation
-        if (!compulsoryRags || compulsoryRags.length === 0) {
-            const coreNames = ['dqai_activity_reports', 'dqai_answers', 'dqai_questions'];
-            compulsoryRags = ragRows.filter(rr => coreNames.includes(((rr.table_name || '')).toString()));
-        }
+        // compulsoryRags already obtained from selectOptimalSchemas
         let compulsoryContext = '';
-        if (compulsoryRags.length) {
+        if (compulsoryRags && compulsoryRags.length) {
             // Prefer using a short human-readable summary if available
             compulsoryContext = compulsoryRags.map(cr => {
                 if (cr.summary_text && String(cr.summary_text).trim()) return `RAG Summary: ${String(cr.summary_text).trim()}${cr.business_rules ? '\nBusiness Rules: ' + cr.business_rules : ''}`;
@@ -212,7 +409,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             summary_text: row.summary_text || null
         });
 
-        const chosenObj = buildRagObj(chosenRow || best.r);
+        const chosenObj = buildRagObj(chosenRow);
         const compulsoryObjs = (compulsoryRags || []).map(buildRagObj);
         const ragContextObj = { compulsory: compulsoryObjs, chosen: chosenObj };
         const ragContext = JSON.stringify(ragContextObj);
@@ -220,18 +417,41 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         let providerUsed = null;
         let providerResponse = null;
         try {
+            // Build enriched prompt that includes RAG context and enforces "Thinking:" output
+            const enrichedPrompt = `You are a SQL query assistant with access to the following database schemas and business rules.
+
+RAG SCHEMAS AND CONTEXT:
+${ragContext}
+
+INSTRUCTIONS:
+1. First, output "Thinking:" on its own line and think step-by-step about:
+   - Which table(s) from the RAG schemas are most relevant to the user's request
+   - What columns should be selected and any WHERE/GROUP BY/JOIN logic needed
+   - Business rules that apply to this query
+2. Then output "Action to Be Taken:" on its own line and provide:
+   - A single read-only SELECT SQL statement (NO INSERT/UPDATE/DELETE)
+   - SQL MUST use only tables and columns present in the RAG schemas above
+   - Use column names and table names exactly as shown in the schema
+   - Wrap all identifiers in double quotes for safety
+3. Format your response clearly with those two sections separated by newlines.
+
+USER REQUEST:
+${combinedPrompt}
+
+Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY the schemas provided above.`;
+
             if (providerId) {
                 const pr = await pool.query('SELECT * FROM dqai_llm_providers WHERE id = $1', [providerId]);
                 if (pr.rows.length) {
                     const prov = pr.rows[0];
-                    providerResponse = await tryCallProvider(prov, prompt, ragContext);
+                    providerResponse = await tryCallProvider(prov, enrichedPrompt, ragContext);
                     if (providerResponse) providerUsed = prov.name || prov.provider_id;
                 }
             } else {
                 const pres = await pool.query('SELECT * FROM dqai_llm_providers ORDER BY priority ASC NULLS LAST');
                 for (const prov of pres.rows) {
                     try {
-                        const r = await tryCallProvider(prov, prompt, ragContext);
+                        const r = await tryCallProvider(prov, enrichedPrompt, ragContext);
                         if (r) { providerResponse = r; providerUsed = prov.name || prov.provider_id; break; }
                     } catch (e) { }
                 }
@@ -241,12 +461,49 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         if (providerResponse && (providerResponse.sql || providerResponse.text)) {
             const text = providerResponse.text || '';
             const sql = providerResponse.sql || '';
-            return res.json({ text, sql, ragTables: [tableName], matchedColumns: matchedCols, providerUsed });
+            // Parse thinking and action from response if present
+            let thinking = '';
+            let actionText = text;
+            try {
+                const thinkMatch = text.match(/Thinking:([\s\S]*?)(?:Action to Be Taken:|$)/i);
+                const actionMatch = text.match(/Action to Be Taken:([\s\S]*?)$/i);
+                if (thinkMatch && thinkMatch[1]) thinking = thinkMatch[1].trim();
+                if (actionMatch && actionMatch[1]) actionText = actionMatch[1].trim();
+            } catch (e) { /* ignore parse errors */ }
+
+            // Basic validation: ensure SQL references only tables/columns present in RAG context for safety
+            try {
+                const allowedTables = (ragRows || []).map(r => (r.table_name || '').toString().toLowerCase()).filter(Boolean);
+                const allowedCols = new Set(((chosenRow.schema || []).map(c => (c.column_name || c.name || '').toString())));
+                const referencedTables = Array.from(new Set((sql.match(/from\s+"?([a-zA-Z0-9_\.]+)"?/gi) || []).map(s => s.replace(/from\s+/i, '').replace(/"/g, '').trim().toLowerCase())));
+                const badTable = referencedTables.find(t => !allowedTables.includes(t) && !t.includes('.'));
+                if (badTable) {
+                    return res.json({ text: `The generated SQL references table "${badTable}" which is not present in the available RAG schemas. I will not return SQL that references unknown tables. Please clarify which table you mean or pick one of: ${allowedTables.join(', ')}` });
+                }
+                // Check columns simply by scanning quoted identifiers and bare words in SELECT clause
+                const colMatches = (sql.match(/select[\s\S]*?from/i) || [])[0] || '';
+                const quotedCols = Array.from(new Set((colMatches.match(/"([a-zA-Z0-9_]+)"/g) || []).map(s => s.replace(/"/g, ''))));
+                const badCol = quotedCols.find(c => !allowedCols.has(c));
+                if (badCol) {
+                    return res.json({ text: `The generated SQL references column "${badCol}" which is not present in the selected table schema. I will not return SQL that references unknown columns. Please clarify which columns you want.` });
+                }
+            } catch (e) { /* if validation fails, fall back to sending generated SQL */ }
+
+            return res.json({
+                text: actionText,
+                thinking,
+                sql,
+                ragTables: [tableName],
+                matchedColumns: matchedCols,
+                providerUsed,
+                selectedSchemas: selectedSchemas.map(s => s.table_name),
+                selectedBusinessRules: selectedSchemas.filter(s => s.business_rules).map(s => ({ table: s.table_name, rules: s.business_rules }))
+            });
         }
 
         const lower = String(prompt).toLowerCase();
         let sql = '';
-        const numericCol = (best.r.schema || []).find(c => /(int|numeric|decimal|real|double|smallint|bigint)/i.test(String(c.data_type || '')));
+        const numericCol = (best.schema || []).find(c => /(int|numeric|decimal|real|double|smallint|bigint)/i.test(String(c.data_type || '')));
 
         // A: average / mean requests
         if (/(average|avg|mean)/.test(lower) && numericCol) {
@@ -272,7 +529,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                 if (whereMatch && whereMatch[1] && whereMatch[2]) {
                     // pattern matched as where <col> = <val>
                     const col = whereMatch[1]; const val = whereMatch[2];
-                    const hasCol = (best.r.schema || []).some(c => (c.column_name || c.name || '') === col);
+                    const hasCol = (best.schema || []).some(c => (c.column_name || c.name || '') === col);
                     if (hasCol) {
                         sql = `SELECT COUNT(*) as count FROM "${tableName}" WHERE "${col}" = '${String(val).replace(/'/g, "''")}'`;
                     }
@@ -286,7 +543,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         } else {
             let selectCols = [];
             if (matchedCols.length > 0) selectCols = matchedCols.slice(0, 10);
-            else selectCols = (best.r.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).slice(0, 10);
+            else selectCols = (best.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).slice(0, 10);
             const selectClause = (selectCols.length > 0) ? selectCols.map(c => `"${c}"`).join(', ') : '*';
             let where = '';
 
@@ -294,14 +551,14 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([^'"\n]+)['"]?/i);
             if (whereMatch) {
                 const col = whereMatch[1]; const val = whereMatch[3];
-                const hasCol = (best.r.schema || []).some(c => (c.column_name || c.name || '') === col);
+                const hasCol = (best.schema || []).some(c => (c.column_name || c.name || '') === col);
                 if (hasCol) where = ` WHERE "${col}" = '${String(val).replace(/'/g, "''")}'`;
             } else {
                 // try "for <value>" or "in <value>" and match to a text column
                 const forMatch = prompt.match(/(?:for|in)\s+['"]?([^'"\n]+)['"]?/i);
                 if (forMatch) {
                     const val = forMatch[1].trim();
-                    const textCol = (best.r.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
+                    const textCol = (best.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
                     if (textCol) where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${String(val).replace(/'/g, "''")}%'`;
                 }
             }
@@ -314,7 +571,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                     // try to find a likely program name column in the program table
                     const progSchema = programTable.schema || [];
                     const progNameCol = (progSchema.find(c => /(name|title|program)/i.test(String(c.column_name || c.name || ''))) || {}).column_name || (progSchema.find(c => /(name|title|program)/i.test(String(c.column_name || c.name || ''))) || {}).name;
-                    const textCol = (best.r.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
+                    const textCol = (best.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
                     if (progNameCol && textCol) {
                         // if user provided a program name, capture it
                         const progMatch = prompt.match(/(?:for|in)\s+['"]?([^'"\n]+)['"]?/i);
@@ -350,7 +607,15 @@ app.post('/api/llm/generate_sql', async (req, res) => {
 
         // Put Action on its own line and bold the SQL for clearer UI rendering
         const responseText = `${explanation}\n\nAction to Be Taken:\n**${sql}**`;
-        return res.json({ text: responseText, sql, ragTables: [tableName], matchedColumns: matchedCols, providerUsed });
+        return res.json({
+            text: responseText,
+            sql,
+            ragTables: [tableName],
+            matchedColumns: matchedCols,
+            providerUsed,
+            selectedSchemas: selectedSchemas.map(s => s.table_name),
+            selectedBusinessRules: selectedSchemas.filter(s => s.business_rules).map(s => ({ table: s.table_name, rules: s.business_rules }))
+        });
 
     } catch (e) {
         console.error('LLM/generate_sql error', e);
@@ -698,6 +963,13 @@ const pool = new Pool({
     port: process.env.DB_PORT || 5432,
 });
 
+// TABLE_PREFIX can be set in the environment to create an additional set
+// of tables with that prefix on startup. We do NOT rewrite runtime SQL;
+// the application continues to reference the default 'dqai_' tables unless
+// code is explicitly changed. Use the prefixed tables for migration or
+// parallel installations when needed.
+const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqai_');
+
 // Initialize database schema if tables don't exist
 async function initDb() {
     const queries = [
@@ -903,6 +1175,19 @@ async function initDb() {
             role_id INTEGER REFERENCES dqai_roles(id) ON DELETE CASCADE,
             PRIMARY KEY (user_id, role_id)
         )`);
+        // Page/section-level permissions: store per-role flags for pages/sections
+        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_page_permissions (
+            id SERIAL PRIMARY KEY,
+            page_key TEXT NOT NULL,
+            section_key TEXT,
+            role_name TEXT NOT NULL,
+            can_create BOOLEAN DEFAULT FALSE,
+            can_view BOOLEAN DEFAULT TRUE,
+            can_edit BOOLEAN DEFAULT FALSE,
+            can_delete BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE (page_key, section_key, role_name)
+        )`);
         await pool.query(`CREATE TABLE IF NOT EXISTS dqai_settings (
             key TEXT PRIMARY KEY,
             value JSONB
@@ -957,6 +1242,14 @@ async function initDb() {
         await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS reported_by INTEGER`);
         // Add optional template association for reports
         await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS report_template_id INTEGER`);
+        // Allow storing a picked location and visibility flag on reports and users
+        try { await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN`); } catch (e) { /* ignore */ }
+        // Allow assigning a validator to a report
+        try { await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS assigned_validator INTEGER`); } catch (e) { /* ignore */ }
+        // Add location and show_on_map to users so user profiles can optionally store coordinates/visibility
+        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
         // Enhance report templates table to support paper size, orientation and images
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS paper_size TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS orientation TEXT`); } catch (e) { /* ignore */ }
@@ -964,6 +1257,43 @@ async function initDb() {
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS footer_image TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS watermark_image TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS assets JSONB`); } catch (e) { /* ignore */ }
+        // Add facility location and visibility columns (store as text 'lat,lng')
+        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        // Email verification tokens for self-registered users
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_email_verifications (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES dqai_users(id) ON DELETE CASCADE,
+                token TEXT UNIQUE,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (e) { /* ignore */ }
+        // Add show_on_map to programs and activities so they can be toggled on the map
+        try { await pool.query(`ALTER TABLE dqai_programs ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        // Ensure indicators table exists for computed indicators definitions
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_indicators (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE SET NULL,
+                formula TEXT,
+                formula_type TEXT,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (e) { /* ignore */ }
+        // Ensure indicator fields requested by UI exist (idempotent)
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS title TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS subtitle TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS indicator_level TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS unit_of_measurement TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT false`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS program_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS notes JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS status TEXT`); } catch (e) { /* ignore */ }
         // Allow per-row role assignments on dataset content rows
         try { await pool.query(`ALTER TABLE dqai_dataset_content ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
     } catch (err) {
@@ -985,6 +1315,32 @@ async function initDb() {
         throw err;
     }
     console.log('Database initialized (tables ensured).');
+    // If TABLE_PREFIX is set and different from the default 'dqai_', create
+    // a second set of tables using that prefix. This avoids changing the
+    // application's runtime SQL while ensuring prefixed tables exist when
+    // deploying to environments that expect a different prefix.
+    try {
+        const runtimeTablePrefix = (process.env.TABLE_PREFIX || '').toString().trim();
+        if (runtimeTablePrefix && runtimeTablePrefix !== 'dqai_') {
+            try {
+                const cfg = {
+                    user: process.env.DB_USER || 'postgres',
+                    host: process.env.DB_HOST || 'localhost',
+                    database: process.env.DB_NAME || 'dqappdb',
+                    password: process.env.DB_PASSWORD || 'admin',
+                    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
+                    type: 'pg'
+                };
+                console.log(`[startup] Creating additional prefixed tables using TABLE_PREFIX='${runtimeTablePrefix}'`);
+                await createAppTablesInTarget(cfg, runtimeTablePrefix);
+                console.log(`[startup] Prefixed tables created for '${runtimeTablePrefix}'`);
+            } catch (e) {
+                console.warn('Failed to create prefixed tables for TABLE_PREFIX:', runtimeTablePrefix, e && e.message ? e.message : e);
+            }
+        }
+    } catch (e) {
+        console.warn('TABLE_PREFIX creation check failed', e && e.message ? e.message : e);
+    }
     // Ensure default admin user exists
     try {
         const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
@@ -997,30 +1353,22 @@ async function initDb() {
             console.error('Failed to hash default admin password:', e);
             hashedAdminPassword = adminPassword; // fallback to plaintext (will be attempted to migrate on login)
         }
-        const res = await pool.query('SELECT * FROM dqai_users WHERE email = $1', [adminEmail]);
-        if (res.rows.length === 0) {
-            await pool.query(
-                'INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6)',
-                ['System', 'Administrator', adminEmail, hashedAdminPassword, 'Admin', 'Active']
-            );
-            console.log('Default admin user created:', adminEmail);
-        } else {
-            // If user exists but password is empty or null, set it to the default admin password
-            try {
-                const existing = res.rows[0];
-                if (!existing.password || String(existing.password).trim() === '') {
-                    try {
-                        await pool.query('UPDATE dqai_users SET password = $1 WHERE id = $2', [hashedAdminPassword, existing.id]);
-                        console.log('Default admin user existed with empty password; password was set (hashed) from env for:', adminEmail);
-                    } catch (ue) {
-                        console.error('Failed to update existing admin password with hashed value:', ue);
-                        // fallback to plain update
-                        await pool.query('UPDATE dqai_users SET password = $1 WHERE id = $2', [adminPassword, existing.id]);
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to ensure default admin password:', e);
+        // Only create a default admin if no Admin user exists. This avoids overwriting
+        // or re-creating the default admin when an Admin account has been modified by the user.
+        try {
+            const adminsRes = await pool.query("SELECT u.id FROM dqai_users u WHERE u.role = 'Admin' OR u.id IN (SELECT ur.user_id FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE LOWER(r.name) = 'admin') LIMIT 1");
+            if (!adminsRes.rows || adminsRes.rows.length === 0) {
+                // No admin user exists; create the default admin
+                await pool.query(
+                    'INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6)',
+                    ['System', 'Administrator', adminEmail, hashedAdminPassword, 'Admin', 'Active']
+                );
+                console.log('Default admin user created:', adminEmail);
+            } else {
+                console.log('Admin user(s) already exist; skipping default admin creation.');
             }
+        } catch (e) {
+            console.error('Failed to ensure default admin user safely:', e);
         }
     } catch (err) {
         console.error('Failed to ensure default admin user', err);
@@ -1094,6 +1442,13 @@ async function initDb() {
     } catch (err) {
         console.error('Failed to assign Admin role to default admin user (post-seed):', err);
     }
+
+    // Startup domain data seeding for programs/activities/questions/answers/facilities
+    // has been intentionally disabled. Table creation/migrations are still run above,
+    // and any required sample or domain data should be created via the admin UI or
+    // manual seed scripts (e.g., server/scripts/seed_activity.js) to avoid accidental
+    // population in production environments.
+    console.log('Skipping automatic seeding of programs/activities/questions/answers/facilities on startup.');
 }
 
 // Helper: connect to an arbitrary target DB (Postgres or MySQL). Returns { type: 'pg'|'mysql', client }
@@ -1625,6 +1980,134 @@ app.post('/api/env', async (req, res) => {
     } catch (e) { console.error('public env write error', e); res.status(500).json({ error: 'Failed to write env' }); }
 });
 
+// Admin: list tables in public schema
+app.get('/api/admin/db/tables', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name");
+        return res.json({ tables: r.rows.map(rw => rw.table_name) });
+    } catch (e) { console.error('admin db tables error', e); return res.status(500).json({ error: String(e) }); }
+});
+
+// Admin: get all page/section permissions
+app.get('/api/admin/page_permissions', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM dqai_page_permissions ORDER BY page_key, section_key, role_name');
+        res.json(r.rows);
+    } catch (e) { console.error('admin page_permissions get error', e); res.status(500).json({ error: 'Failed to fetch page permissions' }); }
+});
+
+// Public: get permissions for a specific role (used by frontend to enforce per-page/section visibility)
+app.get('/api/page_permissions', async (req, res) => {
+    try {
+        const role = String(req.query.role || req.query.roleName || '').trim();
+        if (!role) return res.status(400).json({ error: 'Missing role query param' });
+        const r = await pool.query('SELECT * FROM dqai_page_permissions WHERE role_name = $1 ORDER BY page_key, section_key', [role]);
+        res.json(r.rows);
+    } catch (e) { console.error('page_permissions fetch error', e); res.status(500).json({ error: 'Failed to fetch page permissions' }); }
+});
+
+// Admin: replace page_permissions (accepts array of permission objects)
+app.post('/api/admin/page_permissions', requireAdmin, async (req, res) => {
+    try {
+        const list = Array.isArray(req.body) ? req.body : (req.body && Array.isArray(req.body.permissions) ? req.body.permissions : null);
+        if (!list) return res.status(400).json({ error: 'Missing permissions array' });
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            // Upsert each permission
+            for (const p of list) {
+                const pageKey = p.page_key || p.pageKey || p.page || '';
+                const sectionKey = (p.section_key || p.sectionKey || p.section) || null;
+                const roleName = p.role_name || p.roleName || p.role || '';
+                const canCreate = !!p.can_create || !!p.canCreate;
+                const canView = (p.can_view === undefined && p.canView === undefined) ? true : (!!p.can_view || !!p.canView);
+                const canEdit = !!p.can_edit || !!p.canEdit;
+                const canDelete = !!p.can_delete || !!p.canDelete;
+                if (!pageKey || !roleName) continue;
+                await client.query(`INSERT INTO dqai_page_permissions (page_key, section_key, role_name, can_create, can_view, can_edit, can_delete)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7)
+                    ON CONFLICT (page_key, section_key, role_name) DO UPDATE SET can_create = EXCLUDED.can_create, can_view = EXCLUDED.can_view, can_edit = EXCLUDED.can_edit, can_delete = EXCLUDED.can_delete`, [pageKey, sectionKey, roleName, canCreate, canView, canEdit, canDelete]);
+            }
+            await client.query('COMMIT');
+            res.json({ success: true });
+        } catch (e) {
+            await client.query('ROLLBACK');
+            console.error('admin page_permissions save error', e);
+            res.status(500).json({ error: 'Failed to save permissions' });
+        } finally { client.release(); }
+    } catch (e) { console.error('admin page_permissions error', e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Admin: get table schema (columns)
+app.get('/api/admin/db/table/:table/schema', requireAdmin, async (req, res) => {
+    try {
+        const t = req.params.table;
+        const cols = await pool.query('SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position', [t]);
+        return res.json({ table: t, columns: cols.rows });
+    } catch (e) { console.error('admin table schema error', e); return res.status(500).json({ error: String(e) }); }
+});
+
+// Admin: get table info (primary keys, foreign keys)
+app.get('/api/admin/db/table/:table/info', requireAdmin, async (req, res) => {
+    try {
+        const t = req.params.table;
+        const pkRes = await pool.query(`SELECT kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.constraint_schema = tc.constraint_schema WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_name = $1`, [t]);
+        const fkRes = await pool.query(`SELECT kcu.column_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = $1`, [t]);
+        return res.json({ table: t, primaryKeys: pkRes.rows.map(r => r.column_name), foreignKeys: fkRes.rows });
+    } catch (e) { console.error('admin table info error', e); return res.status(500).json({ error: String(e) }); }
+});
+
+// Admin: fetch rows for a table with pagination and optional text search across text-like columns
+app.get('/api/admin/db/table/:table/rows', requireAdmin, async (req, res) => {
+    try {
+        const t = req.params.table;
+        const limit = Math.min(1000, Math.max(1, Number(req.query.limit || 50)));
+        const offset = Math.max(0, Number(req.query.offset || 0));
+        const search = (req.query.search || '').toString().trim();
+
+        // If search provided, find text-like columns and build an ILIKE OR clause
+        let where = '';
+        const params = [];
+        if (search) {
+            const colsRes = await pool.query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1", [t]);
+            const textCols = colsRes.rows.filter(c => /char|text|varchar|json|jsonb/i.test(c.data_type)).map(c => c.column_name);
+            if (textCols.length) {
+                const clauses = textCols.map((c, i) => `CAST("${c}" AS TEXT) ILIKE $${i + 1}`);
+                where = 'WHERE ' + clauses.join(' OR ');
+                for (let i = 0; i < textCols.length; i++) params.push(`%${search}%`);
+            }
+        }
+
+        const sql = `SELECT * FROM "${t}" ${where} ORDER BY 1 LIMIT ${limit} OFFSET ${offset}`;
+        const rowsRes = await pool.query(sql, params);
+        // also return total count (rough) if no search or small table
+        let total = null;
+        try {
+            const cntRes = await pool.query(`SELECT COUNT(*)::int as cnt FROM "${t}"${where ? ' ' + where : ''}`, params);
+            total = cntRes.rows[0].cnt;
+        } catch (e) { /* ignore count errors */ }
+        return res.json({ table: t, rows: rowsRes.rows, rowCount: rowsRes.rowCount, total });
+    } catch (e) { console.error('admin table rows error', e); return res.status(500).json({ error: String(e) }); }
+});
+
+// Admin: run a single SELECT SQL statement (read-only)
+app.post('/api/admin/db/query', requireAdmin, async (req, res) => {
+    try {
+        const { sql } = req.body || {};
+        if (!sql) return res.status(400).json({ error: 'Missing sql' });
+        const trimmed = String(sql).trim();
+        if (!/^select\s+/i.test(trimmed)) return res.status(400).json({ error: 'Only SELECT queries are allowed' });
+        if (/;/.test(trimmed.replace(/\s+/g, ' ')) && !/;\s*\z/.test(trimmed)) return res.status(400).json({ error: 'Multiple statements are not allowed' });
+        try {
+            const result = await pool.query(trimmed);
+            return res.json({ rows: result.rows, rowCount: result.rowCount });
+        } catch (e) {
+            console.error('admin db query error', e);
+            return res.status(500).json({ error: String(e.message || e) });
+        }
+    } catch (e) { console.error('admin db query top error', e); return res.status(500).json({ error: String(e) }); }
+});
+
 // Switch the application's data DB to an external target and create required tables there (admin only)
 app.post('/api/admin/switch-db', requireAdmin, async (req, res) => {
     try {
@@ -1739,7 +2222,7 @@ app.post('/auth/reset-password', async (req, res) => {
         const row = tres.rows[0];
         if (new Date(row.expires_at) < new Date()) return res.status(400).json({ ok: false, error: 'Token expired' });
         const hash = await bcrypt.hash(newPassword, 10);
-        await pool.query('UPDATE dqai_users SET dqai_password = $1 WHERE id = $2', [hash, row.user_id]);
+        await pool.query('UPDATE dqai_users SET password = $1 WHERE id = $2', [hash, row.user_id]);
         await pool.query('DELETE FROM dqai_password_resets WHERE token = $1', [token]);
         return res.json({ ok: true });
     } catch (e) { console.error('reset-password error', e); res.status(500).json({ ok: false, error: String(e) }); }
@@ -1750,7 +2233,22 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM dqai_settings');
         const out = {};
-        for (const r of result.rows) out[r.key] = r.value;
+        for (const r of result.rows) {
+            // The value is stored as JSONB, so we need to extract the actual value
+            // r.value will be a JSONB object/string - parse it
+            try {
+                if (typeof r.value === 'string') {
+                    out[r.key] = JSON.parse(r.value);
+                } else if (typeof r.value === 'object') {
+                    // JSONB already deserialized to object
+                    out[r.key] = r.value;
+                } else {
+                    out[r.key] = r.value;
+                }
+            } catch (e) {
+                out[r.key] = r.value;
+            }
+        }
         res.json(out);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to fetch settings' }); }
 });
@@ -1759,7 +2257,14 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
         const payload = req.body || {};
         for (const [k, v] of Object.entries(payload)) {
-            await pool.query('INSERT INTO dqai_settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = $2', [k, v]);
+            // Convert the JS value to a JSON string and cast to jsonb on the SQL side.
+            // Using `$2::jsonb` avoids PostgreSQL's "polymorphic type unknown" error
+            // which can occur when calling functions like to_jsonb($2) with an unknown param type.
+            const jsonString = JSON.stringify(v);
+            await pool.query(
+                'INSERT INTO dqai_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = $2::jsonb',
+                [k, jsonString]
+            );
         }
         res.json({ success: true });
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save settings' }); }
@@ -1767,31 +2272,32 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
 
 // Admin: detect local Ollama models (server-side probe to avoid CORS issues)
 app.get('/api/admin/detect-ollama', requireAdmin, async (req, res) => {
-    const endpoints = [
-        'http://127.0.0.1:11434/models',
-        'http://127.0.0.1:11434/list',
-        'http://127.0.0.1:11434/v1/models',
-        'http://127.0.0.1:11434/llms',
-        'http://localhost:11434/models',
-        'http://localhost:11434/list',
-        'http://localhost:11434/v1/models',
-        'http://[::1]:11434/models',
-        'https://127.0.0.1:11434/models',
-        'https://localhost:11434/models'
-    ];
+    // Only probe the supported Ollama endpoints for listing models and version
+    const hosts = ['127.0.0.1', 'localhost', '::1'];
+    const ports = [11434];
+    const paths = ['/api/tags', '/api/version'];
     try {
-        for (const url of endpoints) {
-            try {
-                const r = await fetch(url, { method: 'GET' });
-                if (!r.ok) continue;
-                const j = await r.json();
-                let found = [];
-                if (Array.isArray(j)) found = j.map(m => m.name || m.id || m.model || String(m));
-                else if (j.models && Array.isArray(j.models)) found = j.models.map(m => m.name || m.id || m.model || String(m));
-                else if (j.model) found = [j.model];
-                if (found.length) return res.json({ ok: true, models: found, url });
-            } catch (e) {
-                // try next
+        for (const h of hosts) {
+            for (const p of ports) {
+                for (const pa of paths) {
+                    const url = `http://${h}:${p}${pa}`;
+                    try {
+                        const r = await fetch(url, { method: 'GET' });
+                        if (!r.ok) continue;
+                        const j = await r.json();
+                        // /api/tags returns { models: [...] }
+                        if (pa === '/api/tags' && j && Array.isArray(j.models) && j.models.length) {
+                            const found = j.models.map(m => m.name || m.id || String(m));
+                            return res.json({ ok: true, models: found, url });
+                        }
+                        // /api/version returns version info; return if present
+                        if (pa === '/api/version' && j && (j.version || j.build)) {
+                            return res.json({ ok: true, version: j, url });
+                        }
+                    } catch (e) {
+                        // try next
+                    }
+                }
             }
         }
         return res.status(404).json({ ok: false, models: [] });
@@ -1970,28 +2476,29 @@ if (allowPublicAdmin) {
 
     // Public detect-ollama endpoint (dev only)
     app.get('/api/detect-ollama', async (req, res) => {
-        const endpoints = [
-            'http://127.0.0.1:11434/models',
-            'http://127.0.0.1:11434/list',
-            'http://127.0.0.1:11434/v1/models',
-            'http://127.0.0.1:11434/llms',
-            'http://localhost:11434/models',
-            'http://localhost:11434/list',
-            'http://localhost:11434/v1/models',
-            'http://[::1]:11434/models'
-        ];
+        // Only probe the supported Ollama endpoints on localhost
+        const hosts = ['127.0.0.1', 'localhost', '::1'];
+        const ports = [11434];
+        const paths = ['/api/tags', '/api/version'];
         try {
-            for (const url of endpoints) {
-                try {
-                    const r = await fetch(url, { method: 'GET' });
-                    if (!r.ok) continue;
-                    const j = await r.json();
-                    let found = [];
-                    if (Array.isArray(j)) found = j.map(m => m.name || m.id || m.model || String(m));
-                    else if (j.models && Array.isArray(j.models)) found = j.models.map(m => m.name || m.id || m.model || String(m));
-                    else if (j.model) found = [j.model];
-                    if (found.length) return res.json({ ok: true, models: found, url });
-                } catch (e) { /* continue */ }
+            for (const h of hosts) {
+                for (const p of ports) {
+                    for (const pa of paths) {
+                        const url = `http://${h}:${p}${pa}`;
+                        try {
+                            const r = await fetch(url, { method: 'GET' });
+                            if (!r.ok) continue;
+                            const j = await r.json();
+                            if (pa === '/api/tags' && j && Array.isArray(j.models) && j.models.length) {
+                                const found = j.models.map(m => m.name || m.id || String(m));
+                                return res.json({ ok: true, models: found, url });
+                            }
+                            if (pa === '/api/version' && j && (j.version || j.build)) {
+                                return res.json({ ok: true, version: j, url });
+                            }
+                        } catch (e) { /* try next */ }
+                    }
+                }
             }
             return res.status(404).json({ ok: false, models: [] });
         } catch (e) { console.error('public detect-ollama error', e); return res.status(500).json({ ok: false, error: String(e) }); }
@@ -2087,6 +2594,220 @@ app.delete('/api/admin/rag_schemas/:id', requireAdmin, async (req, res) => {
         }
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete rag schema', e); res.status(500).json({ error: 'Failed to delete rag schema' }); }
+});
+
+// Admin: CRUD for indicators (computed metrics built from answers or SQL)
+app.get('/api/admin/indicators', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM dqai_indicators ORDER BY id DESC');
+        res.json(r.rows);
+    } catch (e) { console.error('Failed to list indicators', e); res.status(500).json({ error: 'Failed to list indicators' }); }
+});
+
+app.post('/api/admin/indicators', requireAdmin, async (req, res) => {
+    try {
+        const { id, name, title, subtitle, program_id, activity_id, formula, formula_type, indicator_level, unit_of_measurement, show_on_map, notes, status, category } = req.body || {};
+        // allow either name or title to be provided
+        const finalName = name || title || null;
+        if (!finalName) return res.status(400).json({ error: 'Missing name/title' });
+        // Ensure category column exists (idempotent safe migration)
+        try { await pool.query("ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS category TEXT"); } catch (e) { /* ignore migration errors */ }
+        if (id) {
+            const r = await pool.query(
+                'UPDATE dqai_indicators SET name=$1, title=$2, subtitle=$3, program_id=$4, activity_id=$5, formula=$6, formula_type=$7, indicator_level=$8, unit_of_measurement=$9, show_on_map=$10, notes=$11, status=$12, category=$13 WHERE id=$14 RETURNING *',
+                [finalName, title || null, subtitle || null, program_id || null, activity_id || null, formula || null, formula_type || null, indicator_level || null, unit_of_measurement || null, (show_on_map === undefined ? false : show_on_map), notes ? (typeof notes === 'object' ? JSON.stringify(notes) : notes) : null, status || null, category || null, id]
+            );
+            return res.json(r.rows[0]);
+        }
+        const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
+        const r = await pool.query(
+            'INSERT INTO dqai_indicators (name, title, subtitle, program_id, activity_id, formula, formula_type, indicator_level, unit_of_measurement, show_on_map, notes, status, category, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
+            [finalName, title || null, subtitle || null, program_id || null, activity_id || null, formula || null, formula_type || null, indicator_level || null, unit_of_measurement || null, (show_on_map === undefined ? false : show_on_map), notes ? (typeof notes === 'object' ? JSON.stringify(notes) : notes) : null, status || null, category || null, createdBy]
+        );
+        res.json(r.rows[0]);
+    } catch (e) { console.error('Failed to save indicator', e); res.status(500).json({ error: 'Failed to save indicator' }); }
+});
+
+app.delete('/api/admin/indicators/:id', requireAdmin, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM dqai_indicators WHERE id = $1', [req.params.id]);
+        res.json({ ok: true });
+    } catch (e) { console.error('Failed to delete indicator', e); res.status(500).json({ error: 'Failed to delete indicator' }); }
+});
+
+// Public: list indicators
+app.get('/api/indicators', async (req, res) => {
+    try {
+        const r = await pool.query('SELECT * FROM dqai_indicators ORDER BY id DESC');
+        res.json(r.rows);
+    } catch (e) { console.error('Failed to list indicators', e); res.status(500).json({ error: 'Failed to list indicators' }); }
+});
+
+// Public: compute an indicator value. Supports:
+// - SQL formulas prefixed with 'sql:' (only read-only SELECT allowed)
+// - sum of answer question ids (formula_type 'sum_answers' or comma-separated qids)
+app.get('/api/indicators/compute', async (req, res) => {
+    try {
+        const indicatorId = Number(req.query.indicatorId || req.query.id);
+        const facilityId = req.query.facilityId ? Number(req.query.facilityId) : null;
+        if (!indicatorId) return res.status(400).json({ error: 'Missing indicatorId' });
+        const ir = await pool.query('SELECT * FROM dqai_indicators WHERE id = $1', [indicatorId]);
+        if (ir.rows.length === 0) return res.status(404).json({ error: 'Indicator not found' });
+        const ind = ir.rows[0];
+        const formula = ind.formula || '';
+        const ftype = (ind.formula_type || '').toString().toLowerCase();
+
+        // Helper: replace simple {placeholders} in SQL with positional $1..$n params from context
+        const prepareSqlWithContext = (rawSql, context) => {
+            const values = [];
+            let idx = 1;
+            const text = String(rawSql).replace(/\{([a-zA-Z0-9_]+)\}/g, (m, key) => {
+                const k = String(key || '').toLowerCase();
+                if (context[k] !== undefined && context[k] !== null) {
+                    values.push(context[k]);
+                    const p = '$' + (idx++);
+                    return p;
+                }
+                // leave as-is if not present in context
+                return m;
+            });
+            return { text, values };
+        };
+
+        // SQL mode: support placeholder substitution like {selected_facility_id} or {selected_facility}
+        if (String(formula).toLowerCase().startsWith('sql:')) {
+            const sql = String(formula).slice(4).trim();
+            if (!/^select\s+/i.test(sql)) return res.status(400).json({ error: 'Only SELECT SQL allowed for indicator SQL formulas' });
+            try {
+                // context keys are lowercase
+                const context = {
+                    selected_facility_id: facilityId,
+                    selected_facility: facilityId,
+                    facilityid: facilityId,
+                    facility_id: facilityId,
+                    selected_state: (req.query.selected_state || req.query.state || null),
+                    selected_lga: (req.query.selected_lga || req.query.lga || null),
+                    selected_user_id: (req.query.selected_user_id || req.query.userId || null)
+                };
+                const { text, values } = prepareSqlWithContext(sql, context);
+                // If placeholders were not used but facilityId present and SQL uses $1, pass it as param for compatibility
+                let execValues = values;
+                if (values.length === 0 && facilityId) {
+                    // if SQL expects positional $1 replace we pass facilityId, otherwise run without params
+                    if (/\$1/.test(sql)) execValues = [facilityId];
+                }
+                const result = await pool.query(text, execValues);
+                return res.json({ rows: result.rows, rowCount: result.rowCount });
+            } catch (e) { console.error('Indicator SQL execution failed', e); return res.status(500).json({ error: String(e.message || e) }); }
+        }
+
+        // Sum answers mode: formula is comma-separated question ids like 'q1,q2' or 'q_q1,q_q2'
+        const qids = (formula || '').split(',').map(s => String(s || '').trim()).filter(Boolean);
+        if (ftype === 'sum_answers' || qids.length > 0) {
+            try {
+                // Build query to sum numeric answer_value across dqai_answers for specified question_ids.
+                // We assume answer_value contains either a numeric JSON value or a bare number.
+                const params = [];
+                let where = `question_id = ANY($1::text[])`;
+                params.push(qids);
+                if (facilityId) {
+                    where += ' AND facility_id = $2';
+                    params.push(facilityId);
+                }
+                const q = `SELECT question_id, SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE NULL END) ) as sum_value FROM dqai_answers WHERE ${where} GROUP BY question_id`;
+                const r = await pool.query(q, params);
+                // aggregate across questions
+                let total = 0;
+                for (const row of r.rows) { total += Number(row.sum_value || 0); }
+                return res.json({ indicatorId, facilityId, value: total, details: r.rows });
+            } catch (e) { console.error('Failed to compute sum_answers', e); return res.status(500).json({ error: String(e.message || e) }); }
+        }
+
+        return res.status(400).json({ error: 'Unsupported indicator formula or empty formula' });
+    } catch (e) { console.error('indicators/compute error', e); res.status(500).json({ error: String(e) }); }
+});
+
+// Bulk compute indicators for multiple facilities in one call
+app.post('/api/indicators/compute_bulk', async (req, res) => {
+    try {
+        const { indicatorIds, facilityIds } = req.body || {};
+        if (!Array.isArray(indicatorIds) || indicatorIds.length === 0) return res.status(400).json({ error: 'Missing indicatorIds' });
+        if (!Array.isArray(facilityIds) || facilityIds.length === 0) return res.status(400).json({ error: 'Missing facilityIds' });
+
+        // Fetch indicators
+        const ir = await pool.query('SELECT * FROM dqai_indicators WHERE id = ANY($1::int[])', [indicatorIds]);
+        const indicators = ir.rows || [];
+
+        const out = {};
+
+        for (const ind of indicators) {
+            const formula = ind.formula || '';
+            const ftype = (ind.formula_type || '').toString().toLowerCase();
+            const iid = ind.id;
+            out[iid] = { indicator: ind, results: {} };
+
+            // SQL mode: run per-facility (support {placeholders} substitution)
+            if (String(formula).toLowerCase().startsWith('sql:')) {
+                const sql = String(formula).slice(4).trim();
+                if (!/^select\s+/i.test(sql)) {
+                    out[iid].error = 'Only SELECT SQL allowed for indicator SQL formulas';
+                    continue;
+                }
+                // Prepare function to replace placeholders for each facility id
+                const prepareSqlWithContext = (rawSql, context) => {
+                    const values = [];
+                    let idx = 1;
+                    const text = String(rawSql).replace(/\{([a-zA-Z0-9_]+)\}/g, (m, key) => {
+                        const k = String(key || '').toLowerCase();
+                        if (context[k] !== undefined && context[k] !== null) {
+                            values.push(context[k]);
+                            const p = '$' + (idx++);
+                            return p;
+                        }
+                        return m;
+                    });
+                    return { text, values };
+                };
+
+                for (const fid of facilityIds) {
+                    try {
+                            const context = { selected_facility_id: fid, selected_facility: fid, facilityid: fid, facility_id: fid, selected_state: (req.body && (req.body.selected_state || req.body.state)) || null, selected_lga: (req.body && (req.body.selected_lga || req.body.lga)) || null, selected_user_id: (req.body && (req.body.selected_user_id || req.body.userId)) || null };
+                        const { text, values } = prepareSqlWithContext(sql, context);
+                        let execValues = values;
+                        if (values.length === 0) {
+                            if (/\$1/.test(sql)) execValues = [fid];
+                        }
+                        const result = await pool.query(text, execValues);
+                        out[iid].results[fid] = { rows: result.rows, rowCount: result.rowCount };
+                    } catch (e) {
+                        out[iid].results[fid] = { error: String(e.message || e) };
+                    }
+                }
+                continue;
+            }
+
+            // Sum answers / question id list mode: aggregate in one query for performance
+            const qids = (formula || '').split(',').map(s => String(s || '').trim()).filter(Boolean);
+            if (ftype === 'sum_answers' || qids.length > 0) {
+                try {
+                    const params = [qids, facilityIds];
+                    const q = `SELECT facility_id, SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE NULL END) ) as sum_value FROM dqai_answers WHERE question_id = ANY($1::text[]) AND facility_id = ANY($2::int[]) GROUP BY facility_id`;
+                    const r = await pool.query(q, params);
+                    // map by facility
+                    const sums = {};
+                    for (const row of r.rows) { sums[String(row.facility_id)] = Number(row.sum_value || 0); }
+                    for (const fid of facilityIds) { out[iid].results[fid] = { value: Number(sums[String(fid)] || 0) }; }
+                } catch (e) {
+                    out[iid].error = String(e.message || e);
+                }
+                continue;
+            }
+
+            out[iid].error = 'Unsupported indicator formula or empty formula';
+        }
+
+        res.json({ ok: true, computed: out });
+    } catch (e) { console.error('indicators/compute_bulk error', e); res.status(500).json({ error: String(e) }); }
 });
 
 // Admin: Datasets CRUD
@@ -2577,6 +3298,44 @@ app.post('/api/audit/bulk', async (req, res) => {
     }
 });
 
+// Admin: list audit batches (detailed)
+app.get('/api/admin/audit_batches', requireAdmin, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT ab.*, u.email as user_email FROM dqai_audit_batches ab LEFT JOIN dqai_users u ON u.id = ab.user_id ORDER BY ab.created_at DESC');
+        // project rows into a friendly shape for frontend
+        const out = (r.rows || []).map(row => ({
+            id: row.id,
+            user_id: row.user_id,
+            created_at: row.created_at,
+            created_by: row.user_email || null,
+            events: row.events || null,
+            batch_name: (Array.isArray(row.events) && row.events[0] && (row.events[0].batch || row.events[0].type)) ? (row.events[0].batch || row.events[0].type) : `batch_${row.id}`,
+            details: row.events || null,
+            status: (Array.isArray(row.events) && row.events[0] && row.events[0].status) ? row.events[0].status : null
+        }));
+        res.json(out);
+    } catch (e) { console.error('Failed to list audit batches (admin)', e); res.status(500).json({ error: 'Failed to list audit batches' }); }
+});
+
+// Public (dev): list recent audit batches (limited) - enabled by default for convenience
+app.get('/api/audit_batches', async (req, res) => {
+    try {
+        const limit = Number(req.query.limit || 200);
+        const r = await pool.query('SELECT ab.*, u.email as user_email FROM dqai_audit_batches ab LEFT JOIN dqai_users u ON u.id = ab.user_id ORDER BY ab.created_at DESC LIMIT $1', [limit]);
+        const out = (r.rows || []).map(row => ({
+            id: row.id,
+            user_id: row.user_id,
+            created_at: row.created_at,
+            created_by: row.user_email || null,
+            events: row.events || null,
+            batch_name: (Array.isArray(row.events) && row.events[0] && (row.events[0].batch || row.events[0].type)) ? (row.events[0].batch || row.events[0].type) : `batch_${row.id}`,
+            details: row.events || null,
+            status: (Array.isArray(row.events) && row.events[0] && row.events[0].status) ? row.events[0].status : null
+        }));
+        res.json(out);
+    } catch (e) { console.error('Failed to list audit batches (public)', e); res.status(500).json({ error: 'Failed to list audit batches' }); }
+});
+
 // Sync questions from either a form-definition object or a flat questions array into the `questions` table
 async function syncQuestions(activityId, formDefOrQuestions) {
     if (!activityId) return;
@@ -2680,6 +3439,16 @@ app.post('/auth/login', async (req, res) => {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
 
+            // If email verification is enabled, prevent login until user is verified/active
+            try {
+                const verifyToggle = (process.env.ENABLE_EMAIL_VERIFICATION || '').toString().toLowerCase();
+                if (verifyToggle === 'true' || verifyToggle === '1') {
+                    if (!user.status || String(user.status).toLowerCase() !== 'active') {
+                        return res.status(403).json({ error: 'Email not verified. Check your email for a verification link.' });
+                    }
+                }
+            } catch (e) { /* ignore */ }
+
             req.session.userId = user.id;
             // Return sanitized user object (omit password)
             const safeUser = {
@@ -2721,6 +3490,92 @@ app.post('/auth/login', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// Public registration endpoint: allows self-registration for non-admin roles (public/controller/validator)
+app.post('/auth/register', async (req, res) => {
+    try {
+        const { firstName, lastName, email, password } = req.body || {};
+        if (!email) return res.status(400).json({ error: 'Missing email' });
+        // Force self-registered users to be 'public' role only. All other roles must be created by an admin.
+        const requested = 'public';
+
+        // check existing
+        const existing = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [email]);
+        if (existing.rows.length > 0) return res.status(409).json({ error: 'Email already registered' });
+
+        let hashed = null;
+        if (password) {
+            try { hashed = await bcrypt.hash(password, 10); } catch (e) { hashed = password; }
+        }
+
+        // Determine whether to require email verification
+        const verifyToggle = (process.env.ENABLE_EMAIL_VERIFICATION || '').toString().toLowerCase();
+        const requireVerify = (verifyToggle === 'true' || verifyToggle === '1');
+        const initialStatus = requireVerify ? 'Pending' : 'Active';
+
+        const r = await pool.query('INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, first_name, last_name, email, role, status', [firstName || null, lastName || null, email, hashed || null, requested, initialStatus]);
+        const u = r.rows[0];
+
+        // If verification is required, create token and send email
+        if (requireVerify) {
+            try {
+                const token = crypto.randomBytes(32).toString('hex');
+                const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+                await pool.query('INSERT INTO dqai_email_verifications (user_id, token, expires_at) VALUES ($1,$2,$3)', [u.id, token, expires]);
+
+                // load smtp
+                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+                const smtp = sres.rows[0] ? sres.rows[0].value : null;
+                const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+                const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
+                if (smtp) {
+                    try {
+                        const nm = await import('nodemailer');
+                        const transporter = nm.createTransport(smtp);
+                        const text = `Hello ${u.first_name || ''},\n\nThank you for registering. Please verify your email by clicking the link below:\n\n${verifyUrl}\n\nThis link will expire in 24 hours.`;
+                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: u.email, subject: 'Verify your email', text });
+                    } catch (e) { console.error('Failed to send verification email', e); }
+                } else {
+                    console.warn('SMTP not configured; cannot send verification email');
+                }
+            } catch (e) {
+                console.error('Failed to create/send email verification token', e);
+            }
+        }
+
+        // Optionally create default role assignment rows later via admin
+        res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, message: requireVerify ? 'Registered. Check your email for verification link.' : 'Registered' });
+    } catch (e) {
+        console.error('Registration failed', e);
+        res.status(500).json({ error: 'Registration failed' });
+    }
+});
+
+// Verify email endpoint
+app.get('/auth/verify-email', async (req, res) => {
+    try {
+        const token = req.query.token || req.query.t || null;
+        if (!token) return res.status(400).send('Missing token');
+        const tres = await pool.query('SELECT * FROM dqai_email_verifications WHERE token = $1', [String(token)]);
+        if (tres.rows.length === 0) return res.status(400).send('Invalid or expired token');
+        const row = tres.rows[0];
+        if (row.expires_at && new Date(row.expires_at) < new Date()) {
+            // remove expired token
+            try { await pool.query('DELETE FROM dqai_email_verifications WHERE token = $1', [token]); } catch (e) { /* ignore */ }
+            return res.status(400).send('Token expired');
+        }
+        // activate user
+        await pool.query('UPDATE dqai_users SET status = $1 WHERE id = $2', ['Active', row.user_id]);
+        // remove token record
+        await pool.query('DELETE FROM dqai_email_verifications WHERE token = $1', [token]);
+        // Redirect to frontend success page if FRONTEND_URL available
+        const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+        return res.redirect(`${frontend.replace(/\/$/, '')}/login?verified=1`);
+    } catch (e) {
+        console.error('verify-email error', e);
+        res.status(500).send('Verification failed');
     }
 });
 
@@ -2907,7 +3762,7 @@ app.put('/api/activities/:id/form', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-app.delete('/api/activities/:id', async (req, res) => {
+app.delete('/api/activities/:id', requireAdmin, async (req, res) => {
     try {
         await pool.query('DELETE FROM dqai_activities WHERE id = $1', [req.params.id]);
         res.sendStatus(200);
@@ -2922,26 +3777,250 @@ app.get('/api/facilities', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
-app.post('/api/facilities', async (req, res) => {
-    const { name, state, lga, address, category, id } = req.body;
+// Public read-only facilities endpoint (N2 milestone): enforces banding and publication lag
+app.get('/api/public/facilities', async (req, res) => {
+    try {
+        // Prefer real facilities from DB; fall back to synthetic file if DB empty
+        let synth = [];
+        try {
+            const fres = await pool.query('SELECT id, name, state, lga, address, category, location, show_on_map FROM dqai_facilities ORDER BY name ASC');
+            if (fres.rows && fres.rows.length) {
+                synth = fres.rows.map(r => ({ id: r.id, name: r.name, state: r.state, lga: r.lga, address: r.address, category: r.category, location: r.location, show_on_map: r.show_on_map }));
+            } else {
+                const synthPath = path.join(process.cwd(), 'public', 'synthetic-facilities.json');
+                try { const txt = await fs.promises.readFile(synthPath, 'utf8'); synth = JSON.parse(txt || '[]'); } catch (e) { console.warn('Failed to read synthetic facilities file:', e && e.message ? e.message : e); synth = []; }
+            }
+        } catch (e) {
+            console.warn('Failed to load facilities from DB, falling back to synthetic. Error:', e && e.message ? e.message : e);
+            const synthPath = path.join(process.cwd(), 'public', 'synthetic-facilities.json');
+            try { const txt = await fs.promises.readFile(synthPath, 'utf8'); synth = JSON.parse(txt || '[]'); } catch (err) { synth = []; }
+        }
+
+        // Load indicators metadata to determine which fields are banded
+        const indicatorsPath = path.join(process.cwd(), 'public', 'metadata', 'indicators.json');
+        let indicatorsMeta = [];
+        try {
+            const txt = await fs.promises.readFile(indicatorsPath, 'utf8');
+            indicatorsMeta = JSON.parse(txt || '[]');
+        } catch (e) { indicatorsMeta = []; }
+
+        // Publication lag (days) configured via env or default to 7 days
+        const lagDays = Number(process.env.PUBLICATION_LAG_DAYS || process.env.PUB_LAG_DAYS || 7);
+        const publishedAt = new Date(Date.now() - Math.max(0, lagDays) * 24 * 60 * 60 * 1000).toISOString();
+
+        // Determine requesting user's role (if authenticated). Controllers can see more.
+        let requesterRole = null;
+        try {
+            if (req.session && req.session.userId) {
+                const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                if (r.rows && r.rows.length) requesterRole = (r.rows[0].role || null);
+            }
+        } catch (e) { requesterRole = null; }
+
+        // Map function to enforce banding and redact sensitive fields
+        const computeBandFromTelemetry = (value) => {
+            // Accept either object { band } or numeric uptime
+            if (value && typeof value === 'object' && value.band) return String(value.band).toLowerCase();
+            const n = Number(value);
+            if (!isNaN(n)) {
+                if (n >= 90) return 'green';
+                if (n >= 70) return 'yellow';
+                return 'red';
+            }
+            return 'unknown';
+        };
+
+        const safeFacilities = synth.map(f => {
+            // parse location 'lat,lng' if available
+            let lat = null, lng = null;
+            try {
+                if (f.location && typeof f.location === 'string') {
+                    const parts = String(f.location).split(',').map(s => s.trim()).filter(Boolean);
+                    if (parts.length >= 2) { lat = Number(parts[0]); lng = Number(parts[1]); }
+                } else if (f.lat !== undefined && f.lng !== undefined) {
+                    lat = f.lat; lng = f.lng;
+                }
+            } catch (e) { lat = null; lng = null; }
+
+            // Build minimal indicators object placeholder; detailed computed indicators are served by /api/indicators endpoints
+            const safeIndicators = {};
+            for (const ind of indicatorsMeta) {
+                const key = ind.dataType || ind.id;
+                safeIndicators[key] = { value: null };
+            }
+
+            const showEvidence = requesterRole && String(requesterRole).toLowerCase().includes('controller');
+            const evidence = showEvidence ? (f.evidence || {}) : { sampling_note: f.evidence?.sampling_note || 'redacted', certificates: [] };
+
+            return {
+                id: f.id,
+                name: f.name,
+                lat,
+                lng,
+                location: f.location || null,
+                show_on_map: (f.show_on_map === undefined || f.show_on_map === null) ? true : Boolean(f.show_on_map),
+                state: f.state || null,
+                lga: f.lga || null,
+                address: f.address || null,
+                category: f.category || null,
+                indicators: safeIndicators,
+                evidence_preview: evidence,
+                publishedAt,
+                isLagged: true
+            };
+        });
+
+        res.json({ publishedAt, lagDays, facilities: safeFacilities });
+    } catch (e) {
+        console.error('public/facilities error', e);
+        res.status(500).json({ error: 'Failed to load public facilities' });
+    }
+});
+
+// Given program/activity/user filters, return matching facility ids (used by frontend map filters)
+app.post('/api/public/facility_ids_for_filters', async (req, res) => {
+    try {
+        const { programIds, activityIds, userIds } = req.body || {};
+        const conds = [];
+        const params = [];
+        let idx = 1;
+
+        if (Array.isArray(programIds) && programIds.length) {
+            conds.push(`a.program_id = ANY($${idx}::int[])`);
+            params.push(programIds.map(Number)); idx++;
+        }
+        if (Array.isArray(activityIds) && activityIds.length) {
+            conds.push(`ar.activity_id = ANY($${idx}::int[])`);
+            params.push(activityIds.map(Number)); idx++;
+        }
+        if (Array.isArray(userIds) && userIds.length) {
+            conds.push(`(ar.reported_by = ANY($${idx}::int[]) OR ar.user_id = ANY($${idx}::int[]))`);
+            params.push(userIds.map(Number)); idx++;
+        }
+
+        if (conds.length === 0) return res.json([]);
+
+        const where = 'WHERE ' + conds.join(' OR ');
+        const q = `SELECT DISTINCT ar.facility_id FROM dqai_activity_reports ar LEFT JOIN dqai_activities a ON a.id = ar.activity_id ${where}`;
+        const r = await pool.query(q, params);
+        const ids = (r.rows || []).map(rr => rr.facility_id).filter(Boolean);
+        res.json({ facilityIds: ids });
+    } catch (e) { console.error('facility_ids_for_filters error', e); res.status(500).json({ error: 'Failed to compute facility ids' }); }
+});
+
+// Public: fetch recent reports+answers for a facility, plus questions marked to show on map for those activities
+app.get('/api/public/facility_map_answers', async (req, res) => {
+    try {
+        const facilityId = Number(req.query.facilityId || req.query.facility_id);
+        if (!facilityId) return res.status(400).json({ error: 'Missing facilityId' });
+
+        // fetch recent reports for this facility
+        const r = await pool.query('SELECT * FROM dqai_activity_reports WHERE facility_id = $1 ORDER BY submission_date DESC LIMIT 20', [facilityId]);
+        const reports = r.rows || [];
+
+        const out = [];
+        for (const rep of reports) {
+            const reportId = rep.id;
+            const activityId = rep.activity_id;
+            // fetch answers for this report and include reviewer fields when present
+            const ares = await pool.query('SELECT question_id, answer_value, reviewers_comment, quality_improvement_followup FROM dqai_answers WHERE report_id = $1', [reportId]);
+            const answers = {};
+            for (const a of ares.rows) {
+                let val = a.answer_value;
+                if (typeof val === 'string') {
+                    try { val = JSON.parse(val); } catch (e) { /* keep as string */ }
+                }
+                answers[String(a.question_id)] = {
+                    value: val,
+                    reviewers_comment: (a.reviewers_comment || null),
+                    quality_improvement_followup: (a.quality_improvement_followup || null)
+                };
+            }
+
+            // fetch questions for the activity that have metadata.show_on_map = true
+            let showQs = [];
+            try {
+                const qres = await pool.query(`SELECT id, question_text, page_name, section_name, metadata FROM dqai_questions WHERE activity_id = $1`, [activityId]);
+                for (const q of qres.rows) {
+                    let md = q.metadata || null;
+                    if (typeof md === 'string') {
+                        try { md = JSON.parse(md); } catch (e) { md = null; }
+                    }
+                    // normalize show_on_map flag and optional roles list
+                    const showFlag = md && (md.show_on_map === true || md.show_on_map === 'true');
+                    const showRoles = (md && (md.show_on_map_roles || md.show_on_map_by)) ? (md.show_on_map_roles || md.show_on_map_by) : null;
+                    if (showFlag) {
+                        showQs.push({ id: String(q.id), questionText: q.question_text || null, pageName: q.page_name || null, sectionName: q.section_name || null, metadata: md, show_on_map_roles: Array.isArray(showRoles) ? showRoles : (typeof showRoles === 'string' ? [showRoles] : []) });
+                    }
+                }
+            } catch (e) { /* ignore question fetch errors */ }
+
+            // include reviewers_report and assigned_validator (if any) with the report
+            out.push({ reportId: reportId, activityId: activityId, submissionDate: rep.submission_date, answers, showOnMapQuestions: showQs, reviewers_report: rep.reviewers_report || null, assigned_validator: rep.assigned_validator || null, overall_score: rep.overall_score || null });
+        }
+
+        res.json({ facilityId, reports: out });
+    } catch (e) {
+        console.error('facility_map_answers error', e);
+        res.status(500).json({ error: 'Failed to fetch facility map answers' });
+    }
+});
+
+// Public aggregates (Public Lite Aggregates) — banded summary and lag indicator
+app.get('/api/public/aggregates', async (req, res) => {
+    try {
+        const synthPath = path.join(process.cwd(), 'public', 'synthetic-facilities.json');
+        let synth = [];
+        try { const txt = await fs.promises.readFile(synthPath, 'utf8'); synth = JSON.parse(txt || '[]'); } catch (e) { synth = []; }
+        const indicatorsPath = path.join(process.cwd(), 'public', 'metadata', 'indicators.json');
+        let indicatorsMeta = [];
+        try { const txt = await fs.promises.readFile(indicatorsPath, 'utf8'); indicatorsMeta = JSON.parse(txt || '[]'); } catch (e) { indicatorsMeta = []; }
+
+        // Compute simple band distribution for primary banded indicator (prefer energy_resilience)
+        const primaryIndicator = indicatorsMeta.find(i => i.dataType === 'energy_resilience') || indicatorsMeta[0];
+        const key = primaryIndicator ? (primaryIndicator.dataType || primaryIndicator.id) : null;
+        const counts = { green: 0, yellow: 0, red: 0, unknown: 0 };
+        for (const f of synth) {
+            const raw = key && f.indicators ? f.indicators[key] : null;
+            let band = 'unknown';
+            if (raw && typeof raw === 'object' && raw.band) band = String(raw.band).toLowerCase();
+            else if (typeof raw === 'number') { band = raw >= 90 ? 'green' : (raw >= 70 ? 'yellow' : 'red'); }
+            counts[band] = (counts[band] || 0) + 1;
+        }
+        const total = Math.max(1, synth.length);
+        // Determine overall band as majority
+        const overall = counts.green >= counts.yellow && counts.green >= counts.red ? 'green' : (counts.yellow >= counts.green && counts.yellow >= counts.red ? 'yellow' : 'red');
+
+        const lagDays = Number(process.env.PUBLICATION_LAG_DAYS || process.env.PUB_LAG_DAYS || 7);
+        const publishedAt = new Date(Date.now() - Math.max(0, lagDays) * 24 * 60 * 60 * 1000).toISOString();
+
+        return res.json({ indicator: key, counts, total: synth.length, overallBand: overall, publishedAt, isLagged: true });
+    } catch (e) {
+        console.error('public/aggregates error', e);
+        res.status(500).json({ error: 'Failed to compute aggregates' });
+    }
+});
+
+app.post('/api/facilities', requireAdmin, async (req, res) => {
+    const { name, state, lga, address, category, id, location, show_on_map } = req.body;
     try {
         if (id) {
             const result = await pool.query(
-                'UPDATE dqai_facilities SET name=$1, state=$2, lga=$3, address=$4, category=$5 WHERE id=$6 RETURNING *',
-                [name, state, lga, address, category, id]
+                'UPDATE dqai_facilities SET name=$1, state=$2, lga=$3, address=$4, category=$5, location=$6, show_on_map=$7 WHERE id=$8 RETURNING *',
+                [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map), id]
             );
             res.json(result.rows[0]);
         } else {
             const result = await pool.query(
-                'INSERT INTO dqai_facilities (name, state, lga, address, category) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-                [name, state, lga, address, category]
+                'INSERT INTO dqai_facilities (name, state, lga, address, category, location, show_on_map) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+                [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map)]
             );
             res.json(result.rows[0]);
         }
     } catch (e) { res.status(500).send(e.message); }
 });
 
-app.delete('/api/facilities/:id', async (req, res) => {
+app.delete('/api/facilities/:id', requireAdmin, async (req, res) => {
     try {
         await pool.query('DELETE FROM dqai_facilities WHERE id = $1', [req.params.id]);
         res.sendStatus(200);
@@ -2978,19 +4057,147 @@ app.post('/api/users', async (req, res) => {
             }
         }
 
+        // helper: determine if actor is admin (available for create/update checks)
+        const actorId = req.session && req.session.userId ? req.session.userId : null;
+        const actorIsAdmin = async () => {
+            if (!actorId) return false;
+            try {
+                const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [actorId]);
+                if (r.rows.length > 0 && (r.rows[0].role || '').toString().toLowerCase() === 'admin') return true;
+                const rr = await pool.query('SELECT r.name FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [actorId]);
+                for (const row of rr.rows) { if (row && row.name && row.name.toString().toLowerCase() === 'admin') return true; }
+            } catch (e) { /* ignore */ }
+            return false;
+        };
+
         if (id) {
-            const result = await pool.query(
-                'UPDATE dqai_users SET first_name=$1, last_name=$2, email=$3, role=$4, status=$5, password=$6, facility_id=$7, profile_image=$8 WHERE id=$9 RETURNING *',
-                [firstName, lastName, email, role, status, hashedPassword || null, facilityId || null, profileImage || null, id]
-            );
+            // fetch existing user for diff and existence check
+            const existingRes = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [id]);
+            if (existingRes.rows.length === 0) return res.status(404).send('User not found');
+            const existing = existingRes.rows[0];
+
+            // If attempting to change role, ensure actor is admin
+            if (role !== undefined) {
+                const ok = await actorIsAdmin();
+                if (!ok) return res.status(403).json({ error: 'Forbidden - only admins can change roles' });
+            }
+
+            // Build dynamic update so we only change fields that are provided.
+            const updates = [];
+            const values = [];
+            let idx = 1;
+            if (firstName !== undefined) { updates.push(`first_name=$${idx++}`); values.push(firstName); }
+            if (lastName !== undefined) { updates.push(`last_name=$${idx++}`); values.push(lastName); }
+            if (email !== undefined) { updates.push(`email=$${idx++}`); values.push(email); }
+            if (status !== undefined) { updates.push(`status=$${idx++}`); values.push(status); }
+            if (facilityId !== undefined) {
+                // only admins may change facility assignment
+                const ok = await actorIsAdmin();
+                if (!ok) return res.status(403).json({ error: 'Forbidden - only admins can change facility assignment' });
+                updates.push(`facility_id=$${idx++}`); values.push(facilityId);
+            }
+            if (profileImage !== undefined) { updates.push(`profile_image=$${idx++}`); values.push(profileImage); }
+            // Only change role if explicitly provided (admin-checked above)
+            if (role !== undefined) { updates.push(`role=$${idx++}`); values.push(role); }
+            // Only change password if provided
+            if (password) { updates.push(`password=$${idx++}`); values.push(hashedPassword); }
+
+            if (updates.length === 0) {
+                const u = existing;
+                return res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
+            }
+
+            const sql = `UPDATE dqai_users SET ${updates.join(', ')} WHERE id=$${idx} RETURNING *`;
+            values.push(id);
+            const result = await pool.query(sql, values);
             const u = result.rows[0];
+
+            // audit: record what changed (omit sensitive values like password contents)
+            try {
+                await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_events (
+                    id SERIAL PRIMARY KEY,
+                    actor_user_id INTEGER,
+                    target_user_id INTEGER,
+                    action TEXT,
+                    details JSONB,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )`);
+                const changes = {};
+                if (firstName !== undefined && existing.first_name !== firstName) changes.first_name = { before: existing.first_name, after: firstName };
+                if (lastName !== undefined && existing.last_name !== lastName) changes.last_name = { before: existing.last_name, after: lastName };
+                if (email !== undefined && existing.email !== email) changes.email = { before: existing.email, after: email };
+                if (status !== undefined && existing.status !== status) changes.status = { before: existing.status, after: status };
+                if (facilityId !== undefined && String(existing.facility_id) !== String(facilityId)) changes.facility_id = { before: existing.facility_id, after: facilityId };
+                if (profileImage !== undefined && existing.profile_image !== profileImage) changes.profile_image = { before: existing.profile_image, after: profileImage };
+                if (role !== undefined && existing.role !== role) changes.role = { before: existing.role, after: role };
+                if (password) changes.password_changed = true;
+                await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, u.id, 'update', Object.keys(changes).length ? changes : { updated: true }]);
+            } catch (e) { console.error('Failed to write audit event for user update', e); }
+
+            // send notification email if smtp configured
+            try {
+                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+                const smtp = sres.rows[0] ? sres.rows[0].value : null;
+                if (smtp) {
+                    try {
+                        const nm = await import('nodemailer');
+                        const transporter = nm.createTransport(smtp);
+                        const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
+                        const toList = [u.email];
+                        if (adminList) toList.push(adminList);
+                        const subject = 'Account updated';
+                        const text = `Hello ${u.first_name || ''},\n\nYour account has been updated. If you did not expect this, contact support.`;
+                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: toList.join(','), subject, text });
+                    } catch (e) { console.error('Failed to send user-update email', e); }
+                }
+            } catch (e) { console.error('Failed to load smtp settings for user-update notification', e); }
+
             res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
         } else {
+            // only admins may create new users
+            const okCreate = await actorIsAdmin();
+            if (!okCreate) return res.status(403).json({ error: 'Forbidden - only admins can create users' });
+
             const result = await pool.query(
                 'INSERT INTO dqai_users (first_name, last_name, email, role, status, password, facility_id, profile_image) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
                 [firstName, lastName, email, role, status, hashedPassword || null, facilityId || null, profileImage || null]
             );
             const u = result.rows[0];
+            // send welcome email if smtp configured
+            try {
+                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+                const smtp = sres.rows[0] ? sres.rows[0].value : null;
+                if (smtp) {
+                    try {
+                        const nm = await import('nodemailer');
+                        const transporter = nm.createTransport(smtp);
+                        const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
+                        const toList = [u.email];
+                        if (adminList) toList.push(adminList);
+                        const subject = 'Account created';
+                        let text = `Hello ${u.first_name || ''},\n\nAn account has been created for you.`;
+                        if (!password) text += '\n\nNo password was provided. You can set a password using the password reset flow.';
+                        text += '\n\nIf you did not expect this, contact support.';
+                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: toList.join(','), subject, text });
+                    } catch (e) { console.error('Failed to send user-create email', e); }
+                }
+            } catch (e) { console.error('Failed to load smtp settings for user-create notification', e); }
+
+            // audit: user created
+            try {
+                const actorId = req.session && req.session.userId ? req.session.userId : null;
+                await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_events (
+                    id SERIAL PRIMARY KEY,
+                    actor_user_id INTEGER,
+                    target_user_id INTEGER,
+                    action TEXT,
+                    details JSONB,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )`);
+                const details = { created: true, role: u.role, email: u.email, provided_password: !!password };
+                await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, u.id, 'create', details]);
+            } catch (e) { console.error('Failed to write audit event for user create', e); }
+
             res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
         }
     } catch (e) { console.error(e); res.status(500).send(e.message); }
@@ -3000,9 +4207,27 @@ app.post('/api/users', async (req, res) => {
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     try {
         const id = req.params.id;
+        // fetch user for audit
+        const ures = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [id]);
+        const target = ures.rows.length ? ures.rows[0] : null;
         // remove role assignments
         await pool.query('DELETE FROM dqai_user_roles WHERE user_id = $1', [id]);
         await pool.query('DELETE FROM dqai_users WHERE id = $1', [id]);
+        // audit deletion
+        try {
+            const actorId = req.session && req.session.userId ? req.session.userId : null;
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_events (
+                id SERIAL PRIMARY KEY,
+                actor_user_id INTEGER,
+                target_user_id INTEGER,
+                action TEXT,
+                details JSONB,
+                created_at TIMESTAMP DEFAULT NOW()
+            )`);
+            const details = { deleted: true, email: target ? target.email : null, role: target ? target.role : null };
+            await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, id, 'delete', details]);
+        } catch (e) { console.error('Failed to write audit event for user delete', e); }
+
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete user', e); res.status(500).json({ error: 'Failed to delete user' }); }
 });
@@ -3010,7 +4235,21 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 // Reports
 app.get('/api/reports', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_activity_reports ORDER BY submission_date DESC');
+        // If requester is a validator, only return reports assigned to them
+        let whereClause = '';
+        const params = [];
+        try {
+            if (req.session && req.session.userId) {
+                const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                if (r.rows.length > 0 && String(r.rows[0].role || '').toLowerCase() === 'validator') {
+                    whereClause = ' WHERE assigned_validator = $1';
+                    params.push(req.session.userId);
+                }
+            }
+        } catch (e) { /* ignore role-check errors */ }
+
+        const q = `SELECT * FROM dqai_activity_reports${whereClause} ORDER BY submission_date DESC`;
+        const result = await pool.query(q, params);
         const mapped = result.rows.map(r => ({
             ...r,
             activityId: r.activity_id,
@@ -3028,9 +4267,21 @@ app.get('/api/reports', async (req, res) => {
 // Get a single report by id
 app.get('/api/reports/:id', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [req.params.id]);
+        const reportId = Number(req.params.id);
+        if (!reportId) return res.status(400).send('Invalid id');
+        const result = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
         if (result.rowCount === 0) return res.status(404).send('Report not found');
         const r = result.rows[0];
+        // If requester is a validator, ensure the report is assigned to them
+        try {
+            if (req.session && req.session.userId) {
+                const rr = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                if (rr.rows.length > 0 && String(rr.rows[0].role || '').toLowerCase() === 'validator') {
+                    if (Number(r.assigned_validator || 0) !== Number(req.session.userId)) return res.status(403).json({ error: 'Forbidden - not assigned to you' });
+                }
+            }
+        } catch (e) { /* ignore role-check errors */ }
+
         res.json({
             ...r,
             activityId: r.activity_id,
@@ -3512,6 +4763,10 @@ app.put('/api/reports/:id', async (req, res) => {
             reportTemplateId: 'report_template_id',
             report_template_id: 'report_template_id'
         };
+        // Support report-level location and visibility (client may send camelCase or snake_case)
+        mapKeys.location = 'location';
+        mapKeys.showOnMap = 'show_on_map';
+        mapKeys.show_on_map = 'show_on_map';
         const setParts = [];
         const params = [];
         let idx = 1;
@@ -3591,6 +4846,20 @@ app.put('/api/reports/:id', async (req, res) => {
                 return res.status(500).send('Failed to update uploaded files');
             }
         }
+
+        // If the payload included a facility location update, persist it to the facility row as well
+        try {
+            const facilityToUpdate = payload.facilityId || payload.facility_id || (existing.rows[0] ? existing.rows[0].facility_id : null);
+            if (facilityToUpdate && (Object.prototype.hasOwnProperty.call(payload, 'location') || Object.prototype.hasOwnProperty.call(payload, 'show_on_map') || Object.prototype.hasOwnProperty.call(payload, 'showOnMap'))) {
+                const loc = (Object.prototype.hasOwnProperty.call(payload, 'location')) ? payload.location : null;
+                const showFlag = Object.prototype.hasOwnProperty.call(payload, 'show_on_map') ? payload.show_on_map : (Object.prototype.hasOwnProperty.call(payload, 'showOnMap') ? payload.showOnMap : null);
+                try {
+                    await client.query('UPDATE dqai_facilities SET location = $1, show_on_map = COALESCE($2, show_on_map) WHERE id = $3', [loc || null, showFlag === null ? null : showFlag, facilityToUpdate]);
+                } catch (e) {
+                    console.warn('Failed to update facility location/show_on_map during report update', e && e.message ? e.message : e);
+                }
+            }
+        } catch (e) { console.warn('facility update check failed', e); }
 
         await client.query('COMMIT');
         // Return updated report
@@ -3774,28 +5043,70 @@ app.post('/api/api_connectors/:id/trigger', async (req, res) => {
             body = JSON.stringify(req.body);
             headers['Content-Type'] = 'application/json';
         }
-                const r = await fetch(conn.base_url, { method, headers, body });
-                const text = await r.text();
-                let parsed = null;
-                try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
-                const meta = { status: r.status, statusText: r.statusText, url: conn.base_url };
-                // Upsert behavior: update latest ingest for this connector if exists, otherwise insert
+        const r = await fetch(conn.base_url, { method, headers, body });
+        const text = await r.text();
+        let parsed = null;
+        // Try JSON first
+        try { parsed = JSON.parse(text); }
+        catch (e) {
+            // If it's XML, attempt to parse to a JS object using jsdom
+            if (typeof text === 'string' && text.trim().startsWith('<')) {
                 try {
-                    const exist = await pool.query('SELECT id FROM dqai_api_ingests WHERE connector_id = $1 ORDER BY received_at DESC LIMIT 1', [id]);
-                    if (exist.rowCount > 0) {
-                        const ingestId = exist.rows[0].id;
-                        await pool.query('UPDATE dqai_api_ingests SET raw_data = $1, metadata = $2, received_at = NOW() WHERE id = $3', [JSON.stringify(parsed), JSON.stringify(meta), ingestId]);
-                        return res.json({ ok: true, status: r.status, data: parsed, ingestId });
-                    } else {
-                        const ins = await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3) RETURNING id', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
-                        return res.json({ ok: true, status: r.status, data: parsed, ingestId: ins.rows[0].id });
-                    }
-                } catch (e) {
-                    console.error('Failed to upsert api_ingest', e);
-                    // fallback to insert to avoid losing data
-                    await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3)', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
-                    return res.json({ ok: true, status: r.status, data: parsed });
+                    const jsdom = await import('jsdom');
+                    const { JSDOM } = jsdom;
+                    const dom = new JSDOM(text, { contentType: 'text/xml' });
+                    const xmldoc = dom.window.document;
+                    const toJson = (node) => {
+                        if (!node) return null;
+                        // text node
+                        if (node.nodeType === 3) return node.nodeValue;
+                        const obj = {};
+                        const children = Array.from(node.childNodes || []).filter(n => n.nodeType === 1 || (n.nodeType === 3 && (n.nodeValue || '').trim()));
+                        if (children.length === 0) return node.textContent;
+                        for (const ch of children) {
+                            const name = ch.nodeName;
+                            const val = toJson(ch);
+                            if (Object.prototype.hasOwnProperty.call(obj, name)) {
+                                if (!Array.isArray(obj[name])) obj[name] = [obj[name]];
+                                obj[name].push(val);
+                            } else obj[name] = val;
+                        }
+                        // attributes
+                        if (node.attributes && node.attributes.length) {
+                            for (const a of Array.from(node.attributes || [])) {
+                                obj[`@${a.name}`] = a.value;
+                            }
+                        }
+                        return obj;
+                    };
+                    parsed = toJson(xmldoc);
+                } catch (ex) {
+                    // fallback to raw text if XML parsing fails
+                    console.warn('XML parse failed for connector response', ex && ex.message ? ex.message : ex);
+                    parsed = text;
                 }
+            } else {
+                parsed = text;
+            }
+        }
+        const meta = { status: r.status, statusText: r.statusText, url: conn.base_url };
+        // Upsert behavior: update latest ingest for this connector if exists, otherwise insert
+        try {
+            const exist = await pool.query('SELECT id FROM dqai_api_ingests WHERE connector_id = $1 ORDER BY received_at DESC LIMIT 1', [id]);
+            if (exist.rowCount > 0) {
+                const ingestId = exist.rows[0].id;
+                await pool.query('UPDATE dqai_api_ingests SET raw_data = $1, metadata = $2, received_at = NOW() WHERE id = $3', [JSON.stringify(parsed), JSON.stringify(meta), ingestId]);
+                return res.json({ ok: true, status: r.status, data: parsed, ingestId });
+            } else {
+                const ins = await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3) RETURNING id', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
+                return res.json({ ok: true, status: r.status, data: parsed, ingestId: ins.rows[0].id });
+            }
+        } catch (e) {
+            console.error('Failed to upsert api_ingest', e);
+            // fallback to insert to avoid losing data
+            await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3)', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
+            return res.json({ ok: true, status: r.status, data: parsed });
+        }
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
 
@@ -3822,8 +5133,29 @@ app.get('/api/api_ingests', async (req, res) => {
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
 
+// Patch an ingest's raw_data (allow editing/saving transformed JSON from frontend)
+app.patch('/api/api_ingests/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+        const payload = req.body || {};
+        if (!Object.prototype.hasOwnProperty.call(payload, 'raw_data')) return res.status(400).json({ error: 'Missing raw_data' });
+        let toStore = payload.raw_data;
+        // If raw_data is a string that contains JSON, attempt to parse so we store structured JSONB
+        if (typeof toStore === 'string') {
+            try { toStore = JSON.parse(toStore); } catch (e) { /* keep as string (will be stored as JSON string) */ }
+        }
+        const r = await pool.query('UPDATE dqai_api_ingests SET raw_data = $1, received_at = NOW() WHERE id = $2 RETURNING *', [toStore, id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+        res.json(r.rows[0]);
+    } catch (e) {
+        console.error('Failed to update api_ingest', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+
 // Delete a report and its associated uploaded docs and media files
-app.delete('/api/reports/:id', async (req, res) => {
+app.delete('/api/reports/:id', requireAdmin, async (req, res) => {
     const id = req.params.id;
     try {
         // Safely delete uploaded_docs rows if the DB has a report_id column.
@@ -4063,6 +5395,60 @@ app.delete('/api/uploaded_docs/:id', async (req, res) => {
 app.post('/api/reports', async (req, res) => {
     const { activityId, userId, facilityId, status, answers, uploadedFiles, id: maybeId, reportId: maybeReportId } = req.body;
     try {
+        // Determine current user's role for permission checks (default to 'public')
+        let currentRole = 'public';
+        try {
+            if (req.session && req.session.userId) {
+                const ur = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                if (ur.rows && ur.rows.length) currentRole = ur.rows[0].role || currentRole;
+            }
+        } catch (e) { console.error('Failed to determine current user role for reports endpoint', e); }
+
+        // Collect question ids referenced in the provided answers object
+        const collectQuestionIds = (ans) => {
+            const set = new Set();
+            if (!ans || typeof ans !== 'object') return set;
+            for (const [qId, val] of Object.entries(ans)) {
+                if (Array.isArray(val)) {
+                    for (const row of val || []) {
+                        if (row && typeof row === 'object') {
+                            for (const sub of Object.keys(row)) set.add(String(sub));
+                        }
+                    }
+                } else if (val && typeof val === 'object' && !(val instanceof Array)) {
+                    // single answer object (may include reviewersComment etc)
+                    set.add(String(qId));
+                } else {
+                    set.add(String(qId));
+                }
+            }
+            return set;
+        };
+
+        const qIdSet = collectQuestionIds(answers || {});
+
+        // Permission check: if any question maps to a page/section the role lacks create/edit, block
+        if (qIdSet.size > 0) {
+            const qIds = Array.from(qIdSet);
+            try {
+                const qres = await pool.query('SELECT id, page_name, section_name FROM dqai_questions WHERE id = ANY($1::text[])', [qIds]);
+                const missing = [];
+                // Determine whether this POST is an update (edit) or a create (new)
+                const incomingReportId = (maybeId || maybeReportId) ? Number(maybeId || maybeReportId) : null;
+                for (const q of qres.rows || []) {
+                    const pageKey = q.page_name || '';
+                    const sectionKey = (q.section_name === null || typeof q.section_name === 'undefined') ? null : q.section_name;
+                    const permRes = await pool.query(`SELECT can_create, can_edit FROM dqai_page_permissions WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
+                    const perm = permRes.rows && permRes.rows[0] ? permRes.rows[0] : null;
+                    if (incomingReportId) {
+                        if (!perm || !perm.can_edit) missing.push({ page: pageKey, section: sectionKey, qid: q.id, need: 'edit' });
+                    } else {
+                        if (!perm || !perm.can_create) missing.push({ page: pageKey, section: sectionKey, qid: q.id, need: 'create' });
+                    }
+                }
+                if (missing.length) return res.status(403).json({ error: 'Permission denied for action on some pages/sections', details: missing });
+            } catch (e) { console.error('Failed during report permission checks', e); /* fall through to normal behavior on error */ }
+        }
         // If client includes an id or reportId in the POST payload, perform an update instead of creating a duplicate
         const incomingReportId = (maybeId || maybeReportId) ? Number(maybeId || maybeReportId) : null;
         if (incomingReportId) {
@@ -4117,14 +5503,36 @@ app.post('/api/reports', async (req, res) => {
                     if (answersObj && typeof answersObj === 'object') {
                         for (const [qId, val] of Object.entries(answersObj)) {
                             try {
-                                let answerVal = val; let reviewersComment = null; let qiFollowup = null; let score = null;
-                                if (val && typeof val === 'object' && !(val instanceof Array)) {
-                                    if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
-                                    reviewersComment = val.reviewersComment || val.reviewers_comment || null;
-                                    qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
-                                    score = (typeof val.score !== 'undefined') ? val.score : null;
+                                // If value is an array, treat as a repeatable group: each element is a row object
+                                if (Array.isArray(val)) {
+                                    for (let ri = 0; ri < val.length; ri++) {
+                                        const row = val[ri] || {};
+                                        if (!row || typeof row !== 'object') continue;
+                                        for (const [subQId, subVal] of Object.entries(row)) {
+                                            try {
+                                                let answerVal = subVal;
+                                                let reviewersComment = null; let qiFollowup = null; let score = null;
+                                                if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                                    if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                                    reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                                    qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                                    score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                                }
+                                                const stored = { value: answerVal, _repeat: { groupName: qId, rowIndex: ri } };
+                                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, JSON.stringify(stored), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                            } catch (ie) { console.error('Failed to insert repeated answer during report POST-as-update for question', subQId, ie); }
+                                        }
+                                    }
+                                } else {
+                                    let answerVal = val; let reviewersComment = null; let qiFollowup = null; let score = null;
+                                    if (val && typeof val === 'object' && !(val instanceof Array)) {
+                                        if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                                        reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                                        qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                                        score = (typeof val.score !== 'undefined') ? val.score : null;
+                                    }
+                                    await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, JSON.stringify(answerVal), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                 }
-                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, JSON.stringify(answerVal), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                             } catch (ie) { console.error('Failed to insert answer during report POST-as-update for question', qId, ie); }
                         }
                     }
@@ -4199,18 +5607,40 @@ app.post('/api/reports', async (req, res) => {
             if (answers && typeof answers === 'object') {
                 for (const [qId, val] of Object.entries(answers)) {
                     try {
-                        // support val as primitive or object { value, reviewersComment, qualityImprovementFollowup, score }
-                        let answerVal = val;
-                        let reviewersComment = null;
-                        let qiFollowup = null;
-                        let score = null;
-                        if (val && typeof val === 'object' && !(val instanceof Array)) {
-                            if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
-                            reviewersComment = val.reviewersComment || val.reviewers_comment || null;
-                            qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
-                            score = (typeof val.score !== 'undefined') ? val.score : null;
+                        // If this value is an array, treat it as a repeatable section: each array element is a row object
+                        if (Array.isArray(val)) {
+                            for (let ri = 0; ri < val.length; ri++) {
+                                const row = val[ri] || {};
+                                if (!row || typeof row !== 'object') continue;
+                                for (const [subQId, subVal] of Object.entries(row)) {
+                                    try {
+                                        let answerVal = subVal;
+                                        let reviewersComment = null; let qiFollowup = null; let score = null;
+                                        if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                            if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                            reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                            qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                            score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                        }
+                                        const stored = { value: answerVal, _repeat: { groupName: qId, rowIndex: ri } };
+                                        await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [report.id, activityId, subQId, JSON.stringify(stored), facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
+                                    } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
+                                }
+                            }
+                        } else {
+                            // support val as primitive or object { value, reviewersComment, qualityImprovementFollowup, score }
+                            let answerVal = val;
+                            let reviewersComment = null;
+                            let qiFollowup = null;
+                            let score = null;
+                            if (val && typeof val === 'object' && !(val instanceof Array)) {
+                                if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                                reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                                qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                                score = (typeof val.score !== 'undefined') ? val.score : null;
+                            }
+                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [report.id, activityId, qId, JSON.stringify(answerVal), facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
                         }
-                        await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [report.id, activityId, qId, JSON.stringify(answerVal), facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
                     } catch (e) {
                         console.error('Failed to insert answer for question', qId, e);
                     }
@@ -4225,13 +5655,213 @@ app.post('/api/reports', async (req, res) => {
 });
 
 // Initialize DB then start server
-initDb()
-    .then(() => {
-        app.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`);
+// Public metadata endpoint (serves demo metadata files from public/metadata)
+
+app.get('/api/public/metadata', (req, res) => {
+    try {
+        const metaDir = path.join(__dirname, '..', 'public', 'metadata');
+        const files = [
+            'care_levels.json',
+            'ownership_types.json',
+            'indicators.json',
+            'roles.json',
+            'permissions.json',
+            'role_permissions.json'
+        ];
+        const out = {};
+        files.forEach(f => {
+            const p = path.join(metaDir, f);
+            if (fs.existsSync(p)) {
+                try {
+                    out[path.basename(f, '.json')] = JSON.parse(fs.readFileSync(p, 'utf8'));
+                } catch (e) {
+                    console.warn('Failed parsing metadata file', p, e.message);
+                }
+            }
         });
-    })
-    .catch(err => {
-        console.error('Failed to initialize database. Server not started.', err);
-        process.exit(1);
+        res.json(out);
+    } catch (e) {
+        res.status(500).send(e.message);
+    }
+});
+
+    // Public indicator summary endpoint: aggregates answers by indicator definitions
+    app.get('/api/public/indicator_summary', async (req, res) => {
+        try {
+            const { activityId } = req.query;
+            // load indicators metadata from public metadata folder
+            const metaDir = path.join(__dirname, '..', 'public', 'metadata');
+            const indicatorsPath = path.join(metaDir, 'indicators.json');
+            let indicators = [];
+            try { if (fs.existsSync(indicatorsPath)) indicators = JSON.parse(fs.readFileSync(indicatorsPath, 'utf8')); } catch (e) { indicators = []; }
+
+            // If activityId provided, determine the set of question_ids for that activity
+            let allowedQuestionIds = null;
+            if (activityId) {
+                try {
+                    const qres = await pool.query('SELECT id FROM dqai_questions WHERE activity_id = $1', [activityId]);
+                    allowedQuestionIds = qres.rows.map(r => String(r.id));
+                } catch (e) { allowedQuestionIds = null; }
+            }
+
+            const results = [];
+            for (const ind of (indicators || [])) {
+                const questionId = ind.questionId || ind.id || ind.dataType;
+                // If activity provided and this indicator's questionId is not part of activity, skip
+                if (activityId && Array.isArray(allowedQuestionIds) && allowedQuestionIds.length && !allowedQuestionIds.includes(String(questionId))) {
+                    continue;
+                }
+
+                // build query: match by question_id == questionId
+                const params = [questionId];
+                let idx = 2;
+                let where = `WHERE question_id = $1`;
+                if (activityId) { where += ` AND activity_id = $${idx++}`; params.push(activityId); }
+                const sql = `SELECT answer_value, facility_id FROM dqai_answers ${where} ORDER BY created_at DESC LIMIT 10000`;
+                const ares = await pool.query(sql, params);
+                const rows = ares.rows || [];
+
+                const bandCounts = {};
+                const sampleValues = [];
+                let reported = 0;
+                for (const r of rows) {
+                    let val = r.answer_value;
+                    if (val === null || typeof val === 'undefined') { bandCounts['unknown'] = (bandCounts['unknown'] || 0) + 1; continue; }
+                    reported += 1;
+                    if (typeof val === 'string') {
+                        try { val = JSON.parse(val); } catch (e) { /* keep as string */ }
+                    }
+                    if (val && typeof val === 'object' && Object.prototype.hasOwnProperty.call(val, 'band')) {
+                        const b = String(val.band || 'unknown').toLowerCase();
+                        bandCounts[b] = (bandCounts[b] || 0) + 1;
+                        sampleValues.push(val);
+                    } else if (typeof val === 'number') {
+                        const n = Number(val);
+                        let b = 'unknown';
+                        if (!isNaN(n)) { if (n >= 90) b = 'high'; else if (n >= 70) b = 'medium'; else b = 'low'; }
+                        bandCounts[b] = (bandCounts[b] || 0) + 1;
+                        sampleValues.push(n);
+                    } else {
+                        bandCounts['unknown'] = (bandCounts['unknown'] || 0) + 1;
+                        sampleValues.push(val);
+                    }
+                    if (sampleValues.length >= 5) { /* keep small sample */ }
+                }
+                results.push({ id: ind.id, name: ind.name || ind.id, reported, sampleValues: sampleValues.slice(0, 5), bandCounts });
+            }
+
+            res.json({ indicators: results });
+        } catch (e) {
+            console.error('indicator_summary error', e);
+            res.status(500).json({ error: String(e) });
+        }
     });
+
+    // Public facility summary endpoint (country-level aggregates)
+    app.get('/api/public/facility_summary', async (req, res) => {
+        try {
+            // total facilities
+            const totalRes = await pool.query('SELECT COUNT(*)::int as cnt FROM dqai_facilities');
+            const total = totalRes.rows && totalRes.rows[0] ? Number(totalRes.rows[0].cnt || 0) : 0;
+
+            // contributors: distinct users from activity_reports.reported_by and answers.recorded_by/user_id
+            const contribRes = await pool.query(`
+                SELECT COUNT(DISTINCT uid) as cnt FROM (
+                    SELECT reported_by as uid FROM dqai_activity_reports WHERE reported_by IS NOT NULL
+                    UNION
+                    SELECT user_id as uid FROM dqai_activity_reports WHERE user_id IS NOT NULL
+                    UNION
+                    SELECT recorded_by as uid FROM dqai_answers WHERE recorded_by IS NOT NULL
+                    UNION
+                    SELECT user_id as uid FROM dqai_answers WHERE user_id IS NOT NULL
+                ) t
+            `);
+            const contributors = contribRes.rows && contribRes.rows[0] ? Number(contribRes.rows[0].cnt || 0) : 0;
+
+            // tiers: derive from dqai_facilities.category and map to care_levels where possible
+            const tierRows = await pool.query('SELECT category, COUNT(*)::int as cnt FROM dqai_facilities GROUP BY category');
+            const tiers = [];
+            let otherCount = 0;
+            try {
+                const metaDir = path.join(__dirname, '..', 'public', 'metadata');
+                const carePath = path.join(metaDir, 'care_levels.json');
+                let careLevels = [];
+                if (fs.existsSync(carePath)) careLevels = JSON.parse(fs.readFileSync(carePath, 'utf8'));
+                const careIds = (careLevels || []).map((c) => (c.id || String(c.name || '')).toString().toLowerCase());
+                for (const r of tierRows.rows) {
+                    const name = String(r.category || 'other');
+                    const key = name.toLowerCase();
+                    if (careIds.includes(key)) {
+                        const pct = total > 0 ? Math.round((Number(r.cnt) / total) * 100) : 0;
+                        tiers.push({ name: name, count: Number(r.cnt), percent: pct });
+                    } else {
+                        otherCount += Number(r.cnt);
+                    }
+                }
+            } catch (e) {
+                for (const r of tierRows.rows) { otherCount += Number(r.cnt); }
+            }
+            if (otherCount > 0) tiers.push({ name: 'Other', count: otherCount, percent: total > 0 ? Math.round((otherCount / total) * 100) : 0 });
+
+            // functional status: based on latest dqai_answers for question_id = 'q_energy_resilience'
+            const bandsSql = `SELECT DISTINCT ON (facility_id) facility_id, answer_value FROM dqai_answers WHERE question_id = $1 AND answer_value IS NOT NULL ORDER BY facility_id, created_at DESC`;
+            const bres = await pool.query(bandsSql, ['q_energy_resilience']);
+            const funcCounts = { fully: 0, partial: 0, none: 0 };
+            for (const r of bres.rows) {
+                let v = r.answer_value;
+                if (typeof v === 'string') {
+                    try { v = JSON.parse(v); } catch (e) { /* keep string */ }
+                }
+                let band = null;
+                if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'band')) band = String(v.band || '').toLowerCase();
+                else if (typeof v === 'string') band = String(v).toLowerCase();
+                if (band === 'green') funcCounts.fully += 1;
+                else if (band === 'yellow') funcCounts.partial += 1;
+                else if (band === 'red') funcCounts.none += 1;
+                else funcCounts.partial += 0; // unknowns ignored
+            }
+            const funcTotal = funcCounts.fully + funcCounts.partial + funcCounts.none;
+            const functional = [
+                { name: 'Fully functional', percent: funcTotal ? Math.round((funcCounts.fully / funcTotal) * 100) : 0 },
+                { name: 'Partially functional', percent: funcTotal ? Math.round((funcCounts.partial / funcTotal) * 100) : 0 },
+                { name: 'Not functional', percent: funcTotal ? Math.round((funcCounts.none / funcTotal) * 100) : 0 }
+            ];
+
+            // Respond with a sensible structure
+            res.json({ country: 'Nigeria', totalFacilities: total, contributors, tiers, functional });
+        } catch (e) {
+            console.error('facility_summary error', e);
+            res.status(500).json({ error: String(e) });
+        }
+    });
+
+// Allow skipping DB init for metadata-only development by setting SKIP_DB_ON_INIT=true
+if (process.env.SKIP_DB_ON_INIT === 'true') {
+    console.warn('SKIP_DB_ON_INIT=true; skipping database initialization and starting server in degraded mode.');
+    try {
+        console.log(`[startup] Configured SERVER_PORT=${PORT}`);
+        try { console.log(`[startup] Configured FRONTEND_PORT=${frontendPort}`); } catch (e) { }
+        const allowedOrigin = `http://localhost:${(typeof frontendPort !== 'undefined' ? frontendPort : (process.env.FRONTEND_PORT || 5173))}`;
+        console.log(`[startup] CORS allowed origin: ${allowedOrigin}`);
+    } catch (e) { }
+    app.listen(PORT, () => {
+        console.log(`Server running (DB init skipped) on port ${PORT}`);
+    });
+} else {
+    initDb()
+        .then(() => {
+            try {
+                console.log(`[startup] Configured SERVER_PORT=${PORT}`);
+                try { console.log(`[startup] Configured FRONTEND_PORT=${frontendPort}`); } catch (e) { }
+                const allowedOrigin = `http://localhost:${(typeof frontendPort !== 'undefined' ? frontendPort : (process.env.FRONTEND_PORT || 5173))}`;
+                console.log(`[startup] CORS allowed origin: ${allowedOrigin}`);
+            } catch (e) { }
+            app.listen(PORT, () => {
+                console.log(`Server running on port ${PORT}`);
+            });
+        })
+        .catch(err => {
+            console.error('Failed to initialize database. Server not started.', err);
+            process.exit(1);
+        });
+}

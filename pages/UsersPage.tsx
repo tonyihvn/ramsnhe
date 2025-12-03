@@ -124,6 +124,9 @@ const UsersPage: React.FC = () => {
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.role}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <a href={`#/users/${user.id}/dashboard`} className="text-primary-600 hover:underline">Open Dashboard</a>
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {user.status === 'Active' && (
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
@@ -242,6 +245,18 @@ const UsersPage: React.FC = () => {
           <div>
             <MInput label="Facility (optional)" type="select" value={currentUserEdit.facilityId || ''} onChange={v => setCurrentUserEdit({ ...currentUserEdit, facilityId: v ? Number(v) : undefined })}
               options={[{ value: '', label: 'None' }, ...(facilities.map(f => ({ value: f.id, label: f.name })))]} />
+          </div>
+          <div className="grid grid-cols-2 gap-4 items-center">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Location (lat,lng)</label>
+              <input type="text" placeholder="e.g. 9.0820,8.6753" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                value={currentUserEdit.location || ''} onChange={e => setCurrentUserEdit({ ...currentUserEdit, location: e.target.value })} />
+            </div>
+            <div className="flex items-center">
+              <input id="user-show-map" type="checkbox" checked={currentUserEdit.show_on_map === undefined ? true : Boolean(currentUserEdit.show_on_map)}
+                onChange={e => setCurrentUserEdit({ ...currentUserEdit, show_on_map: e.target.checked })} />
+              <label htmlFor="user-show-map" className="ml-2 text-sm text-gray-700">Show on map</label>
+            </div>
           </div>
           <div>
             <MInput label="Status" type="select" value={currentUserEdit.status} onChange={v => setCurrentUserEdit({ ...currentUserEdit, status: v })}

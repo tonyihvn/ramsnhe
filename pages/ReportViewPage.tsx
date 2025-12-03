@@ -33,6 +33,7 @@ const ReportViewPage: React.FC = () => {
   const [reviewStatus, setReviewStatus] = useState<string | null>(report?.status ?? null);
   const [imageModalOpen, setImageModalOpen] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
+  const [facilityName, setFacilityName] = useState<string | null>(null);
 
   const saveReview = async () => {
     if (!report) return;
@@ -164,8 +165,32 @@ const ReportViewPage: React.FC = () => {
     setReviewStatus(report.status || null);
   }, [report]);
 
+  // derive facility name by looking up facility_id against /api/facilities
+  useEffect(() => {
+    (async () => {
+      try {
+        setFacilityName(null);
+        if (!report) return;
+        const fid = report.facility_id || report.facilityId || report.facility;
+        if (!fid) return;
+        // fetch all facilities and find matching id (server exposes GET /api/facilities)
+        const r = await apiFetch('/api/facilities');
+        if (!r.ok) return;
+        const all = await r.json();
+        const found = (all || []).find((f: any) => String(f.id) === String(fid));
+        if (found) setFacilityName(found.name || found.title || null);
+      } catch (e) { console.error('Failed to load facility name', e); }
+    })();
+  }, [report]);
+
   if (loading) return <div>Loading...</div>;
   if (!report) return <div>Report not found.</div>;
+
+  // derive facility name by looking up facility_id against /api/facilities
+  const facilityLabelFallback = `Report ${report.id}`;
+  const activityResponseType = (report.response_type || report.responseType || '').toString().toLowerCase();
+  const userLabel = report.reported_by_name || report.reportedByName || report.reported_by || report.reportedBy || report.user_name || report.userName || (report.reported_by ? `User ${report.reported_by}` : null);
+  const subjectLabel = activityResponseType === 'user' ? (userLabel || facilityName || facilityLabelFallback) : (facilityName || facilityLabelFallback);
 
   const handlePrint = () => window.print();
 
@@ -354,7 +379,7 @@ const ReportViewPage: React.FC = () => {
     <div className="space-y-6 pb-20">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">{activityTitle ? `${activityTitle} — Report ${report.id}` : `Report ${report.id}`}</h1>
+          <h1 className="text-2xl font-bold">{activityTitle ? `${activityTitle} — ${subjectLabel}` : subjectLabel}</h1>
           <p className="text-sm text-gray-500">Submitted: {new Date(report.submission_date).toLocaleString()}</p>
           <div className="inline-flex items-center gap-2">
             <Button onClick={handlePrintFormatted}>Download PDF</Button>

@@ -1,125 +1,352 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
-import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport } from '../types';
+import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport, Facility, User } from '../types';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
 
-const RenderQuestion = ({ question, value, onChange }: { question: Question, value: any, onChange: (value: any) => void }) => {
-    switch (question.answerType) {
-        case AnswerType.TEXT:
-            return <MInput label={question.questionText} type="text" value={value || ''} onChange={onChange} />;
-        case AnswerType.TEXTAREA:
-            return <MInput label={question.questionText} type="textarea" value={value || ''} onChange={onChange} rows={4} />;
-        case AnswerType.NUMBER:
-            return <MInput label={question.questionText} type="number" value={value || ''} onChange={onChange} />;
-        case AnswerType.DATE:
-            return <MInput label={question.questionText} type="date" value={value || ''} onChange={onChange} />;
-        case AnswerType.TIME:
-            return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} />;
-        case AnswerType.DROPDOWN:
-            return (
-                <MInput
-                    label={question.questionText}
-                    type="select"
-                    value={value || ''}
-                    onChange={onChange}
-                    options={(question.options || []).map(o => ({ value: o.value as any, label: o.label }))}
-                    placeholder="Select..."
-                />
-            );
-        case AnswerType.RADIO:
-            return (
-                <div>
-                    {question.options?.map((opt, idx) => (
-                        <MInput key={idx} type="radio" name={question.id} label={opt.label} value={value === opt.value} onChange={(v) => onChange(opt.value)} />
-                    ))}
-                </div>
-            );
-        case AnswerType.CHECKBOX:
-            const currentVals = Array.isArray(value) ? value : [];
-            const handleCheck = (val: string, checked: boolean) => {
-                if (checked) onChange([...currentVals, val]);
-                else onChange(currentVals.filter((v: string) => v !== val));
-            };
-            return (
-                <div>
-                    {question.options?.map((opt, idx) => (
-                        <MInput key={idx} type="checkbox" name={`${question.id}-${idx}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} />
-                    ))}
-                </div>
-            );
-        case AnswerType.FILE:
-            const allowed = question.metadata && Array.isArray(question.metadata.allowedFileTypes) ? question.metadata.allowedFileTypes.join(',') : undefined;
-            const fileVal = value;
-            const handleFile = (files: FileList | null) => {
-                const f = files?.[0] || null;
-                if (!f) return onChange(null);
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    const dataUrl = ev.target?.result as string;
-                    onChange({ filename: f.name, mimeType: f.type, dataUrl });
-                };
-                reader.readAsDataURL(f);
-            };
-            return (
-                <div>
-                    <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} />
-                    {fileVal && fileVal.dataUrl && fileVal.dataUrl !== '' && (
-                        <div className="mt-2">
-                            <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
-                            {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && fileVal.dataUrl && (
-                                <img src={fileVal.dataUrl} alt={fileVal.filename} className="mt-2 max-h-36 border rounded" />
-                            )}
-                        </div>
-                    )}
-                </div>
-            );
-        case AnswerType.COMPUTED:
-            // Show computed/calculated value as read-only output.
-            // If a function is present, try to invoke it safely to get the result; otherwise display the value as a string.
-            let displayValue: any = value;
-            if (typeof displayValue === 'function') {
-                try {
-                    const res = displayValue();
-                    displayValue = (res === undefined || res === null) ? String(displayValue) : res;
-                } catch (e) {
-                    // if calling fails, fall back to string representation
-                    displayValue = String(displayValue);
-                }
-            }
-            // If the value is a string that looks like JS source (arrow or function), try to extract a trailing primitive result.
-            if (typeof displayValue === 'string' && /=>|function\s*\(/.test(displayValue)) {
-                // Attempt to extract text after the last closing brace '}' which commonly contains the computed result when stringified
-                const after = displayValue.replace(/^[\s\S]*}\s*/, '').trim();
-                if (after) {
-                    // If it's a plain number, coerce to Number
-                    if (/^-?\d+(?:\.\d+)?$/.test(after)) displayValue = Number(after);
-                    else {
-                        try { displayValue = JSON.parse(after); } catch (e) { displayValue = after; }
-                    }
-                } else {
-                    // No trailing primitive; don't show raw JS source — present as empty so placeholder appears
-                    displayValue = null;
-                }
-            }
+import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { useTheme } from '../hooks/useTheme';
 
-                
-            const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
-            return (
-                <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
-                    <span className="font-semibold">{question.questionText}:</span>{' '}
-                    <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(displayValue)}</span>
-                </div>
-            );
-        default:
-            return <p className="text-sm text-gray-500">Not supported</p>;
-    }
+// Fix default icon paths for Leaflet when bundled by Vite
+const _iconUrl = new URL('leaflet/dist/images/marker-icon.png', import.meta.url).href;
+const _iconRetinaUrl = new URL('leaflet/dist/images/marker-icon-2x.png', import.meta.url).href;
+const _shadowUrl = new URL('leaflet/dist/images/marker-shadow.png', import.meta.url).href;
+const DefaultIcon = L.icon({ iconUrl: _iconUrl as unknown as string, iconRetinaUrl: _iconRetinaUrl as unknown as string, shadowUrl: _shadowUrl as unknown as string, iconSize: [25, 41], iconAnchor: [12, 41] });
+L.Marker.prototype.options.icon = DefaultIcon;
+
+const ClickableMap = ({ lat, lng, onChange }: { lat: number, lng: number, onChange: (lat: number, lng: number) => void }) => {
+    const [pos, setPos] = useState<[number, number] | null>(lat && lng ? [lat, lng] : null);
+    useMapEvents({
+        click(e) {
+            const p: [number, number] = [e.latlng.lat, e.latlng.lng];
+            setPos(p);
+            onChange(p[0], p[1]);
+        }
+    });
+    return pos ? <Marker position={pos as any} /> : null;
 };
 
+const LocationMapPicker = ({ value, onChange, onClose, facilities, users }: { value: any, onChange: (lat: number, lng: number) => void, onClose: () => void, facilities: Facility[]; users: User[] }) => {
+    const [lat, setLat] = useState<number | null>(null);
+    const [lng, setLng] = useState<number | null>(null);
+
+    // Parse existing value if present (format: "lat,lng")
+    React.useEffect(() => {
+        if (value && typeof value === 'string') {
+            const [parsedLat, parsedLng] = value.split(',').map(v => parseFloat(v));
+            if (!isNaN(parsedLat)) setLat(parsedLat);
+            if (!isNaN(parsedLng)) setLng(parsedLng);
+        }
+    }, [value]);
+
+    const center: [number, number] = lat && lng ? [lat, lng] : [9.0820, 8.6753]; // Nigeria center fallback
+
+    return (
+        <div className="bg-gray-100 p-2 rounded">
+            <div className="text-xs text-gray-600 mb-2 text-center">Click on the map to pick a location; hover facility/user markers to see names</div>
+            <div style={{ height: 320 }} className="mb-2">
+                <MapContainer center={center as any} zoom={6} style={{ height: '100%', width: '100%' }}>
+                    {(() => {
+                        const { settings } = (useTheme as any)();
+                        const provider = (settings && (settings as any).defaultMapProvider) ? (settings as any).defaultMapProvider : 'leaflet';
+                        const hereKey = (settings && (settings as any).hereApiKey) ? (settings as any).hereApiKey : null;
+                        const googleKey = (settings && (settings as any).googleMapsApiKey) ? (settings as any).googleMapsApiKey : null;
+                        const providers: any = {
+                            leaflet: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors', subdomains: ['a','b','c'] },
+                            osmand: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors (OsmAnd)', subdomains: ['a','b','c'] },
+                            organic: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors (Organic Maps)', subdomains: ['a','b','c'] },
+                            herewego: { url: hereKey ? `https://{s}.base.maps.ls.hereapi.com/maptile/2.1/maptile/newest/normal.day/{z}/{x}/{y}/256/png8?apiKey=${hereKey}` : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© HERE', subdomains: ['1','2','3','4'] },
+                            google: { url: googleKey ? `https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}&key=${googleKey}` : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© Google', subdomains: ['mt0','mt1','mt2','mt3'] }
+                        };
+                        const cfg = providers[provider] || providers.leaflet;
+                        return <TileLayer attribution={cfg.attribution} url={cfg.url} {...(cfg.subdomains ? { subdomains: cfg.subdomains } : {})} />;
+                    })()}
+                    {/* show existing facilities and users as markers with hover tooltips */}
+                    {Array.isArray(facilities) && facilities.map((f) => {
+                        if (!f || !f.location) return null;
+                        const parts = String(f.location).split(',').map(p => parseFloat(p));
+                        if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+                        return (
+                            <Marker key={`fac-${f.id}`} position={[parts[0], parts[1]] as any}>
+                                <Tooltip direction="top" offset={[0, -10]}>{f.name}</Tooltip>
+                            </Marker>
+                        );
+                    })}
+                    {Array.isArray(users) && users.map((u) => {
+                        if (!u || !u.location) return null;
+                        const parts = String(u.location).split(',').map(p => parseFloat(p));
+                        if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+                        return (
+                            <Marker key={`user-${u.id}`} position={[parts[0], parts[1]] as any}>
+                                <Tooltip direction="top" offset={[0, -10]}>{u.firstName ? `${u.firstName} ${u.lastName || ''}` : u.email}</Tooltip>
+                            </Marker>
+                        );
+                    })}
+                    <ClickableMap lat={lat as any} lng={lng as any} onChange={(a, b) => { setLat(a); setLng(b); }} />
+                </MapContainer>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+                <input type="number" placeholder="Latitude" value={lat ?? ''} onChange={(e) => setLat(parseFloat(e.target.value) || 0)} className="border border-gray-300 rounded px-2 py-1 text-sm" step="0.0000001" />
+                <input type="number" placeholder="Longitude" value={lng ?? ''} onChange={(e) => setLng(parseFloat(e.target.value) || 0)} className="border border-gray-300 rounded px-2 py-1 text-sm" step="0.0000001" />
+            </div>
+            <div className="flex gap-2 justify-end">
+                <button onClick={onClose} className="px-3 py-1 bg-gray-300 text-gray-800 text-sm rounded hover:bg-gray-400">Cancel</button>
+                <button onClick={() => onChange(lat || 0, lng || 0)} className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Select Location</button>
+            </div>
+        </div>
+    );
+};
+
+// Lightweight searchable select used when a question is marked searchable in the builder
+const SearchableSelect: React.FC<{
+    options: { value: any; label: string; score?: number }[];
+    value: any;
+    placeholder?: string;
+    onChange: (val: any) => void;
+    disabled?: boolean;
+}> = ({ options, value, placeholder, onChange, disabled }) => {
+    const [input, setInput] = React.useState<string>('');
+    const [open, setOpen] = React.useState<boolean>(false);
+    const ref = React.useRef<HTMLDivElement | null>(null);
+
+    React.useEffect(() => {
+        const handle = (e: MouseEvent) => {
+            if (!ref.current) return;
+            if (!ref.current.contains(e.target as Node)) setOpen(false);
+        };
+        document.addEventListener('click', handle);
+        return () => document.removeEventListener('click', handle);
+    }, []);
+
+    // Show label for current value
+    React.useEffect(() => {
+        const sel = options.find(o => String(o.value) === String(value));
+        setInput(sel ? sel.label : '');
+    }, [value, JSON.stringify(options)]);
+
+    const filtered = (options || []).filter(o => String(o.label).toLowerCase().includes(String(input || '').toLowerCase()));
+
+    return (
+        <div ref={ref} className="relative">
+            <input
+                type="text"
+                className="border rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder={placeholder || 'Type to filter...'}
+                value={input}
+                onChange={e => { setInput(e.target.value); setOpen(true); }}
+                onFocus={() => setOpen(true)}
+                disabled={(disabled as any) === true}
+            />
+            {open && (
+                <div className="absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-auto bg-white border rounded shadow-lg">
+                    {(filtered.length === 0) && <div className="p-2 text-xs text-gray-500">No matching options</div>}
+                    {filtered.map((opt, idx) => (
+                        <div key={idx} className="p-2 hover:bg-gray-100 cursor-pointer text-sm" onClick={() => {
+                            if (opt && opt.score !== undefined) onChange({ value: opt.value, score: Number(opt.score) });
+                            else onChange(opt.value);
+                            setInput(opt.label);
+                            setOpen(false);
+                        }}>{opt.label}</div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+    const RenderQuestion = ({ question, value, onChange, facilities, users, disabled }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean }) => {
+        // Local state/hooks used by some input types (e.g. location picker)
+        const [showLocationMap, setShowLocationMap] = useState(false);
+        const handleLocationClick = () => setShowLocationMap(s => !s);
+
+        switch (question.answerType) {
+            case AnswerType.TEXT:
+                return <MInput label={question.questionText} type="text" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            case AnswerType.TEXTAREA:
+                return <MInput label={question.questionText} type="textarea" value={value || ''} onChange={onChange} rows={4} disabled={!!disabled} />;
+            case AnswerType.NUMBER:
+                return <MInput label={question.questionText} type="number" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            case AnswerType.DATE:
+                return <MInput label={question.questionText} type="date" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            case AnswerType.TIME:
+                return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            case AnswerType.DROPDOWN:
+                if (question.metadata && question.metadata.searchable) {
+                    return (
+                        <SearchableSelect
+                            options={(question.options || []).map(o => ({ value: o.value as any, label: o.label, score: o.score }))}
+                            value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
+                            onChange={(val: any) => {
+                                if (val && typeof val === 'object' && 'value' in val) onChange(val);
+                                else {
+                                    const sel = (question.options || []).find(o => String(o.value) === String(val));
+                                    if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
+                                    else onChange(val);
+                                }
+                            }}
+                            placeholder="Select..."
+                            disabled={!!disabled}
+                        />
+                    );
+                }
+                return (
+                    <MInput
+                        label={question.questionText}
+                        type="select"
+                        value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
+                        onChange={(val: any) => {
+                            const sel = (question.options || []).find(o => String(o.value) === String(val));
+                            if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
+                            else onChange(val);
+                        }}
+                        options={(question.options || []).map(o => ({ value: o.value as any, label: o.label }))}
+                        placeholder="Select..."
+                        disabled={!!disabled}
+                    />
+                );
+            case AnswerType.RADIO:
+                return (
+                    <div>
+                        {question.options?.map((opt, idx) => (
+                            <MInput
+                                key={idx}
+                                type="radio"
+                                name={question.id}
+                                label={opt.label}
+                                value={(() => { if (value && typeof value === 'object' && 'value' in value) return String(value.value) === String(opt.value); return String(value) === String(opt.value); })()}
+                                onChange={(v) => {
+                                    if (opt && opt.score !== undefined) onChange({ value: opt.value, score: Number(opt.score) });
+                                    else onChange(opt.value);
+                                }}
+                                disabled={!!disabled}
+                            />
+                        ))}
+                    </div>
+                );
+            case AnswerType.CHECKBOX:
+                const currentVals = Array.isArray(value) ? value : [];
+                const handleCheck = (val: string, checked: boolean) => {
+                    if (checked) onChange([...currentVals, val]);
+                    else onChange(currentVals.filter((v: string) => v !== val));
+                };
+                return (
+                    <div>
+                        {question.options?.map((opt, idx) => (
+                            <MInput key={idx} type="checkbox" name={`${question.id}-${idx}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
+                        ))}
+                    </div>
+                );
+            case AnswerType.FILE:
+                const allowed = question.metadata && Array.isArray(question.metadata.allowedFileTypes) ? question.metadata.allowedFileTypes.join(',') : undefined;
+                const fileVal = value;
+                const handleFile = (files: FileList | null) => {
+                    const f = files?.[0] || null;
+                    if (!f) return onChange(null);
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        const dataUrl = ev.target?.result as string;
+                        onChange({ filename: f.name, mimeType: f.type, dataUrl });
+                    };
+                    reader.readAsDataURL(f);
+                };
+                return (
+                    <div>
+                        <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} disabled={!!disabled} />
+                        {fileVal && fileVal.dataUrl && fileVal.dataUrl !== '' && (
+                            <div className="mt-2">
+                                <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
+                                {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && fileVal.dataUrl && (
+                                    <img src={fileVal.dataUrl} alt={fileVal.filename} className="mt-2 max-h-36 border rounded" />
+                                )}
+                            </div>
+                        )}
+                    </div>
+                );
+            case AnswerType.COMPUTED:
+                // Show computed/calculated value as read-only output.
+                // If a function is present, try to invoke it safely to get the result; otherwise display the value as a string.
+                let displayValue: any = value;
+                if (typeof displayValue === 'function') {
+                    try {
+                        const res = displayValue();
+                        displayValue = (res === undefined || res === null) ? String(displayValue) : res;
+                    } catch (e) {
+                        displayValue = String(displayValue);
+                    }
+                }
+                if (typeof displayValue === 'string' && /=>|function\s*\(/.test(displayValue)) {
+                    const after = displayValue.replace(/^[\s\S]*}\s*/, '').trim();
+                    if (after) {
+                        if (/^-?\d+(?:\.\d+)?$/.test(after)) displayValue = Number(after);
+                        else {
+                            try { displayValue = JSON.parse(after); } catch (e) { displayValue = after; }
+                        }
+                    } else {
+                        displayValue = null;
+                    }
+                }
+                const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
+                return (
+                    <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
+                        <span className="font-semibold">{question.questionText}:</span>{' '}
+                        <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(displayValue)}</span>
+                    </div>
+                );
+            case AnswerType.PARAGRAPH:
+                return (
+                    <div className="py-4 px-4 bg-blue-50 border border-blue-200 rounded-md prose prose-sm max-w-none">
+                        <div
+                            dangerouslySetInnerHTML={{ __html: question.metadata?.content || '' }}
+                            className="text-gray-700 text-sm prose-headings:font-semibold prose-headings:text-gray-900 prose-p:text-gray-700 prose-a:text-blue-600 prose-strong:font-bold prose-em:italic prose-li:text-gray-700"
+                        />
+                    </div>
+                );
+            case AnswerType.LOCATION:
+                return (
+                    <div>
+                        <div className="flex gap-2 items-end">
+                            <MInput
+                                label={question.questionText}
+                                type="text"
+                                value={value || ''}
+                                onChange={onChange}
+                                placeholder="Click 'Pick on Map' to select location"
+                                disabled={!!disabled}
+                            />
+                            <button
+                                type="button"
+                                onClick={handleLocationClick}
+                                className="px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                            >
+                                Pick on Map
+                            </button>
+                        </div>
+                        {showLocationMap && (
+                            <div className="mt-4 border border-gray-300 rounded overflow-hidden">
+                                <LocationMapPicker
+                                    value={value}
+                                    onChange={(lat, lng) => {
+                                        onChange(`${lat.toString()},${lng.toString()}`);
+                                        setShowLocationMap(false);
+                                    }}
+                                    onClose={() => setShowLocationMap(false)}
+                                    facilities={facilities}
+                                    users={users}
+                                />
+                            </div>
+                        )}
+                    </div>
+                );
+            default:
+                return <p className="text-sm text-gray-500">Not supported</p>;
+        }
+    };
 import DataTable from '../components/ui/DataTable';
 
 const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (updatedFile: UploadedFile) => void }) => {
@@ -177,6 +404,36 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         setAnswers(prev => ({ ...prev, [questionId]: value }));
     };
 
+    // Repeatable sections state: map of groupName -> array of row objects (questionId -> value)
+    const [repeatRows, setRepeatRows] = useState<Record<string, any[]>>({});
+
+    const updateRepeatRow = (groupName: string, rowIndex: number, questionId: string, value: any) => {
+        setRepeatRows(prev => {
+            const copy = { ...(prev || {}) };
+            const rows = Array.isArray(copy[groupName]) ? [...copy[groupName]] : [];
+            const row = { ...(rows[rowIndex] || {}) };
+            row[questionId] = value;
+            rows[rowIndex] = row;
+            copy[groupName] = rows;
+            return copy;
+        });
+    };
+
+    const addRepeatRow = (groupName: string) => {
+        setRepeatRows(prev => ({ ...(prev || {}), [groupName]: [...(prev[groupName] || []), {}] }));
+    };
+
+    const removeRepeatRow = (groupName: string, rowIndex: number) => {
+        setRepeatRows(prev => {
+            const copy = { ...(prev || {}) };
+            const rows = Array.isArray(copy[groupName]) ? [...copy[groupName]] : [];
+            if (rows.length <= 1) return copy; // keep at least one row
+            rows.splice(rowIndex, 1);
+            copy[groupName] = rows;
+            return copy;
+        });
+    };
+
     // Helpers for computed fields
     const parseDate = (v: any): Date | null => {
         if (!v) return null;
@@ -229,17 +486,18 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     // Recompute computed fields only when formDef changes or answers for non-computed fields change
     React.useEffect(() => {
         if (!formDef) return;
-        // build fieldName -> value map from current answers
+        // build fieldName -> value map from current answers (defensive guards in case formDef shape varies)
         const fieldMap: Record<string, any> = {};
-        formDef.pages.forEach(p => p.sections.forEach(s => s.questions.forEach(q => {
-            if (q.fieldName) {
+        (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(q => {
+            if (q && q.fieldName) {
                 fieldMap[q.fieldName] = answers[q.id];
             }
         })));
 
         // compute values for computed questions
         let updated: Record<string, any> | null = null;
-        formDef.pages.forEach(p => p.sections.forEach(s => s.questions.forEach(q => {
+        (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(q => {
+            if (!q) return;
             if (q.answerType === AnswerType.COMPUTED) {
                 const formula = q.metadata && q.metadata.computedFormula;
                 if (formula) {
@@ -295,6 +553,53 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
     const [selectedFacilityId, setSelectedFacilityId] = useState<number | undefined>(currentUser?.facilityId || undefined);
     const [selectedUserId, setSelectedUserId] = useState<number | undefined>(currentUser?.id || undefined);
+    const [pagePerms, setPagePerms] = useState<any[] | null>(null);
+
+    // Fetch page permissions for current user's role (if available)
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                if (!currentUser || !currentUser.role) return;
+                const roleName = String(currentUser.role || '').trim();
+                if (!roleName) return;
+                const resp = await fetch(`/api/page_permissions?role=${encodeURIComponent(roleName)}`);
+                if (!resp.ok) return;
+                const j = await resp.json();
+                if (!cancelled) setPagePerms(j);
+            } catch (e) { /* ignore */ }
+        })();
+        return () => { cancelled = true; };
+    }, [currentUser && currentUser.role]);
+
+    const normalizePageKey = (k: string) => {
+        if (!k) return k;
+        // remove parameter segments like :activityId so permissions can be stored generically
+        return '/' + k.split('/').map(seg => seg.startsWith(':') ? '' : seg).filter(Boolean).join('/');
+    };
+
+    const hasPermissionFlag = (flag: 'can_view'|'can_create'|'can_edit'|'can_delete', pageKey: string, sectionKey?: string) => {
+        try {
+            if (!pagePerms) return true; // default allow when no permissions set
+            const norm = normalizePageKey(pageKey || '');
+            // exact match first (page+section)
+            for (const p of pagePerms) {
+                const pk = normalizePageKey(p.page_key || p.pageKey || '');
+                const sk = p.section_key || p.sectionKey || p.section || null;
+                const skClean = sk ? String(sk) : null;
+                if (skClean) {
+                    if (pk === norm && skClean === (sectionKey || null)) return !!p[flag];
+                }
+            }
+            // then match by page prefix
+            for (const p of pagePerms) {
+                const pk = normalizePageKey(p.page_key || p.pageKey || '');
+                if (!pk) continue;
+                if (norm.startsWith(pk)) return !!p[flag];
+            }
+            return true;
+        } catch (e) { return true; }
+    };
 
     const handleFinalize = () => {
         // Enforce required linking field based on activity.responseType
@@ -341,7 +646,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     }
                     return v;
                 };
-                const fileAnswerMap: Array<{ qid: string; filename: string; mimeType?: string; dataUrl: string }> = [];
+                const fileAnswerMap: Array<any> = [];
                 for (const [qid, val] of Object.entries(answers)) {
                     // narrow to any so we can safely access file-like properties
                     const vObj = val as any;
@@ -378,6 +683,29 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         strippedAnswers[qid] = sanitizeComputedValue(val);
                     }
                 }
+                // Process repeatable section rows and include them under their groupName in answers
+                for (const [gname, rows] of Object.entries(repeatRows || {})) {
+                    if (!Array.isArray(rows)) continue;
+                    const outRows: any[] = [];
+                    rows.forEach((r, ri) => {
+                        const outRow: Record<string, any> = {};
+                        Object.entries(r || {}).forEach(([qid, val]) => {
+                            const vObj = val as any;
+                            if (vObj && typeof vObj === 'object' && (vObj.dataUrl || vObj.data)) {
+                                const filename = vObj.filename || vObj.name || `file_${Date.now()}`;
+                                const mimeType = vObj.mimeType || vObj.type || '';
+                                const dataUrl = vObj.dataUrl || vObj.data || '';
+                                // create a unique qid key for uploaded files so they can be updated later
+                                fileAnswerMap.push({ groupName: gname, rowIndex: ri, qid, filename, mimeType, dataUrl });
+                                outRow[qid] = { filename };
+                            } else {
+                                outRow[qid] = sanitizeComputedValue(val);
+                            }
+                        });
+                        outRows.push(outRow);
+                    });
+                    strippedAnswers[gname] = outRows;
+                }
                 payloadBase.answers = strippedAnswers;
 
                 // create report on server
@@ -396,15 +724,34 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         const upRes = await fetch('/api/review_uploads', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId, filename: fa.filename, contentBase64: fa.dataUrl, mimeType: fa.mimeType }) });
                         if (upRes.ok) {
                             const uj = await upRes.json();
-                            // replace placeholder with returned url
-                            updatedAnswers[fa.qid] = { url: uj.url, filename: fa.filename };
+                            // If this file belongs to a repeatable row, place the returned url into the nested array
+                            if (fa.groupName !== undefined && typeof fa.rowIndex === 'number') {
+                                updatedAnswers[fa.groupName] = Array.isArray(updatedAnswers[fa.groupName]) ? updatedAnswers[fa.groupName] : [];
+                                updatedAnswers[fa.groupName][fa.rowIndex] = updatedAnswers[fa.groupName][fa.rowIndex] || {};
+                                updatedAnswers[fa.groupName][fa.rowIndex][fa.qid] = { url: uj.url, filename: fa.filename };
+                            } else {
+                                // replace placeholder with returned url for single answers
+                                updatedAnswers[fa.qid] = { url: uj.url, filename: fa.filename };
+                            }
                         } else {
-                            // leave placeholder filename if upload failed
-                            updatedAnswers[fa.qid] = { filename: fa.filename };
+                            if (fa.groupName !== undefined && typeof fa.rowIndex === 'number') {
+                                updatedAnswers[fa.groupName] = Array.isArray(updatedAnswers[fa.groupName]) ? updatedAnswers[fa.groupName] : [];
+                                updatedAnswers[fa.groupName][fa.rowIndex] = updatedAnswers[fa.groupName][fa.rowIndex] || {};
+                                updatedAnswers[fa.groupName][fa.rowIndex][fa.qid] = { filename: fa.filename };
+                            } else {
+                                // leave placeholder filename if upload failed
+                                updatedAnswers[fa.qid] = { filename: fa.filename };
+                            }
                         }
                     } catch (e) {
                         console.error('File upload failed', e);
-                        updatedAnswers[fa.qid] = { filename: fa.filename };
+                        if (fa.groupName !== undefined && typeof fa.rowIndex === 'number') {
+                            updatedAnswers[fa.groupName] = Array.isArray(updatedAnswers[fa.groupName]) ? updatedAnswers[fa.groupName] : [];
+                            updatedAnswers[fa.groupName][fa.rowIndex] = updatedAnswers[fa.groupName][fa.rowIndex] || {};
+                            updatedAnswers[fa.groupName][fa.rowIndex][fa.qid] = { filename: fa.filename };
+                        } else {
+                            updatedAnswers[fa.qid] = { filename: fa.filename };
+                        }
                     }
                 }
 
@@ -493,7 +840,37 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         setUploadedFiles(rpt.uploadedFiles || rpt.uploaded_files || []);
         setSelectedFacilityId((rpt as any).facilityId || undefined);
         setSelectedUserId((rpt as any).userId || undefined);
+        // initialize repeatRows from existing answers if any
+        try {
+            if (rpt && rpt.answers) {
+                const a = rpt.answers as any;
+                const rr: Record<string, any[]> = {};
+                Object.keys(a).forEach(k => {
+                    if (Array.isArray(a[k])) rr[k] = a[k];
+                });
+                setRepeatRows(rr);
+            }
+        } catch (e) { /* ignore */ }
     }, [qReportId, reports]);
+
+    // Ensure there is at least one empty row for each repeatable section when formDef loads
+    React.useEffect(() => {
+        if (!formDef) return;
+        setRepeatRows(prev => {
+            const copy = { ...(prev || {}) };
+            let changed = false;
+            formDef.pages.forEach(p => p.sections.forEach(s => {
+                if (s.isRepeatable) {
+                    const g = s.groupName || `${s.name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`;
+                    if (!Array.isArray(copy[g]) || copy[g].length === 0) {
+                        copy[g] = [{}];
+                        changed = true;
+                    }
+                }
+            }));
+            return copy;
+        });
+    }, [formDef]);
 
     if (!activity) return <div>Activity not found.</div>;
     // Only allow filling if activity is Published
@@ -539,74 +916,149 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     <form onSubmit={handleSubmit}>
                         <div className="border-b border-gray-200">
                             <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
-                                {formDef.pages.map((page, index) => (
-                                    <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === activePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
-                                        {page.name}
-                                    </button>
-                                ))}
+                                        {formDef.pages.filter(page => {
+                                            const pagePath = `/activities/fill/${activityId || ''}`;
+                                            const viewAllowed = hasPermissionFlag('can_view', pagePath, page.id);
+                                            return viewAllowed;
+                                        }).map((page, index) => (
+                                            <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === activePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
+                                                {page.name}
+                                            </button>
+                                        ))}
                             </nav>
                         </div>
 
                         <div className="mt-6 space-y-8">
-                            {currentPage.sections.map(section => (
+                            {currentPage.sections.filter(section => {
+                                const pagePath = `/activities/fill/${activityId || ''}`;
+                                const sectionAllowed = hasPermissionFlag('can_view', pagePath, section.id);
+                                return sectionAllowed;
+                            }).map(section => (
                                 <div key={section.id} className="bg-gray-50 p-4 rounded-md">
                                     <h3 className="text-lg font-medium text-gray-900 border-b pb-2 border-gray-200">{section.name}</h3>
                                     <div className="mt-4 grid grid-cols-12 gap-6">
                                         {(() => {
                                             // build fieldName -> value map for visibility/computed evaluation
                                             const fieldMapLocal: Record<string, any> = {};
-                                            formDef.pages.forEach(p => p.sections.forEach(s => s.questions.forEach(qq => {
-                                                if (qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
+                                            (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
+                                                if (qq && qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
                                             })));
 
-                                            return section.questions.map(q => {
-                                                // evaluate visibility condition if present
-                                                let visible = true;
-                                                try {
-                                                    if (q.metadata && q.metadata.showIf) {
-                                                        const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
-                                                        visible = !!res;
+                                            if (!section.isRepeatable) {
+                                                return section.questions.map(q => {
+                                                    // evaluate visibility condition if present
+                                                    let visible = true;
+                                                    try {
+                                                        if (q.metadata && q.metadata.showIf) {
+                                                            const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
+                                                            visible = !!res;
+                                                        }
+                                                    } catch (e) {
+                                                        console.error('Error evaluating showIf for question', q.id, e);
+                                                        visible = true;
                                                     }
-                                                } catch (e) {
-                                                    console.error('Error evaluating showIf for question', q.id, e);
-                                                    visible = true;
-                                                }
-                                                if (!visible) return null;
+                                                    if (!visible) return null;
 
-                                                // proceed to render question
+                                                    // proceed to render question
+                                                    return (
+                                                        (() => {
+                                                            let colClass = 'col-span-12';
+                                                            if (q.columnSize === 12) colClass = 'col-span-12';
+                                                            else if (q.columnSize === 6) colClass = 'md:col-span-6 col-span-12';
+                                                            else if (q.columnSize === 4) colClass = 'md:col-span-4 col-span-12';
+                                                            else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
+                                                            else colClass = 'col-span-12';
+                                                            // determine whether current role can create/edit in this section
+                                                            const pagePath = `/activities/fill/${activityId || ''}`;
+                                                            const canCreateSection = hasPermissionFlag('can_create', pagePath, section.id);
+                                                            const canEditSection = hasPermissionFlag('can_edit', pagePath, section.id);
+                                                            const canInteract = editingReport ? canEditSection : canCreateSection;
 
-                                                // continue below
-                                                return (
-                                                    (() => {
-                                                        let colClass = 'col-span-12';
-                                                        if (q.columnSize === 12) colClass = 'col-span-12';
-                                                        else if (q.columnSize === 6) colClass = 'md:col-span-6 col-span-12';
-                                                        else if (q.columnSize === 4) colClass = 'md:col-span-4 col-span-12';
-                                                        else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
-                                                        else colClass = 'col-span-12';
-                                                        return (
-                                                            <div key={q.id} className={colClass}>
-                                                                {/* Render the question input; label is provided by the input component itself to avoid duplication */}
-                                                                {q.questionHelper && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} />
-                                                                {/* Show reviewer comment field below if enabled */}
-                                                                {q.metadata && q.metadata.displayReviewersComment && (
-                                                                    <div className="mt-2">
-                                                                        <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
-                                                                        <MInput
-                                                                            type="textarea"
-                                                                            value={answers[`${q.id}_reviewers_comment`] || ''}
-                                                                            onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)}
-                                                                            rows={2}
-                                                                            placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
-                                                                        />
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })()
-                                                );
-                                            });
+                                                            return (
+                                                                <div key={q.id} className={colClass}>
+                                                                    {/* Render the question input; label is provided by the input component itself to avoid duplication */}
+                                                                    {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
+                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} />
+                                                                    {/* Show reviewer comment field below if enabled (but not for paragraph elements) */}
+                                                                    {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
+                                                                        <div className="mt-2">
+                                                                            <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
+                                                                            <MInput
+                                                                                type="textarea"
+                                                                                value={answers[`${q.id}_reviewers_comment`] || ''}
+                                                                                onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)}
+                                                                                rows={2}
+                                                                                placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()
+                                                    );
+                                                });
+                                            }
+
+                                            // Repeatable section rendering
+                                            const groupName = section.groupName || section.name.toLowerCase().replace(/\s+/g, '_');
+                                            const rows = Array.isArray(repeatRows[groupName]) ? repeatRows[groupName] : [{}];
+                                            // determine section-level permissions for repeatable rows
+                                            const pagePath = `/activities/fill/${activityId || ''}`;
+                                            const canCreateSection = hasPermissionFlag('can_create', pagePath, section.id);
+                                            const canEditSection = hasPermissionFlag('can_edit', pagePath, section.id);
+                                            const canInteract = editingReport ? canEditSection : canCreateSection;
+
+                                            return rows.map((row, rowIndex) => (
+                                                <div key={`repeat-${groupName}-${rowIndex}`} className="col-span-12 border rounded p-3 mb-3 bg-white">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="text-sm font-medium">{section.name} — Entry {rowIndex + 1}</div>
+                                                        <div className="flex items-center gap-2">
+                                                            <button type="button" onClick={() => removeRepeatRow(groupName, rowIndex)} className="text-sm text-red-600 hover:text-red-800">Remove</button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-12 gap-4">
+                                                        {section.questions.map(q => {
+                                                            // visibility for repeated rows uses the same fieldMapLocal (non-row-specific)
+                                                            let visible = true;
+                                                            try {
+                                                                if (q.metadata && q.metadata.showIf) {
+                                                                    const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
+                                                                    visible = !!res;
+                                                                }
+                                                            } catch (e) {
+                                                                visible = true;
+                                                            }
+                                                            if (!visible) return null;
+                                                            let colClass = 'col-span-12';
+                                                            if (q.columnSize === 12) colClass = 'col-span-12';
+                                                            else if (q.columnSize === 6) colClass = 'md:col-span-6 col-span-12';
+                                                            else if (q.columnSize === 4) colClass = 'md:col-span-4 col-span-12';
+                                                            else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
+                                                            return (
+                                                                <div key={`${q.id}_${rowIndex}`} className={colClass}>
+                                                                    {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
+                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} />
+                                                                    {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
+                                                                        <div className="mt-2">
+                                                                            <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
+                                                                            <MInput
+                                                                                type="textarea"
+                                                                                value={row[`${q.id}_reviewers_comment`] || ''}
+                                                                                onChange={val => updateRepeatRow(groupName, rowIndex, `${q.id}_reviewers_comment`, val)}
+                                                                                rows={2}
+                                                                                placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <div className="mt-3 text-right">
+                                                        <button type="button" onClick={() => addRepeatRow(groupName)} className="px-3 py-1 bg-primary-600 text-white rounded text-sm">Add More</button>
+                                                    </div>
+                                                </div>
+                                            ));
                                         })()}
 
                                     </div>

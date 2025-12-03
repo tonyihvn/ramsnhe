@@ -1,6 +1,8 @@
 import React, { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
+import { MetadataProvider } from './contexts/MetadataContext';
+import MapDashboard from './pages/MapDashboard';
 import DashboardPage from './pages/DashboardPage';
 import ActivitiesPage from './pages/ActivitiesPage';
 import BuildFormPage from './pages/BuildFormPage';
@@ -9,14 +11,20 @@ import ActivityDashboardPage from './pages/ActivityDashboardPage';
 import ActivitySubmittedAnswersPage from './pages/ActivitySubmittedAnswersPage';
 import ActivityExcelTablesPage from './pages/ActivityExcelTablesPage';
 import QuestionFollowupPage from './pages/QuestionFollowupPage';
+import FacilityDashboardPage from './pages/FacilityDashboardPage';
+import UserDashboardPage from './pages/UserDashboardPage';
 import ReportsPage from './pages/ReportsPage';
 import ReportViewPage from './pages/ReportViewPage';
 import ReportBuilderPage from './pages/ReportBuilderPage';
 import UsersPage from './pages/UsersPage';
 import FacilitiesPage from './pages/FacilitiesPage';
 import ProgramsPage from './pages/ProgramsPage';
+import IndicatorsPage from './pages/IndicatorsPage';
+import RolePermissionsPage from './pages/RolePermissionsPage';
 import LoginPage from './pages/LoginPage';
 import SettingsPage from './pages/SettingsPage';
+import RequestPasswordPage from './pages/RequestPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import ProfilePage from './pages/ProfilePage';
 import DocsPage from './pages/DocsPage';
 import ApiConnectorsPage from './pages/ApiConnectorsPage';
@@ -34,7 +42,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 const AppRoutes = () => {
   return (
     <Routes>
+      <Route path="/map-dashboard" element={<ProtectedRoute><Layout><MapDashboard /></Layout></ProtectedRoute>} />
+
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/request-reset" element={<RequestPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       <Route path="/dashboard" element={<ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>} />
 
@@ -47,6 +59,8 @@ const AppRoutes = () => {
       <Route path="/standalone/fill/:activityId" element={<FillFormPage standaloneMode={true} />} />
 
       <Route path="/activities/dashboard/:activityId" element={<ProtectedRoute><Layout><ActivityDashboardPage /></Layout></ProtectedRoute>} />
+      <Route path="/facilities/:facilityId/dashboard" element={<ProtectedRoute><Layout><FacilityDashboardPage /></Layout></ProtectedRoute>} />
+      <Route path="/users/:userId/dashboard" element={<ProtectedRoute><Layout><UserDashboardPage /></Layout></ProtectedRoute>} />
       <Route path="/activities/:activityId/submitted-answers" element={<ProtectedRoute><Layout><ActivitySubmittedAnswersPage /></Layout></ProtectedRoute>} />
       <Route path="/activities/:activityId/excel-tables" element={<ProtectedRoute><Layout><ActivityExcelTablesPage /></Layout></ProtectedRoute>} />
       <Route path="/activities/:activityId/followups" element={<ProtectedRoute><Layout><QuestionFollowupPage /></Layout></ProtectedRoute>} />
@@ -58,6 +72,8 @@ const AppRoutes = () => {
       <Route path="/reports/:reportId" element={<ProtectedRoute><Layout><ReportViewPage /></Layout></ProtectedRoute>} />
 
       <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
+      <Route path="/role-permissions" element={<ProtectedRoute><Layout><RolePermissionsPage /></Layout></ProtectedRoute>} />
+      <Route path="/indicators" element={<ProtectedRoute><Layout><IndicatorsPage /></Layout></ProtectedRoute>} />
       <Route path="/connectors" element={<ProtectedRoute><Layout><ApiConnectorsPage /></Layout></ProtectedRoute>} />
       <Route path="/docs" element={<Layout><DocsPage /></Layout>} />
       <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
@@ -78,9 +94,11 @@ const App: React.FC = () => {
   return (
     <DataProvider>
       <ErrorBoundary>
-        <HashRouter>
-          <AppRoutes />
-        </HashRouter>
+        <MetadataProvider>
+          <HashRouter>
+            <AppRoutes />
+          </HashRouter>
+        </MetadataProvider>
       </ErrorBoundary>
     </DataProvider>
   );

@@ -12,6 +12,8 @@ type ThemeSettings = {
     logoText?: string;
     fontSize?: string;
     logoWidth?: string;
+    organizationName?: string;
+    backgroundImage?: string | null;
 };
 
 const DEFAULT: ThemeSettings = {
@@ -26,6 +28,8 @@ const DEFAULT: ThemeSettings = {
     logoText: 'DQAPlus'
     , fontSize: '14px'
     , logoWidth: '100%'
+    , organizationName: 'Federal Ministry of Health and Social Welfare (FMOH&SW)'
+    , backgroundImage: null
 };
 
 const STORAGE_KEY = 'intelliform_theme_settings_v1';
@@ -45,6 +49,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
             return DEFAULT;
         }
     });
+    const [isAdmin, setIsAdmin] = useState(false);
+    const saveTimer = React.useRef<number | null>(null);
 
     useEffect(() => {
         // Apply CSS variables to :root
@@ -65,8 +71,69 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (e) { }
     }, [settings]);
 
+    // Determine if current user is admin to enable auto-save
+    useEffect(() => {
+        (async () => {
+            try {
+                const r = await fetch('/api/current_user', { credentials: 'include' });
+                if (!r.ok) { setIsAdmin(false); return; }
+                const j = await r.json();
+                const role = (j && (j.role || '')).toString().toLowerCase();
+                setIsAdmin(role === 'admin');
+            } catch (e) { setIsAdmin(false); }
+        })();
+    }, []);
+
+    // Debounced autosave: if admin, persist theme to server after changes
+    const persistToServer = async (toSave: ThemeSettings) => {
+        try {
+            await fetch('/api/admin/settings', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toSave) });
+        } catch (e) { /* ignore saving errors silently */ }
+    };
+
+    // On mount, try to load persisted settings from server (admin endpoint). Fail silently if unauthorized.
+    useEffect(() => {
+        (async () => {
+            try {
+                const r = await fetch('/api/admin/settings', { credentials: 'include' });
+                if (!r.ok) return;
+                const payload = await r.json();
+                if (!payload) return;
+                // payload is { key: value } mapping; merge keys that match ThemeSettings
+                const merge: Partial<ThemeSettings> = {};
+                // common theme keys live at top-level in the settings object; if server saved the whole theme object, it may be returned directly
+                if (typeof payload === 'object' && !Array.isArray(payload)) {
+                    // if payload looks like a theme object directly (has primaryColor), merge it
+                    if (payload.primaryColor) {
+                        Object.assign(merge, payload);
+                    } else if (payload.theme) {
+                        Object.assign(merge, payload.theme);
+                    } else {
+                        // sometimes settings stored top-level — pick known keys
+                        ['primaryColor','sidebarBg','navTextColor','logoColor','textColor','fontFamily','navbarBg','logoDataUrl','logoText','fontSize','logoWidth','organizationName','backgroundImage'].forEach(k => {
+                            if (k in payload) (merge as any)[k] = (payload as any)[k];
+                        });
+                        // also if server returned many keys and one is 'theme', prefer that
+                        if (payload.settings && typeof payload.settings === 'object') Object.assign(merge, payload.settings);
+                    }
+                }
+                if (Object.keys(merge).length) setSettingsState(prev => ({ ...prev, ...merge }));
+            } catch (e) { /* ignore */ }
+        })();
+    }, []);
+
     const setSettings = (patch: Partial<ThemeSettings>) => {
-        setSettingsState(prev => ({ ...prev, ...patch }));
+        setSettingsState(prev => {
+            const next = ({ ...prev, ...patch });
+            try {
+                if (isAdmin) {
+                    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+                    // debounce 1.5s
+                    saveTimer.current = window.setTimeout(() => { persistToServer(next); saveTimer.current = null; }, 1500) as unknown as number;
+                }
+            } catch (e) { /* ignore */ }
+            return next;
+        });
     };
 
     const reset = () => setSettingsState(DEFAULT);

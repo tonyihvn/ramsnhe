@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BellIcon, UserCircleIcon, ArrowRightOnRectangleIcon, Bars3Icon } from '@heroicons/react/24/outline';
 import { useMockData } from '../../hooks/useMockData';
+import RoleBadge from '../RoleBadge';
 import { useTheme } from '../../hooks/useTheme';
 
 const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onToggleMobileSidebar?: () => void }> = ({ collapsed, onToggleSidebar, onToggleMobileSidebar }) => {
@@ -67,7 +68,7 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
                 )}
                 <div className="ml-2 text-sm hidden sm:block text-left">
                   <div className="font-medium text-gray-700">{currentUser?.firstName} {currentUser?.lastName}</div>
-                  <div className="text-gray-500">{currentUser?.role}</div>
+                  <div className="text-gray-500"><RoleBadge small={true} /></div>
                 </div>
               </button>
 

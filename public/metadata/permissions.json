@@ -1,0 +1,5 @@
+[
+  { "id": "READ_TELEMETRY", "name": "Read telemetry" },
+  { "id": "DOWNLOAD_BUNDLE", "name": "Download verification bundle" },
+  { "id": "ACCESS_DASHBOARD_STATE", "name": "Access state dashboard" }
+]

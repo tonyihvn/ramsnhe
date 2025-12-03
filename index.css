@@ -91,4 +91,51 @@
     background-color: var(--navbar-bg, #ffffff) !important;
     color: var(--nav-text-color, #111827) !important;
   }
+
+  /* marker helper for leaflet divIcons created in the map */
+  .nherams-marker { cursor: pointer; }
+  .nherams-marker:hover { transform: scale(1.08); filter: drop-shadow(0 3px 6px rgba(0,0,0,0.25)); }
+  /* Ensure Leaflet popups are visible above other UI and can overflow the map container */
+  .leaflet-container {
+    overflow: visible !important;
+  }
+  .leaflet-popup {
+    z-index: 200000 !important;
+    overflow: visible !important;
+  }
+  /* Make popups grow to fit their inner content and avoid child overflow.
+     Use inline-block so the wrapper sizes to content width, but cap at a large
+     max-width to avoid extremely wide popups on very long content. Ensure
+     inner elements can't overflow the content area. */
+  .leaflet-popup-content-wrapper {
+    display: inline-block !important;
+    width: auto !important;
+    max-width: 820px !important;
+    box-sizing: border-box !important;
+    padding: 0.5rem !important;
+    white-space: normal !important;
+  }
+  .leaflet-popup-content {
+    display: block !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+  /* Prevent images, preformatted text or wide inline elements from overflowing */
+  .leaflet-popup-content img,
+  .leaflet-popup-content svg,
+  .leaflet-popup-content pre,
+  .leaflet-popup-content table {
+    max-width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    box-sizing: border-box !important;
+  }
+  /* Make direct child sections/divs use the full popup width so backgrounds/borders align */
+  .leaflet-popup-content > * {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
 }
