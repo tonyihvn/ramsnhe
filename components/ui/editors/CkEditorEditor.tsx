@@ -36,11 +36,25 @@ const CkEditorEditor: React.FC<CkEditorProps> = ({ value = '', onChange, height 
         );
     }
 
+    // If the incoming value looks like Editor.js JSON, attempt to extract text blocks
+    let dataForEditor: string = value || '';
+    if (value && typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            if (parsed && parsed.blocks && Array.isArray(parsed.blocks)) {
+                // join block texts into a simple HTML fallback
+                dataForEditor = parsed.blocks.map((b: any) => (b?.data?.text ?? '')).join('<p></p>') || '';
+            }
+        } catch (e) {
+            // not JSON, assume HTML string — ok
+        }
+    }
+
     return (
         <div>
             <CKEditorComp
                 editor={ClassicEditor}
-                data={value}
+                data={dataForEditor}
                 onChange={(event: any, editor: any) => { const data = editor.getData(); onChange?.(data); }}
             />
         </div>

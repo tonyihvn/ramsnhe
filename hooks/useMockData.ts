@@ -252,21 +252,24 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     // Form Def
     const saveFormDefinition = async (activityId: string, formDef: FormDefinition) => {
         try {
-            // Flatten questions and send to dedicated endpoint which syncs into `questions` table
-            const questionsArray: any[] = [];
-            for (const p of formDef.pages || []) {
-                for (const s of p.sections || []) {
-                    for (const q of s.questions || []) {
-                        questionsArray.push({ ...q, pageName: p.name, sectionName: s.name });
+                // Flatten questions and also send the full form definition so section-level
+                // settings (e.g., isRepeatable and groupName) are persisted to the activity.
+                const questionsArray: any[] = [];
+                for (const p of formDef.pages || []) {
+                    for (const s of p.sections || []) {
+                        for (const q of s.questions || []) {
+                            // include section-level repeat group info on each question so the server
+                            // can persist question_group consistently
+                            questionsArray.push({ ...q, pageName: p.name, sectionName: s.name, questionGroup: q.questionGroup || s.groupName || null });
+                        }
                     }
                 }
-            }
-            await fetch(`${API_URL}/activities/${activityId}/form`, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ questions: questionsArray })
-            });
+                await fetch(`${API_URL}/activities/${activityId}/form`, {
+                    method: 'PUT',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ questions: questionsArray, formDefinition: formDef })
+                });
             // Refresh activities list
             const actRes = await fetch(`${API_URL}/activities`, { credentials: 'include' });
             if (actRes.ok) setActivities(await actRes.json());

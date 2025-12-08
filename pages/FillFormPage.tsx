@@ -407,6 +407,16 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     // Repeatable sections state: map of groupName -> array of row objects (questionId -> value)
     const [repeatRows, setRepeatRows] = useState<Record<string, any[]>>({});
 
+    // Helper to derive a stable group key for a section.
+    // Use explicit section.groupName when provided and non-empty; otherwise fall back to a stable id-based key.
+    const getSectionGroupName = (s: any) => {
+        try {
+            const raw = s && s.groupName;
+            if (raw !== undefined && raw !== null && String(raw).trim() !== '') return String(raw).trim();
+        } catch (e) { /* ignore */ }
+        return `__section_${String(s.id || s.name || Math.random()).replace(/\s+/g, '_')}`;
+    };
+
     const updateRepeatRow = (groupName: string, rowIndex: number, questionId: string, value: any) => {
         setRepeatRows(prev => {
             const copy = { ...(prev || {}) };
@@ -580,6 +590,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
     const hasPermissionFlag = (flag: 'can_view'|'can_create'|'can_edit'|'can_delete', pageKey: string, sectionKey?: string) => {
         try {
+            // Admins always see everything in the UI (builder/admin workflows rely on full visibility)
+            if (currentUser && String(currentUser.role || '').toLowerCase() === 'admin') return true;
             if (!pagePerms) return true; // default allow when no permissions set
             const norm = normalizePageKey(pageKey || '');
             // exact match first (page+section)
@@ -861,7 +873,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             let changed = false;
             formDef.pages.forEach(p => p.sections.forEach(s => {
                 if (s.isRepeatable) {
-                    const g = s.groupName || `${s.name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`;
+                    const g = getSectionGroupName(s);
                     if (!Array.isArray(copy[g]) || copy[g].length === 0) {
                         copy[g] = [{}];
                         changed = true;
@@ -999,8 +1011,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                 });
                                             }
 
-                                            // Repeatable section rendering
-                                            const groupName = section.groupName || section.name.toLowerCase().replace(/\s+/g, '_');
+                                            // Repeatable section rendering — compute stable group key matching init logic
+                                            const groupName = getSectionGroupName(section);
                                             const rows = Array.isArray(repeatRows[groupName]) ? repeatRows[groupName] : [{}];
                                             // determine section-level permissions for repeatable rows
                                             const pagePath = `/activities/fill/${activityId || ''}`;
@@ -1055,7 +1067,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                         })}
                                                     </div>
                                                     <div className="mt-3 text-right">
-                                                        <button type="button" onClick={() => addRepeatRow(groupName)} className="px-3 py-1 bg-primary-600 text-white rounded text-sm">Add More</button>
+                                                        <button type="button" onClick={() => addRepeatRow(groupName)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300">Add More</button>
                                                     </div>
                                                 </div>
                                             ));

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTheme } from '../hooks/useTheme';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
 import Card from '../components/ui/Card';
@@ -11,6 +12,7 @@ import { Activity } from '../types';
 
 const ActivitiesPage: React.FC = () => {
   const { activities, programs, saveActivity, deleteActivity, currentUser } = useMockData();
+  const { settings } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -80,7 +82,7 @@ const ActivitiesPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-800">Activities</h1>
+        <h1 className="text-2xl font-bold text-gray-800">{(settings as any).activitiesLabel || 'Activities'}</h1>
         {canEdit && <Button onClick={() => openModal()} leftIcon={<PlusIcon className="h-5 w-5" />}>
           New Activity
         </Button>}
@@ -183,7 +185,7 @@ const ActivitiesPage: React.FC = () => {
         <div>
           <p className="text-sm text-gray-600">Copy the iframe snippet below and paste into your site. The snippet is shown as text and will not execute here.</p>
           <pre className="mt-3 p-3 bg-gray-100 rounded text-sm overflow-auto">{`<iframe src="${shareUrl}" width="800" height="900"></iframe>`}</pre>
-            <div className="mt-3">
+          <div className="mt-3">
             <button onClick={() => { navigator.clipboard.writeText(`<iframe src="${shareUrl}" width="800" height="900"></iframe>`); swalToast('Embed snippet copied', 'success'); }} className="px-3 py-2 bg-gray-100 rounded">Copy Snippet</button>
             <a className="ml-3 px-3 py-2 bg-blue-600 text-white rounded" href={shareUrl} target="_blank" rel="noreferrer">Open Link</a>
           </div>

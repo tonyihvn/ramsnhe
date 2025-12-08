@@ -93,7 +93,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 
       {!collapsed ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700">
                 Question Text <span className="text-red-500">*</span>
@@ -415,14 +415,53 @@ const BuildFormPage: React.FC = () => {
     return String(k).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '');
   };
 
+  // Generate a stable, unique group name for a section when Add More is enabled.
+  const generateUniqueGroupName = (pageIndex: number, sectionIndex: number, preferred?: string) => {
+    if (!formDef) return `group_${pageIndex}_${sectionIndex}`;
+    const base = preferred ? String(preferred).trim() : String((formDef.pages?.[pageIndex]?.sections?.[sectionIndex]?.name) || `section_${pageIndex}_${sectionIndex}`);
+    let candidate = base.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (!candidate) candidate = `section_${pageIndex}_${sectionIndex}`;
+    const used = new Set<string>();
+    formDef.pages.forEach((p, pi) => p.sections.forEach((s, si) => {
+      const g = String(s.groupName || '').trim().toLowerCase();
+      if (g) used.add(g);
+    }));
+    if (!used.has(candidate)) return candidate;
+    // append numeric suffix until unique
+    let i = 1;
+    while (used.has(`${candidate}_${i}`)) i++;
+    return `${candidate}_${i}`;
+  };
+
+  const isGroupNameDuplicate = (name: string, pageIndex: number, sectionIndex: number) => {
+    if (!formDef) return false;
+    const gn = String(name || '').trim().toLowerCase();
+    if (!gn) return false;
+    for (let p = 0; p < (formDef.pages || []).length; p++) {
+      for (let s = 0; s < ((formDef.pages[p].sections) || []).length; s++) {
+        if (p === pageIndex && s === sectionIndex) continue;
+        const other = String((formDef.pages[p].sections[s].groupName || '')).trim().toLowerCase();
+        if (other && other === gn) return true;
+      }
+    }
+    return false;
+  };
+
   const loadRolePermsForTarget = async (pageKey: string, sectionKey: string | null) => {
     setRolePermsLoading(true);
     const out: Record<string, { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean }> = {};
+    const roleDefault = (roleName: string) => {
+      const rn = String(roleName || '').toLowerCase();
+      if (rn === 'admin') return { can_create: true, can_view: true, can_edit: true, can_delete: true };
+      if (rn === 'form builder' || rn === 'data collector') return { can_create: true, can_view: true, can_edit: true, can_delete: false };
+      if (rn === 'reviewer' || rn === 'view' || rn === 'viewer') return { can_create: false, can_view: true, can_edit: false, can_delete: false };
+      return { can_create: false, can_view: false, can_edit: false, can_delete: false };
+    };
     try {
-      // initialize defaults (no permissions)
+      // initialize defaults (deny-by-default, with role-specific exceptions)
       for (const r of roles) {
         const roleName = (r && (r.name || r)) ? (r.name || r) : String(r || '');
-        out[roleName] = { can_create: false, can_view: false, can_edit: false, can_delete: false };
+        out[roleName] = roleDefault(roleName);
       }
 
       // fetch page_permissions per role (server supports GET /api/page_permissions?role=...)
@@ -433,9 +472,51 @@ const BuildFormPage: React.FC = () => {
           if (!res.ok) return;
           const rows = await res.json();
           if (!Array.isArray(rows)) return;
-          const match = rows.find((row: any) => String(row.page_key || row.pageKey || row.page || '').toLowerCase() === String(pageKey || '').toLowerCase() && (String(row.section_key || row.sectionKey || row.section || '') === String(sectionKey || '') || (!row.section_key && !sectionKey)));
-          if (match) {
-            out[rn] = { can_create: !!match.can_create, can_view: !!match.can_view, can_edit: !!match.can_edit, can_delete: !!match.can_delete };
+          // Normalize incoming pageKey for comparisons
+          const targetNorm = normalizePageKey(String(pageKey || ''));
+
+          // 1) exact match: page_key normalized equals and section_key matches (including both null)
+          let chosen: any = null;
+          for (const row of rows) {
+            try {
+              const rowPk = normalizePageKey(String(row.page_key || row.pageKey || row.page || ''));
+              const rowSk = row.section_key || row.sectionKey || row.section || null;
+              const skClean = rowSk ? String(rowSk) : null;
+              if (rowPk === targetNorm) {
+                if ((skClean === null && (sectionKey === null || sectionKey === undefined || sectionKey === '')) || String(skClean || '') === String(sectionKey || '')) {
+                  chosen = row; break;
+                }
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          // 2) if not exact, prefer page-level rows (section null) where normalized pk equals
+          if (!chosen) {
+            for (const row of rows) {
+              try {
+                const rowPk = normalizePageKey(String(row.page_key || row.pageKey || row.page || ''));
+                const rowSk = row.section_key || row.sectionKey || row.section || null;
+                if (rowPk === targetNorm && (!rowSk || rowSk === '')) { chosen = row; break; }
+              } catch (e) { }
+            }
+          }
+
+          // 3) fallback: prefix-match (choose the most specific / longest matching prefix)
+          if (!chosen) {
+            let bestLen = -1;
+            for (const row of rows) {
+              try {
+                const rowPk = normalizePageKey(String(row.page_key || row.pageKey || row.page || ''));
+                if (!rowPk) continue;
+                if (String(targetNorm).startsWith(rowPk) && rowPk.length > bestLen) {
+                  bestLen = rowPk.length; chosen = row;
+                }
+              } catch (e) { }
+            }
+          }
+
+          if (chosen) {
+            out[rn] = { can_create: !!chosen.can_create, can_view: !!chosen.can_view, can_edit: !!chosen.can_edit, can_delete: !!chosen.can_delete };
           }
         } catch (e) {
           // ignore per-role errors
@@ -444,6 +525,22 @@ const BuildFormPage: React.FC = () => {
     } catch (e) {
       console.error('Failed to load page/section permissions', e);
     }
+    // apply any saved local overrides (builder may run without authenticated backend)
+    try {
+      const raw = localStorage.getItem('page_permissions_overrides');
+      if (raw) {
+        const saved: any[] = JSON.parse(raw);
+        for (const s of saved) {
+          const rn = (s.role_name || s.roleName || s.role || '') as string;
+          if (!rn) continue;
+          const pk = String(s.page_key || s.pageKey || s.page || '');
+          const sk = s.section_key || s.sectionKey || s.section || null;
+          if (String(pk).toLowerCase() === String(pageKey || '').toLowerCase() && String(sk || '') === String(sectionKey || '')) {
+            out[rn] = { can_create: !!s.can_create, can_view: !!s.can_view, can_edit: !!s.can_edit, can_delete: !!s.can_delete };
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
     setRolePerms(out);
     setRolePermsLoading(false);
   };
@@ -451,7 +548,8 @@ const BuildFormPage: React.FC = () => {
   const openRoleModalForPage = async (pageIndex: number) => {
     if (!formDef) return;
     const page = formDef.pages[pageIndex];
-    const pk = normalizePageKey(page.name || page.id || `page-${pageIndex}`);
+    // Use activity-based page key so permissions align with FillFormPage checks
+    const pk = `/activities/fill/${activityId}`;
     setRoleModalPageKey(pk);
     setRoleModalSectionKey(null);
     setRoleModalTarget({ type: 'page', pageIndex });
@@ -464,8 +562,9 @@ const BuildFormPage: React.FC = () => {
     if (!formDef) return;
     const page = formDef.pages[pageIndex];
     const section = page.sections[sectionIndex];
-    const pk = normalizePageKey(page.name || page.id || `page-${pageIndex}`);
-    const sk = normalizePageKey(section.name || section.id || `section-${sectionIndex}`);
+    // Align page key with FillFormPage (activity-based) and use section id for section_key
+    const pk = `/activities/fill/${activityId}`;
+    const sk = section.id || `section-${sectionIndex}`;
     setRoleModalPageKey(pk);
     setRoleModalSectionKey(sk);
     setRoleModalTarget({ type: 'section', pageIndex, sectionIndex });
@@ -478,20 +577,50 @@ const BuildFormPage: React.FC = () => {
     const payload: any[] = [];
     for (const [roleName, permsAny] of Object.entries(rolePerms || {})) {
       const perms = permsAny as { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean };
-      payload.push({ page_key: roleModalPageKey, section_key: roleModalSectionKey || null, role_name: roleName, can_create: !!perms.can_create, can_view: !!perms.can_view, can_edit: !!perms.can_edit, can_delete: !!perms.can_delete });
+      // Persist exactly what the user configured for each role; defaults are applied only at load-time
+      payload.push({
+        page_key: roleModalPageKey,
+        section_key: roleModalSectionKey || null,
+        role_name: roleName,
+        can_create: !!perms.can_create,
+        can_view: !!perms.can_view,
+        can_edit: !!perms.can_edit,
+        can_delete: !!perms.can_delete
+      });
     }
     try {
-      const res = await fetch('/api/admin/page_permissions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      // send with credentials so server-side admin check (session cookie) succeeds
+      const res = await fetch('/api/admin/page_permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: payload }) });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j && j.error ? j.error : 'Failed to save permissions');
       }
       alert('Permissions saved.');
+      // persist local overrides as a fallback so settings survive refresh even if server isn't available
+      persistLocalOverrides(payload);
+      // refresh loaded perms for the target to ensure UI reflects saved rows
+      if (roleModalPageKey) await loadRolePermsForTarget(roleModalPageKey, roleModalSectionKey || null);
       setIsRoleModalOpen(false);
     } catch (e) {
       console.error('Failed to save permissions', e);
-      alert('Failed to save permissions. See console for details.');
+      // As a fallback, persist locally so builder settings are not lost
+      try { persistLocalOverrides(payload); alert('Permissions saved locally (offline).'); setIsRoleModalOpen(false); } catch (err) { alert('Failed to save permissions. See console for details.'); }
     }
+  };
+
+  // Persist overrides to localStorage as a fallback when backend/admin is not available
+  const persistLocalOverrides = (items: any[]) => {
+    try {
+      const raw = localStorage.getItem('page_permissions_overrides');
+      const existing = raw ? JSON.parse(raw) : [];
+      // merge by (page_key, section_key, role_name)
+      const keyOf = (r: any) => `${String(r.page_key || r.pageKey || r.page || '')}::${String(r.section_key || r.sectionKey || r.section || '') || ''}::${String(r.role_name || r.roleName || r.role || '')}`;
+      const map: Record<string, any> = {};
+      for (const e of existing) map[keyOf(e)] = e;
+      for (const it of items) map[keyOf(it)] = it;
+      const merged = Object.values(map);
+      localStorage.setItem('page_permissions_overrides', JSON.stringify(merged));
+    } catch (err) { console.warn('Failed to persist local overrides', err); }
   };
 
   const validateForm = (): boolean => {
@@ -563,6 +692,29 @@ const BuildFormPage: React.FC = () => {
     });
 
     setValidationErrors(newErrors);
+    // Validate repeatable section group names: presence and uniqueness
+    const groupCounts: Record<string, number> = {};
+    (formDef.pages || []).forEach((p) => {
+      (p.sections || []).forEach((s) => {
+        if (s.isRepeatable) {
+          const gn = String(s.groupName || '').trim();
+          if (!gn) {
+            alert(`Repeatable section "${s.name || 'Unnamed'}" must have a unique group name.`);
+            isValid = false;
+          } else {
+            groupCounts[gn] = (groupCounts[gn] || 0) + 1;
+          }
+        }
+      });
+    });
+    for (const [gn, cnt] of Object.entries(groupCounts)) {
+      if (cnt > 1) {
+        alert(`Group name "${gn}" is used by multiple repeatable sections. Please provide unique group names.`);
+        isValid = false;
+        break;
+      }
+    }
+
     return isValid;
   };
 
@@ -899,6 +1051,9 @@ const BuildFormPage: React.FC = () => {
                   className="bg-transparent border-none focus:ring-0 p-0 font-medium text-sm w-24"
                 />
               </button>
+              <button title="Page permissions" onClick={(ev) => { ev.stopPropagation(); openRoleModalForPage(index); }} className="text-gray-500 hover:text-gray-700 p-1 rounded">
+                <Cog6ToothIcon className="h-4 w-4" />
+              </button>
               <button title="Delete page" onClick={(ev) => { ev.stopPropagation(); deletePage(index); }} className="text-red-500 hover:text-red-700 p-1 rounded">
                 <TrashIcon className="h-4 w-4" />
               </button>
@@ -929,29 +1084,59 @@ const BuildFormPage: React.FC = () => {
                   }}
                   className="bg-transparent border-none focus:ring-0 font-medium text-gray-900 w-1/2"
                 />
-                <label className="flex items-center gap-2 text-sm text-gray-600 whitespace-nowrap">
-                  <input
-                    type="checkbox"
-                    checked={section.isRepeatable || false}
-                    onChange={(e) => {
-                      const newDef = { ...formDef };
-                      newDef.pages[activePageIndex].sections[sIdx].isRepeatable = e.target.checked;
-                      if (e.target.checked && !section.groupName) {
-                        const groupName = `${section.name.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}`;
-                        newDef.pages[activePageIndex].sections[sIdx].groupName = groupName;
-                      } else if (!e.target.checked) {
-                        newDef.pages[activePageIndex].sections[sIdx].groupName = undefined;
-                      }
-                      updateFormDef(newDef);
-                    }}
-                    className="rounded border-gray-300"
-                  />
-                  Add More
-                </label>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-gray-600 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={section.isRepeatable || false}
+                      onChange={(e) => {
+                        const newDef = { ...formDef };
+                        newDef.pages[activePageIndex].sections[sIdx].isRepeatable = e.target.checked;
+                        if (e.target.checked) {
+                          // If a groupName already exists and is non-empty, keep it; otherwise auto-generate a stable unique name
+                          const existing = section.groupName && String(section.groupName).trim() !== '' ? String(section.groupName).trim() : undefined;
+                          newDef.pages[activePageIndex].sections[sIdx].groupName = existing || generateUniqueGroupName(activePageIndex, sIdx, section.name);
+                        } else {
+                          newDef.pages[activePageIndex].sections[sIdx].groupName = undefined;
+                        }
+                        updateFormDef(newDef);
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    Add More
+                  </label>
+                  {/* show editable groupName when repeatable is enabled */}
+                  {section.isRepeatable && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={section.groupName || ''}
+                          onChange={(e) => {
+                            const newVal = String(e.target.value || '').trim();
+                            const newDef = { ...formDef };
+                            newDef.pages[activePageIndex].sections[sIdx].groupName = newVal;
+                            updateFormDef(newDef);
+                          }}
+                          placeholder="Unique group name (required)"
+                          className="border px-2 py-1 rounded text-sm w-56"
+                        />
+                        <div className="text-xs text-gray-500">Group name must be unique across form</div>
+                      </div>
+                      {section.groupName !== undefined && String(section.groupName).trim() === '' && (
+                        <div className="text-xs text-red-600 ml-2">Group name is required</div>
+                      )}
+                      {section.groupName && isGroupNameDuplicate(section.groupName || '', activePageIndex, sIdx) && (
+                        <div className="text-xs text-red-600 ml-2">Group name already used in another section</div>
+                      )}
+                    </>
+                  )}
               </div>
+            </div>
               <div className="flex space-x-2">
                 <button onClick={() => moveSection(activePageIndex, sIdx, 'up')} disabled={sIdx === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowUpIcon className="h-5 w-5" /></button>
                 <button onClick={() => moveSection(activePageIndex, sIdx, 'down')} disabled={sIdx === formDef.pages[activePageIndex].sections.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowDownIcon className="h-5 w-5" /></button>
+                <button title="Section permissions" onClick={() => openRoleModalForSection(activePageIndex, sIdx)} className="text-gray-500 hover:text-gray-700 p-1 rounded"><Cog6ToothIcon className="h-5 w-5" /></button>
               </div>
             </div>
 
@@ -1026,6 +1211,69 @@ const BuildFormPage: React.FC = () => {
           <div className="text-xs text-gray-500">Notes: empty rows are ignored. Options must be provided via the <strong>options</strong> worksheet (one option per row). For computed fields, provide <code>field_name</code> and <code>calculation</code> columns. If Type is missing or invalid, the question will default to <code>textbox</code>.</div>
         </div>
       </Modal>
+
+      {/* Role / Page / Section Permissions Modal */}
+      {(() => {
+        let modalTitle = 'Permissions';
+        let modalSubtitle = 'target';
+        if (roleModalTarget && formDef) {
+          if (roleModalTarget.type === 'page') {
+            const p = formDef.pages?.[roleModalTarget.pageIndex];
+            modalTitle = `${p?.name || 'Page'} - Page Permissions`;
+            modalSubtitle = `Page: ${p?.name || 'Page'}`;
+          } else if (roleModalTarget.type === 'section') {
+            const p = formDef.pages?.[roleModalTarget.pageIndex];
+            const s = p?.sections?.[roleModalTarget.sectionIndex || 0];
+            modalTitle = `${s?.name || 'Section'} - Section Permissions`;
+            modalSubtitle = `Section: ${s?.name || 'Section'}`;
+          }
+        } else {
+          modalTitle = roleModalTarget ? (roleModalTarget.type === 'page' ? `Page Permissions` : `Section Permissions`) : 'Permissions';
+        }
+
+        return (
+          <Modal size="lg" isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} title={modalTitle} footer={<>
+            <Button onClick={() => setIsRoleModalOpen(false)} variant="secondary">Cancel</Button>
+            <Button onClick={handleSaveRolePerms} className="ml-2">Save Permissions</Button>
+          </>}>
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">Set Create / Read / Update / Delete permissions for each role on this {modalSubtitle}.</div>
+              {rolePermsLoading && <div className="text-sm text-gray-500">Loading permissions…</div>}
+              {!rolePermsLoading && (!roles || roles.length === 0) && <div className="text-sm text-gray-500">No roles available.</div>}
+              {!rolePermsLoading && roles && roles.length > 0 && (
+                <div className="overflow-auto">
+                  <table className="w-full text-sm table-fixed">
+                    <thead>
+                      <tr>
+                        <th className="text-left">Role</th>
+                        <th className="text-center">Create</th>
+                        <th className="text-center">Read</th>
+                        <th className="text-center">Update</th>
+                        <th className="text-center">Delete</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {roles.map((r: any) => {
+                        const roleName = (r && (r.name || r)) ? (r.name || r) : String(r || '');
+                        const cur = (rolePerms && rolePerms[roleName]) ? rolePerms[roleName] : { can_create: false, can_view: false, can_edit: false, can_delete: false };
+                        return (
+                          <tr key={roleName} className="border-t">
+                            <td className="py-2">{roleName}</td>
+                            <td className="text-center"><input type="checkbox" checked={!!cur.can_create} onChange={() => setRolePerms(prev => ({ ...prev, [roleName]: { ...(prev[roleName] || { can_create: false, can_view: false, can_edit: false, can_delete: false }), can_create: !((prev[roleName] || {}).can_create) } }))} /></td>
+                            <td className="text-center"><input type="checkbox" checked={!!cur.can_view} onChange={() => setRolePerms(prev => ({ ...prev, [roleName]: { ...(prev[roleName] || { can_create: false, can_view: false, can_edit: false, can_delete: false }), can_view: !((prev[roleName] || {}).can_view) } }))} /></td>
+                            <td className="text-center"><input type="checkbox" checked={!!cur.can_edit} onChange={() => setRolePerms(prev => ({ ...prev, [roleName]: { ...(prev[roleName] || { can_create: false, can_view: false, can_edit: false, can_delete: false }), can_edit: !((prev[roleName] || {}).can_edit) } }))} /></td>
+                            <td className="text-center"><input type="checkbox" checked={!!cur.can_delete} onChange={() => setRolePerms(prev => ({ ...prev, [roleName]: { ...(prev[roleName] || { can_create: false, can_view: false, can_edit: false, can_delete: false }), can_delete: !((prev[roleName] || {}).can_delete) } }))} /></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
 
       <Modal size="2xl" isOpen={isGuideModalOpen} onClose={() => setIsGuideModalOpen(false)} title="Form Builder Guide" footer={<Button onClick={() => setIsGuideModalOpen(false)}>Close</Button>}>
         <div className="space-y-2 text-sm text-gray-700">

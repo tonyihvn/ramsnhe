@@ -42,7 +42,7 @@ const ReportsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800">Submitted Reports</h1>
+      <h1 className="text-2xl font-bold text-gray-800">Saved Data</h1>
 
       <div className="grid gap-6 mb-8 md:grid-cols-3">
         <Card className="bg-blue-50 border-blue-100">
@@ -137,7 +137,7 @@ const ReportsPage: React.FC = () => {
                     <button className="text-red-600 hover:text-red-900 flex items-center text-xs" onClick={async () => {
                       if (!confirm('Delete this report and its uploaded files?')) return;
                       try {
-                        const res = await fetch(`http://localhost:3000/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
+                        const res = await fetch(`http://localhost:5000/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
                         if (res.ok) {
                           alert('Report deleted');
                           window.location.reload();

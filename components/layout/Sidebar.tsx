@@ -1,22 +1,12 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ChartPieIcon, DocumentPlusIcon, DocumentTextIcon, BuildingOfficeIcon, UserGroupIcon, FolderIcon, ClipboardDocumentListIcon, Cog6ToothIcon, UserIcon, ChevronDownIcon, ChevronRightIcon, MapIcon } from '@heroicons/react/24/outline';
+import { DocumentPlusIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import navigationStatic from './navigation';
 import { useMockData } from '../../hooks/useMockData';
 import { useTheme } from '../../hooks/useTheme';
 import { useEffect, useState } from 'react';
 
-const navigationStatic = [
-  { key: 'dashboard', page_key: '/dashboard', defaultName: 'Dashboard', href: '/dashboard', icon: ChartPieIcon },
-  { key: 'map_dashboard', page_key: '/map-dashboard', defaultName: 'Map Dashboard', href: '/map-dashboard', icon: MapIcon },
-  { key: 'programs', page_key: '/programs', defaultName: 'Programs', href: '/programs', icon: FolderIcon },
-  { key: 'activities', page_key: '/activities', defaultName: 'Activities', href: '/activities', icon: ClipboardDocumentListIcon },
-  { key: 'reports', page_key: '/reports', defaultName: 'Reports', href: '/reports', icon: DocumentTextIcon },
-  { key: 'indicators', page_key: '/indicators', defaultName: 'Indicators', href: '/indicators', icon: ChartPieIcon },
-  { key: 'facilities', page_key: '/facilities', defaultName: 'Facilities', href: '/facilities', icon: BuildingOfficeIcon },
-  { key: 'users', page_key: '/users', defaultName: 'Users', href: '/users', icon: UserGroupIcon },
-  { key: 'settings', page_key: '/settings', defaultName: 'Settings', href: '/settings', icon: Cog6ToothIcon },
-  { key: 'profile', page_key: '/profile', defaultName: 'Profile', href: '/profile', icon: UserIcon },
-];
+// navigationStatic imported from ./navigation
 
 const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: () => void }> = ({ collapsed = false, mobileOpen = false, onClose }) => {
   const location = useLocation();
@@ -24,6 +14,8 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
   const { settings } = useTheme();
   const { activities, currentUser } = useMockData();
   const [activitiesOpen, setActivitiesOpen] = React.useState(false);
+  const [datasetsOpen, setDatasetsOpen] = React.useState(false);
+  const [datasetsList, setDatasetsList] = useState<any[] | null>(null);
   const [pagePerms, setPagePerms] = useState<any[] | null>(null);
 
   // Fetch page permissions for current user's role (if available)
@@ -43,6 +35,20 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
     return () => { cancelled = true; };
   }, [currentUser && currentUser.role]);
 
+  // load datasets for sidebar submenu
+  useEffect(() => {
+    let canceled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/admin/datasets');
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!canceled) setDatasetsList(Array.isArray(j) ? j.filter((d:any)=>d.show_in_menu) : []);
+      } catch (e) { /* ignore */ }
+    })();
+    return () => { canceled = true; };
+  }, []);
+
   const normalizePageKey = (k: string) => {
     if (!k) return k;
     return '/' + k.split('/').map(seg => seg.startsWith(':') ? '' : seg).filter(Boolean).join('/');
@@ -50,7 +56,10 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
 
   const hasPermissionFlag = (flag: 'can_view' | 'can_create' | 'can_edit' | 'can_delete', pageKey: string, sectionKey?: string) => {
     try {
-      if (!pagePerms) return true; // default allow when no permissions set
+      // Admin users see all menus
+      if (currentUser && String(currentUser.role || '').toLowerCase() === 'admin') return true;
+      // If permissions not yet loaded, default deny (menus visible only by assignment)
+      if (!pagePerms) return false;
       const norm = normalizePageKey(pageKey || '');
       // exact match first (page+section)
       for (const p of pagePerms) {
@@ -67,7 +76,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
         if (!pk) continue;
         if (norm.startsWith(pk)) return !!p[flag];
       }
-      return true;
+      return false;
     } catch (e) { return true; }
   };
 
@@ -147,6 +156,29 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
                             >
                               <ChevronRightIcon className="flex-shrink-0 h-4 w-4 text-gray-400 mr-2" />
                               <span className="truncate">{a.title || a.name || `Activity ${a.id}`}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                if (item.key === 'datasets') {
+                  const isActive = location.pathname.startsWith(item.href);
+                  const labelDatasets = (settings as any).datasetsLabel || item.defaultName || 'Datasets';
+                  return (
+                    <div key={item.key}>
+                      <div onClick={() => setDatasetsOpen(o => !o)} className={`group flex items-center cursor-pointer ${collapsed ? 'justify-center' : ''} px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-primary-50 text-primary-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
+                        <item.icon className={`flex-shrink-0 h-6 w-6 ${isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'}`} aria-hidden="true" />
+                        {!collapsed && <span className="ml-3 flex-1">{labelDatasets}</span>}
+                        {!collapsed && <ChevronDownIcon className={`h-5 w-5 transition-transform ${datasetsOpen ? 'transform rotate-180' : ''} text-gray-400`} />}
+                      </div>
+                      {!collapsed && datasetsOpen && (
+                        <div className="pl-8 mt-1 space-y-1">
+                          {!datasetsList || datasetsList.length === 0 ? <div className="text-xs text-gray-400">No datasets</div> : datasetsList.map(ds => (
+                            <Link key={ds.id} to={`/datasets/${ds.id}`} className="flex items-center text-xs text-gray-600 hover:bg-primary-50 hover:text-primary-700 px-2 py-1 rounded-md">
+                              <ChevronRightIcon className="flex-shrink-0 h-4 w-4 text-gray-400 mr-2" />
+                              <span className="truncate">{ds.name || `Dataset ${ds.id}`}</span>
                             </Link>
                           ))}
                         </div>

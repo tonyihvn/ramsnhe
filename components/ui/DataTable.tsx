@@ -15,9 +15,10 @@ interface DataTableProps<T> {
   pageSize?: number;
   // optional key to persist column visibility per table (defaults to hash of column keys)
   persistKey?: string;
+  stickyHeader?: boolean;
 }
 
-export default function DataTable<T extends Record<string, any>>({ columns, data, onCellEdit, pageSize = 100, persistKey }: DataTableProps<T>) {
+export default function DataTable<T extends Record<string, any>>({ columns, data, onCellEdit, pageSize = 100, persistKey, stickyHeader = false }: DataTableProps<T>) {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showControls, setShowControls] = useState(false);
   const [page, setPage] = useState(1);
@@ -111,7 +112,7 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
           <thead className="bg-gray-50">
             <tr>
               {visibleColumns.map(col => (
-                <th key={col.key} style={{ width: col.width }} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                <th key={col.key} style={{ width: col.width }} className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}>
                   <div className="flex flex-col">
                     <span className="truncate">{col.label}</span>
                     <input

@@ -186,6 +186,8 @@ const DBMSTab: React.FC = () => {
     const [rows, setRows] = React.useState<any[]>([]);
     const [columns, setColumns] = React.useState<string[]>([]);
     const [columnFilters, setColumnFilters] = React.useState<Record<string,string>>({});
+    const [sortColumn, setSortColumn] = React.useState<string | null>(null);
+    const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc' | null>(null);
     const [limit, setLimit] = React.useState(50);
     const [offset, setOffset] = React.useState(0);
     const [search, setSearch] = React.useState('');
@@ -244,13 +246,14 @@ const DBMSTab: React.FC = () => {
                 return `CAST(\"${c}\" AS TEXT) ILIKE '%${esc}%'`;
             }).filter(Boolean);
             const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
-            const built = `${base}${where} LIMIT ${limit} OFFSET ${offset}`;
+            const order = sortColumn ? ` ORDER BY \"${sortColumn}\" ${sortDirection === 'desc' ? 'DESC' : 'ASC'}` : '';
+            const built = `${base}${where}${order} LIMIT ${limit} OFFSET ${offset}`;
             setSql(built);
             loadTableInfo(selectedTable);
             // immediately run the query to preview the table when clicked or filters change
             runQuery(built);
         }
-    }, [selectedTable, limit, offset]);
+    }, [selectedTable, limit, offset, sortColumn, sortDirection]);
 
     // Re-run query when column filters change
     useEffect(() => {
@@ -263,10 +266,11 @@ const DBMSTab: React.FC = () => {
             return `CAST(\"${c}\" AS TEXT) ILIKE '%${esc}%'`;
         }).filter(Boolean);
         const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
-        const built = `${base}${where} LIMIT ${limit} OFFSET ${offset}`;
+        const order = sortColumn ? ` ORDER BY \"${sortColumn}\" ${sortDirection === 'desc' ? 'DESC' : 'ASC'}` : '';
+        const built = `${base}${where}${order} LIMIT ${limit} OFFSET ${offset}`;
         setSql(built);
         runQuery(built);
-    }, [columnFilters]);
+    }, [columnFilters, sortColumn, sortDirection]);
 
     return (
         <div className="grid grid-cols-4 gap-4">
@@ -294,27 +298,41 @@ const DBMSTab: React.FC = () => {
 
                     <div className="mt-2">
                         {loading && <div className="text-sm text-gray-500">Running query...</div>}
-                        {/* Column-level filters */}
-                        {columns.length > 0 && (
-                            <div className="mt-2 mb-2 p-2 bg-gray-50 border rounded">
-                                <div className="text-sm font-medium mb-2">Column Filters</div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                                    {columns.map(c => (
-                                        <div key={c} className="flex items-center gap-2">
-                                            <label className="text-xs w-28 text-gray-600">{c}</label>
-                                            <input className="flex-1 p-2 border rounded" value={columnFilters[c] || ''} onChange={e => setColumnFilters(prev => ({ ...(prev || {}), [c]: e.target.value }))} placeholder={`Filter ${c}`} />
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                        {!loading && rows.length === 0 && <div className="text-sm text-gray-500">No rows to display.</div>}
-                        {!loading && rows.length > 0 && (
+                        {/* Table with header filters and sortable columns */}
+                        {(!loading && rows.length > 0) && (
                             <div>
                                 <div className="overflow-auto max-h-[50vh] border rounded bg-white">
                                     <table className="min-w-full text-sm">
                                         <thead className="bg-gray-50 text-xs text-gray-600">
-                                            <tr>{columns.map(c => <th key={c} className="p-2 border">{c}</th>)}</tr>
+                                            <tr>
+                                                {columns.map(c => (
+                                                    <th key={c} className="p-2 border cursor-pointer select-none" onClick={() => {
+                                                        // toggle sort: null -> asc -> desc -> null
+                                                        const curCol = sortColumn;
+                                                        const curDir = sortDirection;
+                                                        let nextCol: string | null = c;
+                                                        let nextDir: 'asc' | 'desc' | null = 'asc';
+                                                        if (curCol === c) {
+                                                            if (curDir === 'asc') nextDir = 'desc';
+                                                            else if (curDir === 'desc') { nextCol = null; nextDir = null; }
+                                                        }
+                                                        setSortColumn(nextCol);
+                                                        setSortDirection(nextDir);
+                                                    }}>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="truncate">{c}</span>
+                                                            <span className="ml-2 text-xs">{sortColumn === c ? (sortDirection === 'asc' ? '▲' : sortDirection === 'desc' ? '▼' : '') : ''}</span>
+                                                        </div>
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                            <tr>
+                                                {columns.map(c => (
+                                                    <th key={c + '_filter'} className="p-1 border">
+                                                        <input className="w-full p-1 border rounded text-xs" value={columnFilters[c] || ''} onChange={e => setColumnFilters(prev => ({ ...(prev || {}), [c]: e.target.value }))} placeholder={`Filter ${c}`} />
+                                                    </th>
+                                                ))}
+                                            </tr>
                                         </thead>
                                         <tbody>
                                             {rows.map((r, i) => (
@@ -328,6 +346,7 @@ const DBMSTab: React.FC = () => {
                                 <div className="mt-2 text-sm text-gray-600">Returned {rows.length} rows.</div>
                             </div>
                         )}
+                        {(!loading && rows.length === 0) && <div className="text-sm text-gray-500">No rows to display.</div>}
                     </div>
 
                     {info && (
@@ -1037,6 +1056,7 @@ const SettingsPage: React.FC = () => {
                             <label className="block text-sm font-medium text-gray-700">Default page after login</label>
                             <select value={(settings as any).defaultPage || '/dashboard'} onChange={e => setSettings({ ...(settings as any), defaultPage: e.target.value })} className="mt-1 block p-2 border rounded">
                                 <option value="/dashboard">Dashboard</option>
+                                <option value="/map-dashboard">Map Dashboard</option>
                                 <option value="/activities">Activities</option>
                                 <option value="/reports">Reports</option>
                             </select>

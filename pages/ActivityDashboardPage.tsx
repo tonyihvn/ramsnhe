@@ -135,7 +135,7 @@ const ActivityDashboardPage: React.FC = () => {
             <Button onClick={() => navigate(`/activities/fill/${activity.id}`)} variant="primary">New +</Button>
             <Button onClick={() => navigate(`/reports/builder?activityId=${activity.id}`)} variant="secondary">Build Report</Button>
             <Button onClick={handleDownloadPdf}>Download PDF</Button>
-            <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/submitted-answers`)}>View Submitted Answers</Button>
+            <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/submitted-answers`)}>View Saved Data</Button>
             <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/excel-tables`)}>View Excel Tables</Button>
           </div>
         </div>
@@ -434,7 +434,17 @@ const ActivityDashboardPage: React.FC = () => {
               key: 'actions', label: 'Actions', render: (row: any) => (
                 <div className="flex gap-2">
                   <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/${row.__raw.id}`)}>View</Button>
-                  <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/builder?reportId=${row.__raw.id}`)}>Edit</Button>
+                  <Button size="sm" variant="secondary" onClick={() => {
+                    const base = `/activities/fill/${activity.id}`;
+                    const params = new URLSearchParams();
+                    params.set('reportId', String(row.__raw.id));
+                    if ((activity.response_type || activity.responseType || '').toString().toLowerCase() === 'facility') {
+                      params.set('facilityId', String(row.__raw.facility_id || row.__raw.facilityId || ''));
+                    } else if ((activity.response_type || activity.responseType || '').toString().toLowerCase() === 'user') {
+                      params.set('userId', String(row.__raw.user_id || row.__raw.userId || ''));
+                    }
+                    navigate(`${base}?${params.toString()}`);
+                  }}>Edit</Button>
                   <Button size="sm" variant="danger" onClick={async () => {
                     const ok = await confirm({ title: 'Delete report?', text: `Permanently delete report ${row.id}?` });
                     if (!ok) return;

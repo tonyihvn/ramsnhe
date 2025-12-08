@@ -12,6 +12,8 @@ const ActivitySubmittedAnswersPage: React.FC = () => {
   const [questions, setQuestions] = useState<any[]>([]);
   const [facilities, setFacilities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [activityTitle, setActivityTitle] = useState<string | null>(null);
+  const [transpose, setTranspose] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
@@ -26,6 +28,13 @@ const ActivitySubmittedAnswersPage: React.FC = () => {
         if (qRes.ok) setQuestions(await qRes.json() || []);
         if (fRes.ok) setFacilities(await fRes.json() || []);
         if (uRes.ok) setUsers(await uRes.json() || []);
+          try {
+            const aRes = await fetch(`/api/activities/${activityId}`, { credentials: 'include' });
+            if (aRes.ok) {
+              const a = await aRes.json();
+              setActivityTitle(a?.title || null);
+            }
+          } catch (e) { /* ignore */ }
       } catch (e) { console.error(e); }
       setLoading(false);
     })();
@@ -80,41 +89,94 @@ const ActivitySubmittedAnswersPage: React.FC = () => {
     };
   });
 
+  // Build transposed view: columns are questions, rows are reports
+  const questionIdentifiers: string[] = [];
+  for (const q of questions) {
+    try {
+      if (q && q.id !== undefined) questionIdentifiers.push(String(q.id));
+      else if (q && q.qid !== undefined) questionIdentifiers.push(String(q.qid));
+      else if (q && q.question_id !== undefined) questionIdentifiers.push(String(q.question_id));
+      else if (q && (q.fieldName || q.field_name)) questionIdentifiers.push(String(q.fieldName || q.field_name));
+    } catch (e) { }
+  }
+  // ensure uniqueness
+  const uniqueQuestionIds = Array.from(new Set(questionIdentifiers));
+
+  const transposedColumns = [{ key: 'report_id', label: 'Report ID' }, { key: 'facility', label: 'Facility' }, ...uniqueQuestionIds.map(id => ({ key: id, label: (qMap[id]?.questionText || qMap[id]?.question_text || qMap[id]?.text || qMap[id]?.label || id) }))];
+
+  const reportsMap: Record<string, any> = {};
+  for (const a of answers) {
+    const rid = a.report_id || 'unknown';
+    if (!reportsMap[rid]) {
+      const base: Record<string, any> = { report_id: rid, facility: '' };
+      for (const qid of uniqueQuestionIds) base[qid] = '';
+      reportsMap[rid] = base;
+    }
+    const key = String(a.question_id);
+    const answerVal = (a.answer_value && typeof a.answer_value === 'object') ? (a.answer_value.value ?? JSON.stringify(a.answer_value)) : a.answer_value;
+    reportsMap[rid][key] = answerVal;
+    // set facility (use mapping if available)
+    try {
+      const facility = fMap[String(a.facility_id)];
+      const facilityName = facility ? (facility.name || facility.facility_name || String(facility.id)) : String(a.facility_id || '');
+      reportsMap[rid].facility = facilityName;
+    } catch (e) { }
+  }
+  const transposedRows = Object.values(reportsMap);
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Submitted Answers — Activity {activityId}</h1>
-        <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-bold">{activityTitle || `Activity ${activityId}`}</h1>
+        <div className="flex items-center gap-4">
+          <label className="inline-flex items-center space-x-2">
+            <input type="checkbox" className="form-checkbox" checked={transpose} onChange={e => setTranspose(e.target.checked)} />
+            <span className="text-sm">Transpose Records</span>
+          </label>
+          <div className="flex items-center gap-2">
             <Button variant="secondary" onClick={() => navigate(-1)}>Back</Button>
             <Button variant="secondary" onClick={async () => {
               try {
-                if (!rows || rows.length === 0) { alert('No data to export'); return; }
+                const dataToExport = transpose ? transposedRows : rows;
+                if (!dataToExport || dataToExport.length === 0) { alert('No data to export'); return; }
                 const ExcelJS = await import('exceljs');
                 const workbook = new ExcelJS.Workbook();
                 const sheet = workbook.addWorksheet('Answers');
-                const cols = [
-                  { header: 'Report ID', key: 'report_id' },
-                  { header: 'Question', key: 'question' },
-                  { header: 'Answer', key: 'answer' },
-                  { header: 'Facility', key: 'facility' },
-                  { header: 'User', key: 'user' },
-                  { header: 'Submitted At', key: 'created_at' }
-                ];
-                sheet.columns = cols;
-                for (const r of rows) {
-                  sheet.addRow({ report_id: r.report_id, question: r.question, answer: r.answer, facility: r.facility, user: r.user, created_at: r.created_at });
+                let colsDef: any[] = [];
+                if (transpose) {
+                  colsDef = transposedColumns.map(c => ({ header: c.label, key: c.key }));
+                } else {
+                  colsDef = [
+                    { header: 'Report ID', key: 'report_id' },
+                    { header: 'Question', key: 'question' },
+                    { header: 'Answer', key: 'answer' },
+                    { header: 'Facility', key: 'facility' },
+                    { header: 'User', key: 'user' },
+                    { header: 'Submitted At', key: 'created_at' }
+                  ];
+                }
+                sheet.columns = colsDef;
+                for (const r of dataToExport) {
+                  sheet.addRow(r);
                 }
                 const buffer = await workbook.xlsx.writeBuffer();
-                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument-spreadsheetml.sheet' });
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a'); a.href = url; a.download = `activity_${activityId}_answers.xlsx`; document.body.appendChild(a); a.click(); setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 500);
               } catch (e) { console.error('Export failed', e); alert('Export failed'); }
             }}>Export to Excel</Button>
+          </div>
         </div>
       </div>
       <Card>
         <p className="text-sm text-gray-500 mb-4">This view shows all answers submitted for this activity across all reports. Each row represents a single answer (question-level).</p>
-        <DataTable columns={columns} data={rows} />
+        {transpose ? (
+          <div className="overflow-x-auto border rounded">
+            <DataTable columns={transposedColumns} data={transposedRows} stickyHeader />
+          </div>
+        ) : (
+          <DataTable columns={columns} data={rows} />
+        )}
       </Card>
     </div>
   );

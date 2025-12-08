@@ -398,8 +398,30 @@ const ApiConnectorsPage: React.FC = () => {
       const res = await fetch(`/api/api_connectors/${id}/trigger`, { method: 'POST', credentials: 'include' });
       if (res.ok) {
         const j = await res.json();
-        // reload ingests but try to preserve single-row per connector behavior
+        // reload ingests to pick up new data
         await load();
+        // If server returned an ingestId, fetch it and open the ingest viewer so nested JSON isn't shown as [object Object]
+        try {
+          if (j && j.ingestId) {
+            const rir = await fetch(`/api/api_ingests/${j.ingestId}`, { credentials: 'include' });
+            if (rir.ok) {
+              const ingestObj = await rir.json();
+              // open viewer for the new ingest
+              openIngestViewer(ingestObj);
+              return;
+            }
+          }
+          // if server returned raw data directly, show in JSON viewer
+          if (j && j.raw_data) {
+            let val = j.raw_data;
+            if (typeof val === 'string') {
+              try { val = JSON.parse(val); } catch (e) { /* keep string */ }
+            }
+            pushJsonViewer(val, true, j.ingestId || null);
+            return;
+          }
+        } catch (e) { console.error('post-trigger viewer open failed', e); }
+
         alert('Triggered connector; ingested data saved' + (j.ingestId ? (', ingestId: ' + j.ingestId) : ''));
       } else {
         alert('Failed to trigger connector');
@@ -524,6 +546,52 @@ const ApiConnectorsPage: React.FC = () => {
                     pushJsonViewer(val, true, i.id);
                   } catch (e) { console.error(e); alert('Failed to open JSON viewer'); }
                 }}>JSON</Button>
+                <Button size="sm" onClick={async () => {
+                  try {
+                    // Save this ingest into a new dataset (admin only)
+                    const raw = i.raw_data;
+                    let parsed = raw;
+                    if (typeof parsed === 'string') {
+                      try { parsed = JSON.parse(parsed); } catch (e) { /* keep as string */ }
+                    }
+                    // determine candidate rows
+                    let rowsToSave: any[] = [];
+                    if (Array.isArray(parsed)) rowsToSave = parsed;
+                    else if (parsed && Array.isArray(parsed.data)) rowsToSave = parsed.data;
+                    else if (parsed && typeof parsed === 'object') {
+                      // try to find first array property
+                      const arrProp = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+                      if (arrProp) rowsToSave = parsed[arrProp];
+                      else rowsToSave = [parsed];
+                    } else rowsToSave = [parsed];
+
+                    if (!rowsToSave || rowsToSave.length === 0) {
+                      if (!confirm('No tabular rows were detected. Save the whole ingest as a single dataset row?')) return;
+                      rowsToSave = [parsed];
+                    }
+
+                    const maxInsert = 500;
+                    if (rowsToSave.length > maxInsert) {
+                      if (!confirm(`This will create a dataset and insert the first ${maxInsert} rows out of ${rowsToSave.length}. Continue?`)) return;
+                      rowsToSave = rowsToSave.slice(0, maxInsert);
+                    }
+
+                    // infer fields from first object row
+                    const first = rowsToSave.find(r => r && typeof r === 'object');
+                    const fields = first && typeof first === 'object' ? Object.keys(first).map(k => ({ name: k })) : [];
+                    const connector = connectors.find(x => x.id === i.connector_id);
+                    const dsName = `Ingest ${i.id}${connector ? ' - ' + connector.name : ''}`;
+                    const createRes = await fetch('/api/admin/datasets', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: dsName, description: `Imported from ingest ${i.id}`, dataset_fields: fields }) });
+                    if (!createRes.ok) return alert('Failed to create dataset: ' + await createRes.text());
+                    const ds = await createRes.json();
+                    // post each row as dataset content
+                    for (const row of rowsToSave) {
+                      const r = await fetch(`/api/admin/datasets/${ds.id}/content`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(row) });
+                      if (!r.ok) console.warn('Failed to insert dataset row:', await r.text());
+                    }
+                    alert(`Saved ${rowsToSave.length} rows to dataset "${ds.name}" (id=${ds.id}).`);
+                  } catch (e) { console.error(e); alert('Failed to save ingest to dataset: ' + String(e)); }
+                }}>Save to Dataset</Button>
                 <Button size="sm" variant="danger" onClick={() => deleteIngest(i.id)}>Delete</Button>
               </div>
             </div>

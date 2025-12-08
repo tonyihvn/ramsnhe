@@ -51,7 +51,14 @@
 }
 
 /* Ensure inputs and editor content default to left-to-right to avoid accidental RTL rendering */
-input, textarea, select, .canvas-editor, .tox, .tox-editor-container, .tox .tox-edit-area, .tox .tox-edit-area iframe {
+input,
+textarea,
+select,
+.canvas-editor,
+.tox,
+.tox-editor-container,
+.tox .tox-edit-area,
+.tox .tox-edit-area iframe {
     direction: ltr !important;
     text-align: left !important;
 }
@@ -96,6 +103,7 @@ nav .red {
     max-width: 95vw !important;
     box-sizing: border-box !important;
 }
+
 .nherams-map .leaflet-popup-content-wrapper {
     display: inline-flex !important;
     flex-direction: column !important;
@@ -105,10 +113,12 @@ nav .red {
     box-sizing: border-box !important;
     padding: 8px !important;
 }
+
 .nherams-map .leaflet-popup-tip-container,
 .nherams-map .leaflet-popup-tip {
     width: auto !important;
 }
+
 .nherams-map .leaflet-popup-content {
     white-space: normal !important;
     overflow-wrap: break-word !important;
@@ -137,6 +147,7 @@ nav .red {
 .nherams-map .leaflet-pane * {
     z-index: 2147483647 !important;
 }
+
 .nherams-map .leaflet-popup-content-wrapper,
 .nherams-map .leaflet-popup-tip-container,
 .nherams-map .leaflet-popup-tip,
@@ -144,6 +155,52 @@ nav .red {
     z-index: 2147483647 !important;
     position: relative !important;
 }
+
 .nherams-map .leaflet-popup-content * {
     z-index: 2147483647 !important;
+}
+
+/* Materialize-like input styles scoped to modals
+   Applies a bottom-border input style and focused accent similar to Materialize CSS
+   Targeting inputs inside the modal container added in `components/ui/Modal.tsx`. */
+.materialize-modal input,
+.materialize-modal textarea,
+.materialize-modal select {
+    border: none !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.42) !important;
+    background: transparent !important;
+    padding: 0.5rem 0 0.25rem !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    transition: border-color .15s ease, box-shadow .15s ease, color .15s ease !important;
+}
+
+.materialize-modal label {
+    color: rgba(0, 0, 0, 0.65) !important;
+    font-size: 0.95rem !important;
+    display: block !important;
+    margin-bottom: 0.25rem !important;
+}
+
+.materialize-modal input:focus,
+.materialize-modal textarea:focus,
+.materialize-modal select:focus {
+    outline: none !important;
+    border-bottom-color: var(--primary-color, #3b82f6) !important;
+    box-shadow: 0 1px 0 0 var(--primary-color, #3b82f6) !important;
+}
+
+.materialize-modal .file-input,
+.materialize-modal input[type="file"] {
+    border-bottom: none !important;
+}
+
+/* Small helper for inputs that already have surrounding label after the input (Materialize pattern).
+   If a label immediately follows an input, shrink it when input has a value or is focused. */
+.materialize-modal input:focus+label,
+.materialize-modal input:not(:placeholder-shown)+label,
+.materialize-modal textarea:focus+label,
+.materialize-modal textarea:not(:placeholder-shown)+label {
+    transform: translateY(-0.9rem) scale(0.86) !important;
+    color: var(--primary-color, #3b82f6) !important;
 }

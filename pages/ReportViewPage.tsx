@@ -232,9 +232,27 @@ const ReportViewPage: React.FC = () => {
           const qid = String(a.question_id || a.qid || a.questionId || '');
           const q = qMap[qid] || {};
           const questionText = q.questionText || q.question_text || q.text || q.label || q.title || q.name || qid;
-          let val = a.answer_value;
+          let val: any = a.answer_value;
           if (val === null || val === undefined) val = '';
-          if (typeof val === 'object') val = JSON.stringify(val);
+          try {
+            // If stored as an object (old format) prefer the primitive `value` field
+            if (typeof val === 'object') {
+              if ('value' in val) val = val.value ?? '';
+              else val = JSON.stringify(val);
+            } else if (typeof val === 'string' && val.trim().startsWith('{')) {
+              // Might be a stringified JSON from older records - try to parse and extract `value`
+              const parsed = JSON.parse(val);
+              if (parsed && typeof parsed === 'object' && 'value' in parsed) {
+                val = parsed.value ?? '';
+              } else {
+                val = String(val);
+              }
+            } else {
+              val = String(val);
+            }
+          } catch (e) {
+            val = String(a.answer_value ?? '');
+          }
           answersHtmlParts.push(`<tr><td style="vertical-align:top;padding:6px;border:1px solid #ddd;width:40%"><strong>${escapeHtml(questionText)}</strong></td><td style="padding:6px;border:1px solid #ddd">${escapeHtml(val)}</td></tr>`);
         } catch (e) { }
       }

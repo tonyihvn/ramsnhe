@@ -5,6 +5,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import RichTextEditor from '../components/ui/RichTextEditor';
 import WysiwygEditor from '../components/ui/WysiwygEditor';
+import UnifiedRichTextEditor from '../components/ui/UnifiedRichTextEditor';
 import CanvasEditor from '../components/ui/CanvasEditor';
 import ImageCropper from '../components/ui/ImageCropper';
 import ShapeStyleEditor from '../components/ui/ShapeStyleEditor';
@@ -52,7 +53,7 @@ const ReportBuilderPage: React.FC = () => {
   const [confirmState, setConfirmState] = useState<{ open: boolean; message: string; onConfirm?: () => void }>({ open: false, message: '' });
   const [toasts, setToasts] = useState<Array<{ id: number; text: string }>>([]);
   const [panelShown, setPanelShown] = useState<boolean>(false); // only show floating panel after New/Edit clicked
-  const [richTextMode, setRichTextMode] = useState<'wysiwyg' | 'builtin' | 'none'>(() => { try { const r = localStorage.getItem('reportBuilderRichTextMode'); return (r as any) || 'wysiwyg'; } catch (e) { return 'wysiwyg'; } });
+  const [richTextMode, setRichTextMode] = useState<string>(() => { try { const r = localStorage.getItem('reportBuilderRichTextMode'); return (r as any) || 'editorjs'; } catch (e) { return 'editorjs'; } });
   const [disableRichText, setDisableRichText] = useState<boolean>(() => { try { return localStorage.getItem('reportBuilderDisableRichText') === '1'; } catch (e) { return false; } });
   const [isCropperOpen, setIsCropperOpen] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string>('');
@@ -768,9 +769,13 @@ const ReportBuilderPage: React.FC = () => {
               <div className="mt-2 grid grid-cols-1 gap-2">
                 <div>
                   <label className="block text-xs text-gray-500">Rich Text Editor</label>
-                  <select className="mt-1 block w-full border rounded p-2 text-sm" value={richTextMode} onChange={e => { setRichTextMode(e.target.value as any); try { localStorage.setItem('reportBuilderRichTextMode', e.target.value); } catch (err) { } }}>
-                    <option value="wysiwyg">Rich Text Editor (Quill)</option>
-                    <option value="builtin">Built-in RichTextEditor</option>
+                  <select className="mt-1 block w-full border rounded p-2 text-sm" value={richTextMode} onChange={e => { setRichTextMode(e.target.value); try { localStorage.setItem('reportBuilderRichTextMode', e.target.value); } catch (err) { } }}>
+                    <option value="editorjs">Editor.js</option>
+                    <option value="summernote">Summernote</option>
+                    <option value="taptap">TapTap</option>
+                    <option value="tinymce">TinyMCE</option>
+                    <option value="ckeditor">CKEditor</option>
+                    <option value="basic">Basic (plain)</option>
                     <option value="none">Disable rich text</option>
                   </select>
                   <div className="mt-2 text-xs text-gray-500 flex items-center gap-2"><input id="disableRT" type="checkbox" checked={disableRichText} onChange={e => { setDisableRichText(e.target.checked); try { localStorage.setItem('reportBuilderDisableRichText', e.target.checked ? '1' : '0'); } catch (err) { } }} /> <label htmlFor="disableRT">Disable rich text entirely</label></div>
@@ -1048,11 +1053,9 @@ const ReportBuilderPage: React.FC = () => {
           <div>
             {disableRichText || richTextMode === 'none' ? (
               <textarea dir="ltr" className="w-full h-48 border p-2" value={composeHtml} onChange={e => setComposeHtml(e.target.value)} />
-            ) : (richTextMode === 'builtin' ? (
-              <RichTextEditor value={composeHtml} onChange={v => setComposeHtml(v)} />
             ) : (
-              <WysiwygEditor value={composeHtml} onChange={v => setComposeHtml(v)} />
-            ))}
+              <UnifiedRichTextEditor editorType={(richTextMode as any)} value={composeHtml} onChange={v => setComposeHtml(v)} height={320} />
+            )}
             <div className="flex justify-end gap-2 mt-3">
               <button className="p-2 border rounded" onClick={() => setComposeOpen(false)}>Cancel</button>
               <button className="p-2 bg-primary-600 text-white rounded" onClick={() => {

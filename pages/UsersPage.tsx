@@ -198,7 +198,7 @@ const UsersPage: React.FC = () => {
           </div>
           <div>
             <MInput label="Role" type="select" value={currentUserEdit.role} onChange={v => setCurrentUserEdit({ ...currentUserEdit, role: v })}
-              options={[{ value: 'Admin', label: 'Admin' }, { value: 'Form Builder', label: 'Form Builder' }, { value: 'Data Collector', label: 'Data Collector' }, { value: 'Viewer', label: 'Viewer' }, { value: 'Responder', label: 'Responder' }]} />
+              options={[{ value: 'Admin', label: 'Admin' }, { value: 'Form Builder', label: 'Form Builder' }, { value: 'Data Collector', label: 'Data Collector' }, { value: 'Viewer', label: 'Viewer' }, { value: 'Responder', label: 'Responder' }, { value: 'Controller', label: 'Controller' }, { value: 'Validator', label: 'Validator' }, { value: 'Public', label: 'Public' }]} />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Assign Roles</label>

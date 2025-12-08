@@ -73,13 +73,13 @@ const EvidenceAccordion: React.FC<{ facility: any; mapAnswers?: any | null }> = 
     if (Object.keys(validatorMap).length === 0) return null;
     return (
       <div style={{ marginTop: 10 }}>
-        <div style={{ marginBottom: 6 }}><strong>Certificates / References (Validator)</strong></div>
+        <div style={{ marginBottom: 6 }}><strong>Certificates / References (Validators)</strong></div>
         {Object.entries(validatorMap).map(([section, items]) => (
           <div key={section} style={{ marginBottom: 8 }}>
             <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>{section}</div>
             {items.map((it, idx) => (
               <div key={idx} style={{ padding: 8, border: '1px solid #f2f2f2', borderRadius: 6, marginBottom: 6 }}>
-                <div style={{ fontSize: 12, color: '#333' }}><strong>Report</strong> {it.reportId}</div>
+                {/* <div style={{ fontSize: 12, color: '#333' }}><strong>Report</strong> {it.reportId}</div> */}
                 <div style={{ fontSize: 13, color: '#444', marginTop: 4 }}>{it.question.questionText || it.question.id}</div>
                 <div style={{ fontWeight: 600, marginTop: 6 }}>{(it.answer && (typeof it.answer === 'object' ? (it.answer.value ?? JSON.stringify(it.answer)) : String(it.answer))) || '—'}</div>
               </div>
@@ -95,7 +95,7 @@ const EvidenceAccordion: React.FC<{ facility: any; mapAnswers?: any | null }> = 
       <button onClick={() => setOpen(s => !s)} style={{ background: 'transparent', border: 'none', color: '#0077cc', cursor: 'pointer' }}>{open ? 'Hide Evidence' : 'Show Evidence'}</button>
       {open && (
         <div style={{ marginTop: 8, padding: 10, border: '1px solid #eee', borderRadius: 6 }}>
-          <div style={{ marginBottom: 6 }}><strong>Certificates / References</strong></div>
+          {/* <div style={{ marginBottom: 6 }}><strong>Certificates / References</strong></div>
           <ul>
             {(facility?.evidence?.certificates || []).map((c: any) => <li key={c.id}>{c.id} — {c.note}</li>)}
             {!(facility?.evidence?.certificates || []).length && <li>None (synthetic)</li>}
@@ -113,13 +113,13 @@ const EvidenceAccordion: React.FC<{ facility: any; mapAnswers?: any | null }> = 
             <div style={{ fontSize: 13, color: '#444' }}>{facility?.evidence?.sampling_note || 'Synthetic sampling note'}</div>
           </div>
 
-          {renderReviewerSection()}
+          {renderReviewerSection()} */}
 
           {renderValidatorCertificates()}
 
-          <div style={{ marginTop: 12 }}>
+          {/* <div style={{ marginTop: 12 }}>
             <BundlePreview facility={facility} />
-          </div>
+          </div> */}
         </div>
       )}
     </div>

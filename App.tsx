@@ -28,6 +28,8 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import ProfilePage from './pages/ProfilePage';
 import DocsPage from './pages/DocsPage';
 import ApiConnectorsPage from './pages/ApiConnectorsPage';
+import DatasetsPage from './pages/DatasetsPage';
+import DatasetContentPage from './pages/DatasetContentPage';
 import { DataProvider, useMockData } from './hooks/useMockData';
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -75,6 +77,8 @@ const AppRoutes = () => {
       <Route path="/role-permissions" element={<ProtectedRoute><Layout><RolePermissionsPage /></Layout></ProtectedRoute>} />
       <Route path="/indicators" element={<ProtectedRoute><Layout><IndicatorsPage /></Layout></ProtectedRoute>} />
       <Route path="/connectors" element={<ProtectedRoute><Layout><ApiConnectorsPage /></Layout></ProtectedRoute>} />
+      <Route path="/datasets" element={<ProtectedRoute><Layout><DatasetsPage /></Layout></ProtectedRoute>} />
+      <Route path="/datasets/:id" element={<ProtectedRoute><Layout><DatasetContentPage /></Layout></ProtectedRoute>} />
       <Route path="/docs" element={<Layout><DocsPage /></Layout>} />
       <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DataTable from '../components/ui/DataTable';
@@ -14,6 +15,8 @@ const DatasetsPage: React.FC = () => {
   const [isContentModalOpen, setIsContentModalOpen] = useState(false);
   const [isAddRowModalOpen, setIsAddRowModalOpen] = useState(false);
   const [manualRowFields, setManualRowFields] = useState<Array<{ key: string; value: string }>>([]);
+  const [jsonViewerOpen, setJsonViewerOpen] = useState(false);
+  const [jsonViewerContent, setJsonViewerContent] = useState<any>(null);
 
   const loadDatasets = async () => {
     setLoading(true);
@@ -44,20 +47,9 @@ const DatasetsPage: React.FC = () => {
     } catch (e) { console.error('Failed to delete', e); alert('Delete failed'); }
   };
 
-  const viewContent = async (id: number) => {
-    try {
-      // fetch dataset metadata (for title)
-      const metaRes = await fetch(`/api/admin/datasets/${id}`);
-      const meta = metaRes.ok ? await metaRes.json() : null;
-      const r = await fetch(`/api/admin/datasets/${id}/content?limit=500`);
-      const j = await r.json();
-      // Flatten rows so each row exposes dataset fields at top-level, but keep a __dc_id and __roles for updates
-      const rows = Array.isArray(j.rows) ? j.rows.map((rr: any) => ({ __dc_id: rr.id, __roles: rr.dataset_roles || [], ... (rr.dataset_data || {}) })) : [];
-      setContentRows(rows);
-      setContentDatasetId(id);
-      setContentDatasetName(meta && meta.name ? meta.name : null);
-      setIsContentModalOpen(true);
-    } catch (e) { console.error('Failed to load content', e); alert('Failed to load content'); }
+  const navigate = useNavigate();
+  const viewContent = (id: number) => {
+    navigate(`/datasets/${id}`);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,6 +110,16 @@ const DatasetsPage: React.FC = () => {
         <DatasetEditor dataset={editing} onCancel={() => setIsEditModalOpen(false)} onSave={saveDataset} />
       </Modal>
 
+      {/* JSON Viewer Modal for dataset cell values */}
+      <Modal isOpen={jsonViewerOpen} onClose={() => { setJsonViewerOpen(false); setJsonViewerContent(null); }} title="JSON Viewer">
+        <div>
+          <pre className="whitespace-pre-wrap text-sm bg-gray-50 p-3 rounded" style={{ maxHeight: '60vh', overflow: 'auto' }}>{jsonViewerContent ? (typeof jsonViewerContent === 'string' ? jsonViewerContent : JSON.stringify(jsonViewerContent, null, 2)) : ''}</pre>
+          <div className="flex justify-end mt-2">
+            <Button onClick={() => { setJsonViewerOpen(false); setJsonViewerContent(null); }}>Close</Button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={isContentModalOpen} title={contentDatasetName ? `Dataset: ${contentDatasetName}` : `Dataset Content${contentDatasetId ? ' — ' + contentDatasetId : ''}`} onClose={() => setIsContentModalOpen(false)} size="3xl">
         <div className="space-y-3">
           <div className="flex justify-between items-center">
@@ -173,7 +175,21 @@ const DatasetsPage: React.FC = () => {
               <DataTable
                 columns={(() => {
                   const keys = Object.keys(contentRows[0] || {}).filter(k => k !== '__dc_id' && k !== '__roles');
-                  const cols = keys.map(k => ({ key: k, label: k, editable: true }));
+                  const sample = contentRows[0] || {};
+                  const cols = keys.map(k => ({ key: k, label: k, editable: !(typeof sample[k] === 'object' && sample[k] !== null), render: (row: any) => {
+                    const v = row[k];
+                    if (v === null || typeof v === 'undefined') return '';
+                    if (typeof v === 'object') {
+                      const preview = Array.isArray(v) ? `[${v.length}]` : JSON.stringify(v).slice(0, 200);
+                      return (
+                        <div className="flex items-center gap-2">
+                          <span className="truncate" style={{ maxWidth: 400 }}>{preview}</span>
+                          <button className="text-xs text-blue-600" onClick={() => { setJsonViewerContent(v); setJsonViewerOpen(true); }}>View</button>
+                        </div>
+                      );
+                    }
+                    return String(v);
+                  } }));
                   cols.push({
                     key: '__actions', label: 'Actions', render: (row: any) => (
                       <div className="flex gap-2">
@@ -270,6 +286,7 @@ const DatasetEditor: React.FC<{ dataset?: any; onSave: (d: any) => void; onCance
   const [description, setDescription] = useState(dataset?.description || '');
   const [category, setCategory] = useState(dataset?.category || '');
   const [fieldsText, setFieldsText] = useState((Array.isArray(dataset?.dataset_fields) ? dataset.dataset_fields.map((f: any) => f.name).join(',') : ''));
+  const [showInMenu, setShowInMenu] = useState(!!dataset?.show_in_menu);
 
   return (
     <div className="space-y-3">
@@ -290,9 +307,15 @@ const DatasetEditor: React.FC<{ dataset?: any; onSave: (d: any) => void; onCance
         <input value={fieldsText} onChange={e => setFieldsText(e.target.value)} className="mt-1 block w-full border-gray-300 rounded" placeholder="code,label" />
         <div className="text-xs text-gray-500 mt-1">Provide field names to help mapping when using datasets as sources.</div>
       </div>
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => onSave({ id: dataset?.id, name, description, category, dataset_fields: fieldsText.split(',').map(s => ({ name: s.trim() })).filter((f: any) => f.name) })}>Save</Button>
+      <div className="flex items-center justify-between">
+        <label className="inline-flex items-center text-sm">
+          <input type="checkbox" className="mr-2" checked={showInMenu} onChange={e => setShowInMenu(e.target.checked)} />
+          Show in sidebar menu
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button onClick={() => onSave({ id: dataset?.id, name, description, category, dataset_fields: fieldsText.split(',').map(s => ({ name: s.trim() })).filter((f: any) => f.name), show_in_menu: showInMenu })}>Save</Button>
+        </div>
       </div>
     </div>
   );

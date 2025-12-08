@@ -2,6 +2,152 @@
 import express from 'express';
 import { Pool } from 'pg';
 import cors from 'cors';
+
+// Helper: update/insert/delete answers for a report while respecting permissions and ownership
+async function upsertReportAnswers(client, reportId, payload, existingRow, req) {
+    // existingRow: the dqai_activity_reports row for this report
+    const answers = payload.answers || {};
+    // load existing answers for this report
+    const existRes = await client.query('SELECT * FROM dqai_answers WHERE report_id = $1', [reportId]);
+    const existingRows = existRes.rows || [];
+    const existingMap = {};
+    const existingUsed = {};
+    for (const r of existingRows) {
+        const rk = `${String(r.question_id)}::${(r.answer_row_index === null || typeof r.answer_row_index === 'undefined') ? 'null' : String(r.answer_row_index)}`;
+        existingMap[rk] = r;
+        existingUsed[rk] = false;
+    }
+
+    const currentUserId = req.session && req.session.userId ? req.session.userId : null;
+    let currentRole = 'public';
+    try {
+        if (currentUserId) {
+            const ur = await client.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [currentUserId]);
+            if (ur.rowCount) currentRole = ur.rows[0].role || currentRole;
+        }
+    } catch (e) { /* ignore */ }
+
+    const collectQIds = [];
+    for (const [qId, val] of Object.entries(answers)) {
+        collectQIds.push(String(qId));
+        if (Array.isArray(val)) {
+            for (const row of val) {
+                if (row && typeof row === 'object') {
+                    for (const subQId of Object.keys(row)) collectQIds.push(String(subQId));
+                }
+            }
+        }
+    }
+    const uniqueQIds = Array.from(new Set(collectQIds.map(String)));
+    const qInfo = {};
+    if (uniqueQIds.length) {
+        try {
+            const qres = await client.query('SELECT id, page_name, section_name FROM dqai_questions WHERE id = ANY($1::text[])', [uniqueQIds]);
+            for (const q of qres.rows) qInfo[String(q.id)] = { page: q.page_name || '', section: (q.section_name === undefined ? null : q.section_name) };
+        } catch (e) { /* ignore */ }
+    }
+
+    const canCheck = async (pageKey, sectionKey, want) => {
+        try {
+            if (currentRole && String(currentRole).toLowerCase() === 'admin') return true;
+            const permRes = await client.query(`SELECT can_create, can_edit, can_delete FROM dqai_page_permissions WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
+            const perm = permRes.rows && permRes.rows[0] ? permRes.rows[0] : null;
+            if (!perm) return false;
+            if (want === 'create') return !!perm.can_create;
+            if (want === 'edit') return !!perm.can_edit;
+            if (want === 'delete') return !!perm.can_delete;
+            return false;
+        } catch (e) { return false; }
+    };
+
+    if (answers && typeof answers === 'object') {
+        for (const [qId, val] of Object.entries(answers)) {
+            try {
+                const pageKeyForGroup = (qInfo[String(qId)] ? qInfo[String(qId)].page : '') || '';
+                const sectionKeyForGroup = (qInfo[String(qId)] ? qInfo[String(qId)].section : null) || null;
+
+                if (Array.isArray(val)) {
+                    for (let ri = 0; ri < val.length; ri++) {
+                        const row = val[ri] || {};
+                        if (!row || typeof row !== 'object') continue;
+                        for (const [subQId, subVal] of Object.entries(row)) {
+                            try {
+                                let answerVal = subVal;
+                                let reviewersComment = null; let qiFollowup = null; let score = null;
+                                if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                    if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                    reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                    qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                    score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                }
+                                const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                const key = `${String(subQId)}::${String(ri)}`;
+                                const qi = qInfo[String(subQId)] || { page: pageKeyForGroup, section: sectionKeyForGroup };
+                                const pageKey = qi.page || '';
+                                const sectionKey = qi.section || null;
+                                if (existingMap[key]) {
+                                    const rowObj = existingMap[key];
+                                    const allowed = (await canCheck(pageKey, sectionKey, 'edit')) || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId));
+                                    if (allowed) {
+                                        await client.query('UPDATE dqai_answers SET answer_value=$1, reviewers_comment=$2, quality_improvement_followup=$3, score=$4, answer_datetime=$5 WHERE id = $6', [storedAnswerValue, reviewersComment, qiFollowup, score, new Date(), rowObj.id]);
+                                    }
+                                    existingUsed[key] = true;
+                                } else {
+                                    const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
+                                    if (allowedCreate) {
+                                        const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                        await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score]);
+                                    }
+                                }
+                            } catch (ie) { console.error('Failed to process repeated answer during update for question', subQId, ie); }
+                        }
+                    }
+                } else {
+                    let answerVal = val; let reviewersComment = null; let qiFollowup = null; let score = null;
+                    if (val && typeof val === 'object' && !(val instanceof Array)) {
+                        if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                        reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                        qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                        score = (typeof val.score !== 'undefined') ? val.score : null;
+                    }
+                    const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                    const key = `${String(qId)}::null`;
+                    const qiRow = qInfo[String(qId)] || { page: '', section: null };
+                    const pageKey = qiRow.page || '';
+                    const sectionKey = qiRow.section || null;
+                    if (existingMap[key]) {
+                        const rowObj = existingMap[key];
+                        const allowed = (await canCheck(pageKey, sectionKey, 'edit')) || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId));
+                        if (allowed) {
+                            await client.query('UPDATE dqai_answers SET answer_value=$1, reviewers_comment=$2, quality_improvement_followup=$3, score=$4, answer_datetime=$5 WHERE id = $6', [storedAnswerValue, reviewersComment, qiFollowup, score, new Date(), rowObj.id]);
+                        }
+                        existingUsed[key] = true;
+                    } else {
+                        const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
+                        if (allowedCreate) {
+                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score]);
+                        }
+                    }
+                }
+            } catch (ie) { console.error('Failed to process answer during report update for question', qId, ie); }
+        }
+    }
+
+    // delete stale rows if permitted
+    for (const [rk, used] of Object.entries(existingUsed)) {
+        if (used) continue;
+        const rowObj = existingMap[rk];
+        if (!rowObj) continue;
+        const qid = String(rowObj.question_id);
+        const qi = qInfo[qid] || { page: '', section: null };
+        const pageKey = qi.page || '';
+        const sectionKey = qi.section || null;
+        const canDelete = await canCheck(pageKey, sectionKey, 'delete');
+        if (canDelete || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId)) || (currentRole && String(currentRole).toLowerCase() === 'admin')) {
+            try { await client.query('DELETE FROM dqai_answers WHERE id = $1', [rowObj.id]); } catch (de) { console.error('Failed to delete stale answer row', rowObj.id, de); }
+        }
+    }
+}
 import cookieSession from 'cookie-session';
 import dotenv from 'dotenv';
 import fs from 'fs';
@@ -1050,7 +1196,10 @@ async function initDb() {
             report_id INTEGER REFERENCES dqai_activity_reports(id) ON DELETE CASCADE,
             activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
             question_id TEXT,
-            answer_value JSONB,
+            answer_value TEXT,
+            answer_row_index INTEGER,
+            question_group TEXT,
+            answer_group TEXT,
             facility_id INTEGER REFERENCES dqai_facilities(id) ON DELETE SET NULL,
             user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
             recorded_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
@@ -1086,6 +1235,7 @@ async function initDb() {
             description TEXT,
             category TEXT,
             dataset_fields JSONB DEFAULT '[]'::jsonb,
+            show_in_menu BOOLEAN DEFAULT FALSE,
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
@@ -1145,6 +1295,15 @@ async function initDb() {
         await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS reviewers_comment TEXT`);
         await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS quality_improvement_followup TEXT`);
         await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS score NUMERIC`);
+        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS question_group TEXT`);
+        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS answer_group TEXT`);
+        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS answer_row_index INTEGER`);
+        // If existing deployments used JSONB for answer_value, convert to TEXT safely
+        try {
+            await pool.query(`ALTER TABLE dqai_answers ALTER COLUMN answer_value TYPE TEXT USING (answer_value::text)`);
+        } catch (e) {
+            // ignore conversion errors in case column already text or conversion not needed
+        }
         await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS required BOOLEAN`);
         // allow storing a correct answer for question types that support it
         await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS correct_answer TEXT`);
@@ -1154,6 +1313,8 @@ async function initDb() {
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`);
+        // Add show_in_menu flag for datasets so datasets can be shown in sidebar
+        await pool.query(`ALTER TABLE dqai_datasets ADD COLUMN IF NOT EXISTS show_in_menu BOOLEAN DEFAULT FALSE`);
         // Create roles, permissions and settings tables
         await pool.query(`CREATE TABLE IF NOT EXISTS dqai_roles (
             id SERIAL PRIMARY KEY,
@@ -1870,6 +2031,19 @@ app.get('/api/admin/env', requireAdmin, async (req, res) => {
         };
         res.json(env);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to read env' }); }
+});
+
+// Public: expose TinyMCE API key from server .env (if set)
+// This endpoint returns { key: '...' } so frontend can initialize TinyMCE with the configured key.
+// The key comes from process.env.TINY_MCE_API_KEY and is returned as-is. Caller should handle absence.
+app.get('/api/tiny_mce_key', requireAdmin, async (req, res) => {
+    try {
+        const key = process.env.TINY_MCE_API_KEY || null;
+        res.json({ key });
+    } catch (e) {
+        console.error('tiny_mce_key error', e);
+        res.status(500).json({ key: null });
+    }
 });
 
 // Admin: write DB env values to .env file (merges existing values)
@@ -2719,7 +2893,7 @@ app.get('/api/indicators/compute', async (req, res) => {
                     where += ' AND facility_id = $2';
                     params.push(facilityId);
                 }
-                const q = `SELECT question_id, SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE NULL END) ) as sum_value FROM dqai_answers WHERE ${where} GROUP BY question_id`;
+                const q = `SELECT question_id, SUM( (CASE WHEN answer_value ~ '^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)$' THEN (answer_value::numeric) ELSE NULL END) ) as sum_value FROM dqai_answers WHERE ${where} GROUP BY question_id`;
                 console.log(`[indicator/compute] Executing sum_answers for indicator ${indicatorId}, facility ${facilityId}:`, q, 'params=', params);
                 const r = await pool.query(q, params);
                 // aggregate across questions
@@ -2800,7 +2974,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
             if (ftype === 'sum_answers' || qids.length > 0) {
                 try {
                     const params = [qids, facilityIds];
-                    const q = `SELECT facility_id, SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE NULL END) ) as sum_value FROM dqai_answers WHERE question_id = ANY($1::text[]) AND facility_id = ANY($2::int[]) GROUP BY facility_id`;
+                    const q = `SELECT facility_id, SUM( (CASE WHEN answer_value ~ '^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)$' THEN (answer_value::numeric) ELSE NULL END) ) as sum_value FROM dqai_answers WHERE question_id = ANY($1::text[]) AND facility_id = ANY($2::int[]) GROUP BY facility_id`;
                     console.log(`[indicator/compute_bulk] Executing sum_answers for indicator ${iid} across facilities:`, q, 'params=', params);
                     const r = await pool.query(q, params);
                     // map by facility
@@ -2900,12 +3074,14 @@ app.post('/api/admin/datasets', requireAdmin, async (req, res) => {
         try { console.debug('Saving dataset_fields preview (type, len):', typeof normalizedFields, Array.isArray(normalizedFields) ? normalizedFields.length : '-', JSON.stringify(normalizedFields).slice(0, 1000)); } catch (e) { /* ignore */ }
 
         try {
+            // accept show_in_menu flag if provided
+            const showInMenu = (req.body && typeof req.body.show_in_menu !== 'undefined') ? !!req.body.show_in_menu : false;
             if (id) {
-                const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4 WHERE id=$5 RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), id]);
+                const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id]);
                 return res.json(r.rows[0]);
             }
             const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
-            const r = await pool.query('INSERT INTO dqai_datasets (name, description, category, dataset_fields, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), createdBy]);
+            const r = await pool.query('INSERT INTO dqai_datasets (name, description, category, dataset_fields, show_in_menu, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, createdBy]);
             res.json(r.rows[0]);
         } catch (dbErr) {
             console.error('Failed to save dataset, normalizedFields preview:', typeof normalizedFields, JSON.stringify(normalizedFields).slice(0, 1000));
@@ -3383,13 +3559,16 @@ async function syncQuestions(activityId, formDefOrQuestions) {
             const pageName = page.name || page.id || null;
             for (const section of page.sections || []) {
                 const sectionName = section.name || section.id || null;
+                const sectionGroup = section.groupName || null;
                 for (const q of section.questions || []) {
                     const qId = q.id || q.questionId || (`q_${activityId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
                     const questionText = q.questionText || q.text || null;
                     const questionHelper = q.questionHelper || q.helper || null;
                     const answerType = q.answerType || q.type || null;
                     const category = q.category || null;
-                    const questionGroup = q.questionGroup || null;
+                    // Prefer question-level group, otherwise fall back to section.groupName so repeatable
+                    // section settings are applied to each question in that section.
+                    const questionGroup = q.questionGroup || sectionGroup || null;
                     const columnSize = q.columnSize || null;
                     const status = q.status || 'Active';
                     const options = q.options ? JSON.stringify(q.options) : null;
@@ -3652,10 +3831,61 @@ app.post('/api/programs', async (req, res) => {
 });
 
 app.delete('/api/programs/:id', async (req, res) => {
+    const programId = Number(req.params.id);
+    if (!programId) return res.status(400).send('Invalid id');
+    const client = await pool.connect();
     try {
-        await pool.query('DELETE FROM dqai_programs WHERE id = $1', [req.params.id]);
-        res.sendStatus(200);
-    } catch (e) { res.status(500).send(e.message); }
+        await client.query('BEGIN');
+
+        // Find all activities for this program
+        const acts = (await client.query('SELECT id FROM dqai_activities WHERE program_id = $1', [programId])).rows.map(r => r.id);
+
+        if (acts.length > 0) {
+            // Delete uploaded docs attached to those activities
+            await client.query('DELETE FROM dqai_uploaded_docs WHERE activity_id = ANY($1::int[])', [acts]);
+
+            // Find reports for these activities
+            const reports = (await client.query('SELECT id FROM dqai_activity_reports WHERE activity_id = ANY($1::int[])', [acts])).rows.map(r => r.id);
+            if (reports.length > 0) {
+                // Delete uploaded docs tied to reports
+                await client.query('DELETE FROM dqai_uploaded_docs WHERE report_id = ANY($1::int[])', [reports]);
+                // Delete answers for those reports
+                await client.query('DELETE FROM dqai_answers WHERE report_id = ANY($1::int[])', [reports]);
+                // Delete the reports themselves
+                await client.query('DELETE FROM dqai_activity_reports WHERE id = ANY($1::int[])', [reports]);
+            }
+
+            // Delete answers tied to questions belonging to these activities
+            await client.query('DELETE FROM dqai_answers WHERE question_id IN (SELECT id FROM dqai_questions WHERE activity_id = ANY($1::int[]))', [acts]);
+
+            // Delete questions for these activities
+            await client.query('DELETE FROM dqai_questions WHERE activity_id = ANY($1::int[])', [acts]);
+
+            // Delete report templates for these activities
+            await client.query('DELETE FROM dqai_report_templates WHERE activity_id = ANY($1::int[])', [acts]);
+
+            // Delete any indicators associated with these activities
+            await client.query('DELETE FROM dqai_indicators WHERE activity_id = ANY($1::int[])', [acts]);
+
+            // Finally delete the activities
+            await client.query('DELETE FROM dqai_activities WHERE id = ANY($1::int[])', [acts]);
+        }
+
+        // Delete any indicators scoped to the program itself
+        await client.query('DELETE FROM dqai_indicators WHERE program_id = $1', [programId]);
+
+        // Delete the program record
+        await client.query('DELETE FROM dqai_programs WHERE id = $1', [programId]);
+
+        await client.query('COMMIT');
+        res.json({ ok: true });
+    } catch (e) {
+        try { await client.query('ROLLBACK'); } catch (er) { console.error('Rollback failed', er); }
+        console.error('Failed to delete program cascade', e && e.message ? e.message : e);
+        res.status(500).json({ error: 'Failed to delete program' });
+    } finally {
+        client.release();
+    }
 });
 
 // Activities
@@ -3735,11 +3965,19 @@ app.post('/api/activities', async (req, res) => {
 });
 
 app.put('/api/activities/:id/form', async (req, res) => {
-    const { questions } = req.body;
+    const { questions, formDefinition } = req.body || {};
     try {
-        // No form_definition column to update; sync the provided questions into questions table
+        // If a full formDefinition is provided, persist it (so section-level settings like
+        // isRepeatable and groupName are stored) and sync questions from that structure.
+        if (formDefinition) {
+            await syncQuestions(req.params.id, formDefinition);
+            await pool.query('UPDATE dqai_activities SET form_definition = $1 WHERE id = $2', [formDefinition, req.params.id]);
+            const updated = (await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [req.params.id])).rows[0];
+            return res.json({ ...updated, formDefinition: updated.form_definition });
+        }
+
+        // Backwards-compatible: if only questions array provided, sync and build compact formDefinition
         await syncQuestions(req.params.id, questions || []);
-        // Build a compact form_definition grouping by page_name and section_name
         const pagesMap = {};
         for (const q of (questions || [])) {
             const page = q.pageName || q.page_name || q.page || 'Page 1';
@@ -3750,8 +3988,8 @@ app.put('/api/activities/:id/form', async (req, res) => {
             pagesMap[page][section].push({
                 id: q.id,
                 questionText: q.questionText || q.question_text || q.text || null,
-                questionHelper: q.questionHelper || q.question_helper || null,
-                answerType: q.answerType || q.answer_type || null,
+                questionHelper: q.questionHelper || q.question_helper || q.helper || null,
+                answerType: q.answerType || q.answer_type || q.type || null,
                 columnSize: q.columnSize || q.column_size || null,
                 required: q.required || false,
                 status: q.status || 'Active',
@@ -3765,8 +4003,8 @@ app.put('/api/activities/:id/form', async (req, res) => {
             name: pName,
             sections: Object.entries(sectionsObj).map(([sName, qs], sidx) => ({ id: `sec${sidx + 1}`, name: sName, questions: qs }))
         }));
-        const formDefinition = { id: `fd-${req.params.id}`, activityId: Number(req.params.id), pages };
-        await pool.query('UPDATE dqai_activities SET form_definition = $1 WHERE id = $2', [formDefinition, req.params.id]);
+        const compactFormDefinition = { id: `fd-${req.params.id}`, activityId: Number(req.params.id), pages };
+        await pool.query('UPDATE dqai_activities SET form_definition = $1 WHERE id = $2', [compactFormDefinition, req.params.id]);
         const updated = (await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [req.params.id])).rows[0];
         res.json({ ...updated, formDefinition: updated.form_definition });
     } catch (e) { res.status(500).send(e.message); }
@@ -4796,6 +5034,20 @@ app.put('/api/reports/:id', async (req, res) => {
                 return res.status(500).send('Failed to update report');
             }
         }
+        
+        // Replace answers if provided (update via helper)
+        if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
+            try {
+                await upsertReportAnswers(client, reportId, payload, existing.rows[0], req);
+            } catch (e) {
+                console.error('Failed to update/replace answers during report update', e);
+                await client.query('ROLLBACK');
+                return res.status(500).send('Failed to update answers');
+            }
+        }
+
+        // Legacy answers block disabled; kept for reference
+        if (false) {
 
         // Replace answers if provided (delete existing and re-insert)
         if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
@@ -4805,17 +5057,40 @@ app.put('/api/reports/:id', async (req, res) => {
                 if (answers && typeof answers === 'object') {
                     for (const [qId, val] of Object.entries(answers)) {
                         try {
-                            let answerVal = val;
-                            let reviewersComment = null;
-                            let qiFollowup = null;
-                            let score = null;
-                            if (val && typeof val === 'object' && !(val instanceof Array)) {
-                                if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
-                                reviewersComment = val.reviewersComment || val.reviewers_comment || null;
-                                qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
-                                score = (typeof val.score !== 'undefined') ? val.score : null;
+                            // If value is an array, treat as a repeatable group: each element is a row object
+                            if (Array.isArray(val)) {
+                                for (let ri = 0; ri < val.length; ri++) {
+                                    const row = val[ri] || {};
+                                    if (!row || typeof row !== 'object') continue;
+                                    for (const [subQId, subVal] of Object.entries(row)) {
+                                        try {
+                                            let answerVal = subVal;
+                                            let reviewersComment = null; let qiFollowup = null; let score = null;
+                                            if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                                if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                                reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                                qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                                score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                            }
+                                            const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                            const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                        } catch (ie) { console.error('Failed to insert repeated answer during report update for question', subQId, ie); }
+                                    }
+                                }
+                            } else {
+                                let answerVal = val;
+                                let reviewersComment = null; let qiFollowup = null; let score = null;
+                                if (val && typeof val === 'object' && !(val instanceof Array)) {
+                                    if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                                    reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                                    qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                                    score = (typeof val.score !== 'undefined') ? val.score : null;
+                                }
+                                // non-repeated answers: store null group values
+                                const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                             }
-                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, JSON.stringify(answerVal), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                         } catch (ie) { console.error('Failed to insert answer during report update for question', qId, ie); }
                     }
                 }
@@ -4824,6 +5099,8 @@ app.put('/api/reports/:id', async (req, res) => {
                 await client.query('ROLLBACK');
                 return res.status(500).send('Failed to update answers');
             }
+        }
+
         }
 
         // Replace uploaded files if provided
@@ -5528,8 +5805,10 @@ app.post('/api/reports', async (req, res) => {
                                                     qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
                                                     score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
                                                 }
-                                                const stored = { value: answerVal, _repeat: { groupName: qId, rowIndex: ri } };
-                                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, JSON.stringify(stored), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                                // store only the primitive value in answer_value (TEXT), keep grouping metadata in separate columns
+                                                const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                                const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                             } catch (ie) { console.error('Failed to insert repeated answer during report POST-as-update for question', subQId, ie); }
                                         }
                                     }
@@ -5541,7 +5820,8 @@ app.post('/api/reports', async (req, res) => {
                                         qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
                                         score = (typeof val.score !== 'undefined') ? val.score : null;
                                     }
-                                    await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, JSON.stringify(answerVal), payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                    const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                    await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                 }
                             } catch (ie) { console.error('Failed to insert answer during report POST-as-update for question', qId, ie); }
                         }
@@ -5632,8 +5912,9 @@ app.post('/api/reports', async (req, res) => {
                                             qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
                                             score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
                                         }
-                                        const stored = { value: answerVal, _repeat: { groupName: qId, rowIndex: ri } };
-                                        await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [report.id, activityId, subQId, JSON.stringify(stored), facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
+                                            const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                            const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
                                     } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
                                 }
                             }
@@ -5649,7 +5930,8 @@ app.post('/api/reports', async (req, res) => {
                                 qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
                                 score = (typeof val.score !== 'undefined') ? val.score : null;
                             }
-                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [report.id, activityId, qId, JSON.stringify(answerVal), facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
+                            const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
                         }
                     } catch (e) {
                         console.error('Failed to insert answer for question', qId, e);

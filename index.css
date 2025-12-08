@@ -62,6 +62,7 @@
   .tox * {
     direction: ltr !important;
     unicode-bidi: embed !important;
+    padding: 3px !important;
   }
 
   .btn-primary,
