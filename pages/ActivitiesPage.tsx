@@ -22,8 +22,8 @@ const ActivitiesPage: React.FC = () => {
   const [shareUrl, setShareUrl] = useState<string>('');
   const [openActionsId, setOpenActionsId] = useState<number | null>(null);
 
-  const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Form Builder';
-  const canCollect = currentUser?.role === 'Admin' || currentUser?.role === 'Data Collector';
+  const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'Form Builder';
+  const canCollect = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'Data Collector';
 
   const getProgramName = (programId: string) => {
     return programs.find(p => p.id === programId)?.name || 'N/A';

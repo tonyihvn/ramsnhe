@@ -57,6 +57,10 @@ const ReportBuilderPage: React.FC = () => {
   const [disableRichText, setDisableRichText] = useState<boolean>(() => { try { return localStorage.getItem('reportBuilderDisableRichText') === '1'; } catch (e) { return false; } });
   const [isCropperOpen, setIsCropperOpen] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string>('');
+  const [computedValues, setComputedValues] = useState<Array<{ id: string; label: string; formula: string }>>([]);
+  const [showComputedValueModal, setShowComputedValueModal] = useState(false);
+  const [computedValueLabel, setComputedValueLabel] = useState('');
+  const [computedValueFormula, setComputedValueFormula] = useState('');
   // (Placeholders removed) Questions are dragged directly into the canvas as editable spans with `data-qid`.
 
   useEffect(() => {
@@ -129,6 +133,7 @@ const ReportBuilderPage: React.FC = () => {
         if (!activityId) {
           setActivityData(null);
           setQuestionsList([]);
+          setAnswersList([]);
           setUploadedDocs([]);
           return;
         }
@@ -141,6 +146,18 @@ const ReportBuilderPage: React.FC = () => {
             const jq = await qres.json(); setQuestionsList(Array.isArray(jq) ? jq : []);
           } else setQuestionsList([]);
         } catch (err) { setQuestionsList([]); }
+
+        try {
+          const ares = await apiFetch(`/api/answers?activityId=${activityId}`);
+          if (ares.ok) {
+            const ja = await ares.json(); 
+            console.log('Loaded answers for activity:', activityId, ja);
+            setAnswersList(Array.isArray(ja) ? ja : []);
+          } else {
+            console.warn('Failed to load answers, status:', ares.status);
+            setAnswersList([]);
+          }
+        } catch (err) { console.warn('Failed to load answers:', err); setAnswersList([]); }
 
         try {
           const dres = await apiFetch(`/api/uploaded_docs?activityId=${activityId}`);
@@ -225,6 +242,177 @@ const ReportBuilderPage: React.FC = () => {
       html += '</tbody></table></div>';
       return html;
     } catch (e) { return '<div>Failed to render table</div>'; }
+  };
+
+  const buildGroupedQuestionHtml = (questionId: string, questionGroup: string) => {
+    try {
+      // Find all answers for this question that belong to the group
+      const relatedAnswers = answersList.filter(a => String(a.question_id) === String(questionId) && a.answer_group === questionGroup);
+      if (relatedAnswers.length === 0) {
+        return `<div style="border:1px solid #ddd; padding:8px; background:#f9f9f9;">No answers found for this question in group "${questionGroup}"</div>`;
+      }
+
+      // Build a table showing all answers as rows
+      let html = `<div class="tpl-grouped-question-table" data-question-id="${questionId}" data-question-group="${questionGroup}">`;
+      html += `<table style="border-collapse: collapse; width:100%; border:1px solid #ddd;">`;
+      html += `<thead><tr><th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">Answer</th></tr></thead>`;
+      html += `<tbody>`;
+      for (const ans of relatedAnswers) {
+        const ansValue = (typeof ans.answer_value === 'object') ? JSON.stringify(ans.answer_value) : String(ans.answer_value || '');
+        html += `<tr><td style="border:1px solid #ddd;padding:6px">${ansValue}</td></tr>`;
+      }
+      html += `</tbody></table></div>`;
+      return html;
+    } catch (e) { return `<div>Failed to render grouped question answers</div>`; }
+  };
+
+  const buildAnswerGroupHtml = (answerGroup: string, hiddenColumns?: Set<string>) => {
+    try {
+      // Find all questions that belong to this question_group
+      const questionsInGroup = questionsList.filter(q => (q.question_group || q.questionGroup) === answerGroup);
+      if (questionsInGroup.length === 0) {
+        return `<div style="border:2px solid #ddd; padding:12px; background:#f9f9f9; border-radius:4px;">No questions found for group "${answerGroup}"</div>`;
+      }
+
+      // Filter out hidden columns
+      const visibleQuestions = hiddenColumns ? questionsInGroup.filter(q => !hiddenColumns.has(String(q.id || q.qid))) : questionsInGroup;
+      if (visibleQuestions.length === 0) {
+        return `<div style="border:2px solid #ddd; padding:12px; background:#f9f9f9; border-radius:4px;">All columns hidden for group "${answerGroup}"</div>`;
+      }
+
+      // Find all answers for questions in this group
+      const groupAnswers = (answersList || []).filter(a => {
+        const qid = String(a.question_id || a.qid || '');
+        return questionsInGroup.some(q => String(q.id || q.qid) === qid);
+      });
+
+      if (groupAnswers.length === 0) {
+        // Still show headers even if no data
+        let html = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-qgroup-data"><thead><tr style="background:#c8e6c9;">`;
+        for (const q of visibleQuestions) {
+          const qid = String(q.id || q.qid);
+          const qLabel = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Q${q.id}`);
+          html += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;" data-col-qid="${qid}">${qLabel}</th>`;
+        }
+        html += `</tr></thead><tbody><tr>`;
+        for (const q of visibleQuestions) {
+          html += `<td style="border:1px solid #ddd;padding:8px;color:#999;font-style:italic;">[No data]</td>`;
+        }
+        html += `</tr></tbody></table>`;
+        return html;
+      }
+
+      // Group answers by answer_row_index
+      const answersByRowIndex: Record<string, Record<string, any>> = {};
+      for (const ans of groupAnswers) {
+        const qid = String(ans.question_id || ans.qid || '');
+        // answer_row_index is a top-level column
+        const rowIdx = ans.answer_row_index !== null && ans.answer_row_index !== undefined ? String(ans.answer_row_index) : 'null';
+        
+        if (!answersByRowIndex[rowIdx]) {
+          answersByRowIndex[rowIdx] = {};
+        }
+        answersByRowIndex[rowIdx][qid] = ans;
+      }
+
+      // Get sorted row indices
+      const rowIndices = Object.keys(answersByRowIndex).sort((a, b) => {
+        if (a === 'null') return 1;
+        if (b === 'null') return -1;
+        return Number(a) - Number(b);
+      });
+
+      // Build HTML table with questions as columns and rows as answer_row_index
+      let html = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-question-group-table"><thead><tr style="background:#c8e6c9;">`;
+      
+      // Add header row with question field names
+      for (const q of visibleQuestions) {
+        const qid = String(q.id || q.qid);
+        const qLabel = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Q${q.id}`);
+        html += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;" data-col-qid="${qid}">${qLabel}</th>`;
+      }
+      html += `</tr></thead><tbody>`;
+      
+      // Add data rows based on answer_row_index
+      for (const rowIdx of rowIndices) {
+        const rowAnswers = answersByRowIndex[rowIdx];
+        html += `<tr>`;
+        for (const q of visibleQuestions) {
+          const qid = String(q.id || q.qid);
+          const ans = rowAnswers[qid];
+          let displayValue = '-';
+          if (ans) {
+            try {
+              // answer_value is TEXT, parse it if it's JSON string
+              let ansObj = ans.answer_value;
+              if (typeof ansObj === 'string') {
+                try {
+                  ansObj = JSON.parse(ansObj);
+                } catch (e) {
+                  // If it's not valid JSON, just use the string directly
+                  displayValue = ansObj;
+                  ansObj = null;
+                }
+              }
+              if (ansObj) {
+                // Try to get actual answer value from standard fields
+                displayValue = ansObj.answer || ansObj.value || ansObj.text || JSON.stringify(ansObj);
+              }
+            } catch (e) {
+              displayValue = String(ans.answer_value || '-');
+            }
+          }
+          html += `<td style="border:1px solid #ddd;padding:8px;" data-col-qid="${qid}">${displayValue}</td>`;
+        }
+        html += `</tr>`;
+      }
+
+      html += `</tbody></table>`;
+      return html;
+    } catch (e) { 
+      console.error('Error in buildAnswerGroupHtml:', e);
+      return `<div style="padding:12px; color:red;">Failed to render question group table</div>`; 
+    }
+  };
+
+  // Evaluate computed value formula by replacing question placeholders with their answers
+  const evaluateComputedValue = (formula: string): string => {
+    try {
+      let result = formula;
+      // Replace {Question Label} or {question_id} with actual values
+      const questionPattern = /\{([^}]+)\}/g;
+      result = result.replace(questionPattern, (match, questionRef) => {
+        // Try to find question by label first
+        const question = questionsList.find(q => 
+          (q.fieldName || q.field_name) === questionRef || 
+          (q.questionText || q.question_text) === questionRef ||
+          String(q.id) === questionRef ||
+          String(q.qid) === questionRef
+        );
+        
+        if (!question) return '0'; // Return 0 if question not found
+        
+        const qid = String(question.id);
+        const answer = answersList.find(a => String(a.question_id || a.qid) === qid);
+        const value = answer?.answer_value;
+        
+        // Return numeric value or 0
+        const numValue = typeof value === 'number' ? value : (value ? parseFloat(String(value)) : 0);
+        return isNaN(numValue) ? '0' : String(numValue);
+      });
+      
+      // Evaluate the mathematical expression safely
+      // Remove any non-math characters
+      result = result.replace(/[^0-9+\-*/.()]/g, '');
+      
+      // Use Function constructor to safely evaluate (alternative to eval)
+      const func = new Function('return ' + result);
+      const computed = func();
+      
+      return isNaN(computed) ? 'Error' : (typeof computed === 'number' ? computed.toString() : String(computed));
+    } catch (e) {
+      return 'Error in formula';
+    }
   };
 
   const loadActivities = async () => {
@@ -441,6 +629,30 @@ const ReportBuilderPage: React.FC = () => {
                                   html += '</tbody></table></div>';
                                   return html;
                                 } catch (e) { return `<div>Failed to render uploaded table ${id}</div>`; }
+                              });
+
+                              // Handle grouped questions (questions with data-group attribute)
+                              out = out.replace(/<span[^>]*data-qid=["']?(\w+)["']?[^>]*data-group=["']?([^"']+)["']?[^>]*>([\s\S]*?)<\/span>/gi, (m, qid, group) => {
+                                try {
+                                  return buildGroupedQuestionHtml(String(qid), String(group));
+                                } catch (e) { return `<div>Failed to render grouped question ${qid}</div>`; }
+                              });
+
+                              // Handle question groups
+                              out = out.replace(/<div[^>]*data-question-group=["']?([^"']+)["']?[^>]*>[\s\S]*?<\/div>/gi, (m, group) => {
+                                try {
+                                  return buildAnswerGroupHtml(String(group));
+                                } catch (e) { return `<div>Failed to render question group ${group}</div>`; }
+                              });
+
+                              // Handle computed values
+                              out = out.replace(/<div[^>]*data-computed-id=["']?([^"']+)["']?[^>]*>[\s\S]*?<\/div>/gi, (m, cvId) => {
+                                try {
+                                  const cv = computedValues.find(c => c.id === String(cvId));
+                                  if (!cv) return `<div>Computed value not found</div>`;
+                                  const result = evaluateComputedValue(cv.formula);
+                                  return `<div class="computed-value-result" style="display:inline-block; padding:4px 8px; border:1px solid #FF9800; border-radius:3px; background:#fff3e0;"><strong>${escapeHtml(cv.label)}:</strong> <strong>${escapeHtml(result)}</strong></div>`;
+                                } catch (e) { return `<div>Failed to render computed value</div>`; }
                               });
 
                               return out;
@@ -909,22 +1121,178 @@ const ReportBuilderPage: React.FC = () => {
                 {questionsList.length === 0 && <div className="text-xs text-gray-400">No questions for selected activity.</div>}
                 {questionsList.map((q: any) => {
                   const qid = String(q.id);
+                  const hasQuestionGroup = q.question_group || q.questionGroup;
                   return (
                     <div key={qid} className="p-2 border rounded bg-gray-50 hover:bg-gray-100 text-xs flex items-center justify-between">
                       <div draggable onDragStart={e => {
                         const label = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Question ${qid}`);
-                        // Provide an editable span as HTML so users can edit the label text on the canvas
-                        const html = `<span class="tpl-question" contenteditable="true" data-qid="${qid}" data-gramm="false">${label}</span>`;
-                        try { e.dataTransfer.setData('application/json', JSON.stringify({ type: 'question', id: qid, label })); } catch (err) { /* ignore */ }
+                        
+                        // If question has a question_group, add marker for group handling
+                        let html = `<span class="tpl-question" contenteditable="true" data-qid="${qid}" data-gramm="false"${hasQuestionGroup ? ` data-group="${hasQuestionGroup}"` : ''}>${label}</span>`;
+                        let jsonData: any = { type: 'question', id: qid, label };
+                        
+                        if (hasQuestionGroup) {
+                          jsonData.question_group = hasQuestionGroup;
+                          html = html.replace('<span class="tpl-question"', `<span class="tpl-question tpl-question-group"`);
+                        }
+                        
+                        try { e.dataTransfer.setData('application/json', JSON.stringify(jsonData)); } catch (err) { /* ignore */ }
                         e.dataTransfer.setData('text/plain', `{{question_${qid}}}`);
                         e.dataTransfer.setData('text/html', html);
                       }} className="cursor-move flex items-center gap-2">
                         <div className="font-medium truncate">{(q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Question ${qid}`)}</div>
+                        {hasQuestionGroup && <span className="text-xs bg-blue-100 text-blue-700 px-1 rounded">group</span>}
                       </div>
                       <div className="text-gray-400">{q.answer_type || q.answerType || ''}</div>
                     </div>
                   );
                 })}
+              </div>
+            </details>
+
+            <details className="mt-2 mb-2">
+              <summary className="cursor-pointer font-medium text-sm">Question Groups</summary>
+              <div className="mt-2 max-h-40 overflow-auto space-y-2 mb-2">
+                {(() => {
+                  // Extract unique question_groups from questions
+                  const uniqueGroups = new Set<string>();
+                  for (const q of questionsList || []) {
+                    const group = q.question_group || q.questionGroup;
+                    if (group) uniqueGroups.add(String(group));
+                  }
+                  const groupsArray = Array.from(uniqueGroups).sort();
+                  
+                  if (groupsArray.length === 0) {
+                    return <div className="text-xs text-gray-400">No question groups for selected activity.</div>;
+                  }
+
+                  return groupsArray.map((group: string) => {
+                    const questionsInGroup = questionsList.filter(q => (q.question_group || q.questionGroup) === group);
+                    return (
+                      <div key={group} draggable onDragStart={e => {
+                        // Generate table with actual data from answersList
+                        const groupAnswers = (answersList || []).filter(a => {
+                          const qid = String(a.question_id || a.qid || '');
+                          return questionsInGroup.some(q => String(q.id || q.qid) === qid);
+                        });
+
+                        let tableHtml = '';
+                        if (groupAnswers.length > 0 && questionsInGroup.length > 0) {
+                          // Group answers by answer_row_index (top-level column)
+                          const answersByRowIndex: Record<string, Record<string, any>> = {};
+                          for (const ans of groupAnswers) {
+                            const qid = String(ans.question_id || ans.qid || '');
+                            // answer_row_index is a top-level column
+                            const rowIdx = ans.answer_row_index !== null && ans.answer_row_index !== undefined ? String(ans.answer_row_index) : 'null';
+                            if (!answersByRowIndex[rowIdx]) answersByRowIndex[rowIdx] = {};
+                            answersByRowIndex[rowIdx][qid] = ans;
+                          }
+
+                          const rowIndices = Object.keys(answersByRowIndex).sort((a, b) => {
+                            if (a === 'null') return 1;
+                            if (b === 'null') return -1;
+                            return Number(a) - Number(b);
+                          });
+
+                          tableHtml = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-qgroup-data"><thead><tr style="background:#c8e6c9;">`;
+                          for (const q of questionsInGroup) {
+                            const qid = String(q.id || q.qid);
+                            const qLabel = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Q${q.id}`);
+                            tableHtml += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;cursor:pointer;" data-col-qid="${qid}" contenteditable="true" title="Click to edit header">${qLabel}</th>`;
+                          }
+                          tableHtml += `</tr></thead><tbody>`;
+                          for (const rowIdx of rowIndices) {
+                            const rowAnswers = answersByRowIndex[rowIdx];
+                            tableHtml += `<tr>`;
+                            for (const q of questionsInGroup) {
+                              const qid = String(q.id || q.qid);
+                              const ans = rowAnswers[qid];
+                              let displayValue = '-';
+                              if (ans) {
+                                try {
+                                  // answer_value is TEXT, parse it if it's JSON string
+                                  let ansObj = ans.answer_value;
+                                  if (typeof ansObj === 'string') {
+                                    try {
+                                      ansObj = JSON.parse(ansObj);
+                                    } catch (e) {
+                                      // If it's not valid JSON, just use the string directly
+                                      displayValue = ansObj;
+                                      ansObj = null;
+                                    }
+                                  }
+                                  if (ansObj) {
+                                    // Try to get actual answer value from standard fields
+                                    displayValue = ansObj.answer || ansObj.value || ansObj.text || JSON.stringify(ansObj);
+                                  }
+                                } catch (e) {
+                                  displayValue = String(ans.answer_value || '-');
+                                }
+                              }
+                              tableHtml += `<td style="border:1px solid #ddd;padding:8px;" data-col-qid="${qid}">${displayValue}</td>`;
+                            }
+                            tableHtml += `</tr>`;
+                          }
+                          tableHtml += `</tbody></table>`;
+                        } else if (questionsInGroup.length > 0) {
+                          // Show headers even if no data yet, so user can preview structure
+                          tableHtml = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-qgroup-data"><thead><tr style="background:#c8e6c9;">`;
+                          for (const q of questionsInGroup) {
+                            const qid = String(q.id || q.qid);
+                            const qLabel = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Q${q.id}`);
+                            tableHtml += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;cursor:pointer;" data-col-qid="${qid}" contenteditable="true" title="Click to edit header">${qLabel}</th>`;
+                          }
+                          tableHtml += `</tr></thead><tbody><tr>`;
+                          for (const q of questionsInGroup) {
+                            tableHtml += `<td style="border:1px solid #ddd;padding:8px;color:#999;font-style:italic;">[No data]</td>`;
+                          }
+                          tableHtml += `</tr></tbody></table>`;
+                        } else {
+                          tableHtml = `<div style="padding:12px;color:#999;font-size:12px;text-align:center;border:2px dashed #ccc;margin-top:8px;">[Group has no questions]</div>`;
+                        }
+
+                        // Wrap as a positioned block so it can be moved/resized
+                        const html = `<div class="tpl-question-group" contenteditable="false" data-question-group="${group}" data-gramm="false" style="position:relative; width:100%; border:2px solid #4CAF50; padding:12px; margin:10px 0; background:#f9f9f9; cursor:move; min-height:200px; overflow:auto;"><p style="margin:0 0 4px 0; font-weight:bold; color:#2e7d32; user-select:none;">${group}</p><p style="margin:0 0 8px 0; font-size:11px; color:#999; user-select:none;">Drag to move • Edit headers • Resize container</p>${tableHtml}</div>`;
+                        try { e.dataTransfer.setData('application/json', JSON.stringify({ type: 'question_group', group, questionCount: questionsInGroup.length })); } catch (err) { /* ignore */ }
+                        e.dataTransfer.setData('text/plain', `Question Group: ${group}`);
+                        e.dataTransfer.setData('text/html', html);
+                      }} className="p-2 border rounded bg-green-50 hover:bg-green-100 cursor-move text-xs flex items-center justify-between">
+                        <div className="font-medium truncate">{group}</div>
+                        <div className="text-gray-400">{questionsInGroup.length} cols</div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </details>
+
+            <details className="mt-2 mb-2">
+              <summary className="cursor-pointer font-medium text-sm">Computed Values</summary>
+              <div className="mt-2 space-y-2 mb-2">
+                {computedValues.length === 0 ? (
+                  <div className="text-xs text-gray-400">No computed values yet. Add one below.</div>
+                ) : (
+                  computedValues.map((cv: any) => (
+                    <div key={cv.id} draggable onDragStart={e => {
+                      const result = evaluateComputedValue(cv.formula);
+                      const html = `<div class="tpl-computed-value" contenteditable="false" data-computed-id="${cv.id}" data-gramm="false" style="border:2px dashed #FF9800; padding:8px; margin:8px 0; background:#fff3e0; border-radius:4px;"><strong style="color:#E65100;">${cv.label}:</strong> <span style="font-weight:bold; font-size:14px;">${result}</span><br/><span style="font-size:10px; color:#666;">Formula: ${cv.formula}</span></div>`;
+                      e.dataTransfer.setData('text/html', html);
+                      e.dataTransfer.setData('text/plain', result);
+                    }} className="p-2 border rounded bg-orange-50 hover:bg-orange-100 cursor-move text-xs flex items-center justify-between group">
+                      <div className="flex-1 truncate">
+                        <div className="font-medium truncate">{cv.label}</div>
+                        <div className="text-gray-600 text-10px truncate">{cv.formula}</div>
+                      </div>
+                      <button onClick={(e) => {
+                        e.stopPropagation();
+                        setComputedValues(cv => cv.filter(c => c.id !== cv.id));
+                      }} className="ml-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100">✕</button>
+                    </div>
+                  ))
+                )}
+                <button onClick={() => setShowComputedValueModal(true)} className="w-full mt-2 px-2 py-1 text-xs border rounded bg-blue-50 hover:bg-blue-100 text-blue-700">
+                  + Add Computed Value
+                </button>
               </div>
             </details>
 
@@ -1305,6 +1673,38 @@ const ReportBuilderPage: React.FC = () => {
       >
         {/* ...inspector contents (includes WysiwygEditor/Rich text editors) */}
       </aside>
+
+      {/* Computed Value Modal */}
+      <Modal isOpen={showComputedValueModal} onClose={() => { setShowComputedValueModal(false); setComputedValueLabel(''); setComputedValueFormula(''); }} title="Add Computed Value" size="md">
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">Label (e.g., "Total Score")</label>
+            <input type="text" className="w-full border rounded p-2 text-sm" value={computedValueLabel} onChange={e => setComputedValueLabel(e.target.value)} placeholder="Enter label for this computed value" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Formula</label>
+            <textarea className="w-full border rounded p-2 text-sm font-mono" rows={4} value={computedValueFormula} onChange={e => setComputedValueFormula(e.target.value)} placeholder="Example: ({How many points?}*2)+({Bonus Points?}) or ({Q1}*2)/3" />
+            <div className="text-xs text-gray-600 mt-1">Use question labels or IDs in curly braces, e.g., {'{How many points?}'} or {'{1}'}</div>
+          </div>
+          <div className="bg-blue-50 p-2 rounded text-xs">
+            <strong>Preview:</strong> <code>{evaluateComputedValue(computedValueFormula)}</code>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="secondary" onClick={() => { setShowComputedValueModal(false); setComputedValueLabel(''); setComputedValueFormula(''); }}>Cancel</Button>
+            <Button size="sm" onClick={() => {
+              if (computedValueLabel.trim() && computedValueFormula.trim()) {
+                setComputedValues([...computedValues, { id: Date.now().toString(), label: computedValueLabel, formula: computedValueFormula }]);
+                setComputedValueLabel('');
+                setComputedValueFormula('');
+                setShowComputedValueModal(false);
+                setToasts(t => [...t, { id: Date.now(), text: `Added computed value: ${computedValueLabel}` }]);
+              } else {
+                setToasts(t => [...t, { id: Date.now(), text: 'Please fill in both label and formula' }]);
+              }
+            }}>Add Computed Value</Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Image Cropper Modal */}
       <Modal isOpen={isCropperOpen} onClose={() => setIsCropperOpen(false)} title="Crop Image" size="2xl">

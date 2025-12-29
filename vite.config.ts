@@ -18,10 +18,12 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
+          rewrite: (path) => path,
         },
         '/auth': {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
+          rewrite: (path) => path,
         }
       }
     }

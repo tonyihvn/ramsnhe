@@ -89,41 +89,6 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                     }
                 }
 
-                // Fetch Programs
-                const progRes = await fetch(`${API_URL}/programs`, { credentials: 'include' });
-                if (progRes.ok) {
-                    const j = await safeJson(progRes);
-                    if (j) setPrograms(j);
-                }
-
-                // Fetch Activities
-                const actRes = await fetch(`${API_URL}/activities`, { credentials: 'include' });
-                if (actRes.ok) {
-                    const j = await safeJson(actRes);
-                    if (j) setActivities(j);
-                }
-
-                // Fetch Facilities
-                const facRes = await fetch(`${API_URL}/facilities`, { credentials: 'include' });
-                if (facRes.ok) {
-                    const j = await safeJson(facRes);
-                    if (j) setFacilities(j);
-                }
-
-                // Fetch Users
-                const usersRes = await fetch(`${API_URL}/users`, { credentials: 'include' });
-                if (usersRes.ok) {
-                    const j = await safeJson(usersRes);
-                    if (j) setUsers(j);
-                }
-
-                // Fetch Reports
-                const reportsRes = await fetch(`${API_URL}/reports`, { credentials: 'include' });
-                if (reportsRes.ok) {
-                    const j = await safeJson(reportsRes);
-                    if (j) setReports(j);
-                }
-
             } catch (error) {
                 console.error("Backend unreachable. All data must come from PostgreSQL.", error);
                 // Clear state to avoid displaying stale mock data
@@ -138,6 +103,91 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
         };
         fetchData();
     }, []);
+
+    // Fetch business-scoped data when currentUser changes
+    useEffect(() => {
+        const fetchBusinessData = async () => {
+            if (!currentUser) {
+                setPrograms([]);
+                setActivities([]);
+                setFacilities([]);
+                setUsers([]);
+                setReports([]);
+                return;
+            }
+
+            try {
+                async function safeJson(res: Response) {
+                    try {
+                        const txt = await res.text();
+                        if (!txt) return null;
+                        return JSON.parse(txt);
+                    } catch (e) {
+                        console.warn('Failed to parse JSON response', e);
+                        return null;
+                    }
+                }
+
+                // Add cache-busting parameter to force fresh data from server
+                const cacheBust = `?t=${Date.now()}`;
+
+                // Fetch Programs - backend filters by req.session.businessId
+                const progRes = await fetch(`${API_URL}/programs${cacheBust}`, { credentials: 'include' });
+                if (progRes.ok) {
+                    const j = await safeJson(progRes);
+                    if (j) setPrograms(j);
+                } else {
+                    setPrograms([]);
+                }
+
+                // Fetch Activities - backend filters by req.session.businessId
+                const actRes = await fetch(`${API_URL}/activities${cacheBust}`, { credentials: 'include' });
+                if (actRes.ok) {
+                    const j = await safeJson(actRes);
+                    if (j) setActivities(j);
+                } else {
+                    setActivities([]);
+                }
+
+                // Fetch Facilities - backend filters by req.session.businessId
+                const facRes = await fetch(`${API_URL}/facilities${cacheBust}`, { credentials: 'include' });
+                if (facRes.ok) {
+                    const j = await safeJson(facRes);
+                    if (j) setFacilities(j);
+                } else {
+                    setFacilities([]);
+                }
+
+                // Fetch Users - backend filters by req.session.businessId
+                const usersRes = await fetch(`${API_URL}/users${cacheBust}`, { credentials: 'include' });
+                if (usersRes.ok) {
+                    const j = await safeJson(usersRes);
+                    if (j) setUsers(j);
+                } else {
+                    setUsers([]);
+                }
+
+                // Fetch Reports - backend filters by req.session.businessId
+                const reportsRes = await fetch(`${API_URL}/reports${cacheBust}`, { credentials: 'include' });
+                if (reportsRes.ok) {
+                    const j = await safeJson(reportsRes);
+                    if (j) setReports(j);
+                } else {
+                    setReports([]);
+                }
+
+            } catch (error) {
+                console.error("Failed to fetch business-scoped data.", error);
+                // Clear state on error to avoid stale data
+                setPrograms([]);
+                setActivities([]);
+                setFacilities([]);
+                setUsers([]);
+                setReports([]);
+            }
+        };
+        fetchBusinessData();
+    }, [currentUser?.id]);
 
     const login = async (email: string, password: string) => {
         try {
@@ -173,11 +223,17 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     // Generic CRUD Helpers
     const handleSave = async (url: string, data: any, setter: React.Dispatch<React.SetStateAction<any[]>>, idField = 'id') => {
         try {
+            // Automatically include business_id from currentUser if not already present
+            const dataToSave = {
+                ...data,
+                business_id: data.business_id || currentUser?.business_id
+            };
+            
             const res = await fetch(url, {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify(dataToSave)
             });
             if (res.ok) {
                 const saved = await res.json();
@@ -227,11 +283,17 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
         // Call backend to create/update user
         (async () => {
             try {
+                // Automatically include business_id from currentUser if not already present
+                const userToSave = {
+                    ...user,
+                    business_id: user.business_id || currentUser?.business_id
+                };
+                
                 const res = await fetch(`${API_URL}/users`, {
                     method: 'POST',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(user)
+                    body: JSON.stringify(userToSave)
                 });
                 if (res.ok) {
                     const saved = await res.json();
@@ -270,8 +332,9 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ questions: questionsArray, formDefinition: formDef })
                 });
-            // Refresh activities list
-            const actRes = await fetch(`${API_URL}/activities`, { credentials: 'include' });
+            // Refresh activities list with business_id filter
+            const businessIdParam = currentUser?.business_id ? `?business_id=${encodeURIComponent(currentUser.business_id)}` : '';
+            const actRes = await fetch(`${API_URL}/activities${businessIdParam}`, { credentials: 'include' });
             if (actRes.ok) setActivities(await actRes.json());
         } catch (e) { console.error(e); }
     };
@@ -283,6 +346,12 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     // Report CRUD
     const saveReport = async (report: ActivityReport) => {
         try {
+            // Automatically include business_id from currentUser if not already present
+            const reportToSave = {
+                ...report,
+                business_id: report.business_id || currentUser?.business_id
+            };
+
             // If report exists locally (was loaded from server), use PUT to update
             const existsOnClient = reports.some(r => String(r.id) === String(report.id));
             if (report.id && existsOnClient) {
@@ -290,7 +359,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                     method: 'PUT',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(report)
+                    body: JSON.stringify(reportToSave)
                 });
                 if (res.ok) {
                     const saved = await res.json();
@@ -303,7 +372,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 }
             }
             // Otherwise POST to create
-            await handleSave(`${API_URL}/reports`, report, setReports);
+            await handleSave(`${API_URL}/reports`, reportToSave, setReports);
         } catch (e) { console.error('saveReport error', e); }
     };
 

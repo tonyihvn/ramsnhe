@@ -114,7 +114,7 @@ const ProfilePage: React.FC = () => {
                     <Button onClick={handleSave}>Save Profile</Button>
                 </div>
 
-                {(currentUser && currentUser.role === 'Admin') && (
+                {(currentUser && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin')) && (
                     <div className="mt-6">
                         <h3 className="text-lg font-medium">Manage My Roles</h3>
                         <div className="mt-2 space-y-2">

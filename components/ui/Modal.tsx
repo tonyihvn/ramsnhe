@@ -24,15 +24,15 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
 
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        <div className={`inline-block align-bottom bg-white rounded-lg text-left overflow-visible shadow-xl transform transition-all sm:my-8 sm:align-middle materialize-modal ${(() => {
+        <div className={`inline-block align-bottom bg-white rounded-lg text-left overflow-visible shadow-xl transform transition-all sm:my-8 sm:align-middle materialize-modal w-full sm:w-11/12 lg:w-9/12 ${(() => {
           switch (size) {
-            case 'xl': return 'sm:max-w-xl';
-            case '2xl': return 'sm:max-w-2xl';
-            case '3xl': return 'sm:max-w-3xl';
-            case 'full': return 'sm:max-w-full';
-            default: return 'sm:max-w-lg';
+            case 'xl': return 'sm:max-w-xl md:max-w-xl';
+            case '2xl': return 'sm:max-w-2xl md:max-w-2xl';
+            case '3xl': return 'sm:max-w-3xl md:max-w-3xl';
+            case 'full': return 'sm:max-w-full md:max-w-full';
+            default: return 'sm:max-w-lg md:max-w-lg';
           }
-        })()} sm:w-full`}>
+        })()} sm:w-auto`}>
           <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
             <div className="flex justify-between items-start">
               <h3 className="text-lg leading-6 font-medium text-gray-900" id="modal-title">

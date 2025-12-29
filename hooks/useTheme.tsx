@@ -79,7 +79,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
                 if (!r.ok) { setIsAdmin(false); return; }
                 const j = await r.json();
                 const role = (j && (j.role || '')).toString().toLowerCase();
-                setIsAdmin(role === 'admin');
+                setIsAdmin(role === 'admin' || role === 'super-admin' || role === 'super_admin');
             } catch (e) { setIsAdmin(false); }
         })();
     }, []);

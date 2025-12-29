@@ -15,7 +15,7 @@ const ProgramsPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentProgram, setCurrentProgram] = useState<Partial<Program>>({});
 
-  const canEdit = currentUser?.role === 'Admin';
+  const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
 
   const openModal = (program?: Program) => {
     setCurrentProgram(program || { name: '', details: '', type: '', category: '' });

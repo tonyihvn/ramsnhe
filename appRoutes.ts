@@ -1,5 +1,6 @@
 // Central list of application routes to populate permission dropdowns
 export const appRoutes: { path: string; label?: string }[] = [
+    { path: '/', label: 'Landing Page' },
     { path: '/login', label: 'Login' },
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/programs', label: 'Programs' },
@@ -21,6 +22,9 @@ export const appRoutes: { path: string; label?: string }[] = [
     { path: '/profile', label: 'Profile' },
     { path: '/users', label: 'Users' },
     { path: '/facilities', label: 'Facilities' },
+    { path: '/super-admin', label: 'Super Admin Console' },
+    { path: '/super-admin/users', label: 'User Management' },
+    { path: '/super-admin/landing-page', label: 'Landing Page Config' },
 ];
 
 export default appRoutes;

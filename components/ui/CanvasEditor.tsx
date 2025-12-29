@@ -1047,7 +1047,7 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
         if (img && img.getAttribute('src')) { insertBlockAt(`<img src="${img.getAttribute('src')}" style="max-width:100%;cursor:move;"/>`, left, top); return; }
         const table = tmp.querySelector('table');
         if (table) { insertBlockAt(table.outerHTML, left, top); return; }
-        if (html.includes('tpl-placeholder') || html.includes('tpl-block')) { insertBlockAt(html, left, top); return; }
+        if (html.includes('tpl-placeholder') || html.includes('tpl-block') || html.includes('tpl-question-group') || html.includes('tpl-computed-value')) { insertBlockAt(html, left, top); return; }
       } catch (e) { /* fallback to inline insert */ }
       insertHtmlAtCursor(html);
       return;
@@ -1319,8 +1319,8 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
 
       {/* Text editing modal (TinyMCE/Wysiwyg) */}
       {isTextModalOpen && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-          <div className="bg-white w-3/4 p-4 rounded shadow-lg">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50 p-4">
+          <div className="bg-white w-full sm:w-11/12 lg:w-9/12 max-w-4xl p-4 rounded shadow-lg">
             <div className="flex justify-between items-center mb-2"><div className="font-medium">Insert Text</div><button onClick={() => setIsTextModalOpen(false)}>Close</button></div>
             <div style={{ minHeight: 200 }}>
               <WysiwygEditor value={textModalHtml} onChange={v => setTextModalHtml(v)} />

@@ -6,6 +6,7 @@ export interface Program {
   type: string;
   category: string;
   remarks?: string;
+  business_id?: string; // Business/Organization ID
 }
 
 export interface Activity {
@@ -21,6 +22,7 @@ export interface Activity {
   category: string;
   status: 'Draft' | 'Published' | 'Archived';
   formDefinition?: FormDefinition;
+  business_id?: string; // Business/Organization ID
 }
 
 export enum AnswerType {
@@ -47,7 +49,7 @@ export interface Question {
   questionText: string;
   questionHelper?: string;
   answerType: AnswerType;
-  options?: { label: string; value: string; score?: number }[];
+  options?: { label: string; value: string; score?: number; showif?: string }[];
   category?: string;
   questionGroup?: string;
   columnSize: number; // Bootstrap 12-grid value: 12 (full), 6 (half), 4 (third), 3 (quarter)
@@ -110,6 +112,7 @@ export interface ActivityReport {
   answers: Record<string, any>; // Map of questionId -> value
   uploadedFiles?: UploadedFile[];
   submissionDate: string;
+  business_id?: string; // Business/Organization ID for multi-tenancy
 }
 
 export interface Facility {
@@ -123,9 +126,10 @@ export interface Facility {
   remarks?: string;
   location?: string; // stored as "lat,lng"
   show_on_map?: boolean;
+  business_id?: string; // Business/Organization ID
 }
 
-export type UserRole = 'Admin' | 'Form Builder' | 'Data Collector' | 'Viewer' | 'Responder';
+export type UserRole = 'Admin' | 'Form Builder' | 'Data Collector' | 'Viewer' | 'Responder' | 'super-admin';
 
 export interface User {
   id: string;
@@ -144,4 +148,6 @@ export interface User {
   status: 'Active' | 'Inactive';
   location?: string; // stored as "lat,lng"
   show_on_map?: boolean;
+  business_id?: string; // Business/Organization ID for multi-tenancy
+  canSwitchBusiness?: boolean; // Super admin flag for switching businesses
 }

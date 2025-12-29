@@ -5,6 +5,7 @@ import Modal from '../components/ui/Modal';
 import DataTable from '../components/ui/DataTable';
 import BandEditor from '../components/ui/BandEditor';
 import DatasetsPage from './DatasetsPage';
+import FormBuilder, { FormSchema } from '../components/FormBuilder';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
 
@@ -671,7 +672,7 @@ const PermissionsList: React.FC = () => {
 
 const SettingsPage: React.FC = () => {
     const { settings, setSettings, reset } = useTheme();
-    const [tab, setTab] = useState<'database' | 'dbms' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit' | 'email'>('theme');
+    const [tab, setTab] = useState<'database' | 'dbms' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit' | 'email' | 'forms'>('theme');
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [bandsOpen, setBandsOpen] = useState(false);
 
@@ -682,7 +683,7 @@ const SettingsPage: React.FC = () => {
                 if (r.ok) {
                     const j = await r.json();
                     const role = j && (j.role || '').toString().toLowerCase();
-                    setIsAdmin(role === 'admin');
+                    setIsAdmin(role === 'admin' || role === 'super-admin' || role === 'super_admin');
                 } else setIsAdmin(false);
             } catch (e) { setIsAdmin(false); }
         })();
@@ -782,6 +783,7 @@ const SettingsPage: React.FC = () => {
                     <button onClick={() => setTab('datasets')} className={`px-3 py-2 rounded ${tab === 'datasets' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Datasets</button>
                     <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded ${tab === 'permissions' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Roles & Permissions</button>
                     <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded ${tab === 'audit' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Audit Trails</button>
+                    <button onClick={() => setTab('forms')} className={`px-3 py-2 rounded ${tab === 'forms' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Form Builders</button>
                     <a href="#/connectors" className="px-3 py-2 rounded text-gray-600 hover:bg-gray-50">API Connectors</a>
                 </nav>
             </div>
@@ -1144,6 +1146,10 @@ const SettingsPage: React.FC = () => {
                     <AuditTrails />
                 </Card>
             )}
+
+            {tab === 'forms' && (
+                <FormsBuildersSection />
+            )}
         </div>
     );
 };
@@ -1255,6 +1261,169 @@ function SMTPSettings() {
         </div>
     );
 }
+
+const FormsBuildersSection: React.FC = () => {
+    const [activeForm, setActiveForm] = useState<'facility' | 'user'>('facility');
+    const [facilitySchema, setFacilitySchema] = useState<FormSchema | null>(null);
+    const [userSchema, setUserSchema] = useState<FormSchema | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        loadFormSchemas();
+    }, []);
+
+    const loadFormSchemas = async () => {
+        setLoading(true);
+        try {
+            // Load facility form schema
+            console.log('Loading facility form schema...');
+            const facilityRes = await fetch('/api/admin/form-schemas/facility', { credentials: 'include' });
+            console.log('Facility schema response status:', facilityRes.status);
+            if (facilityRes.ok) {
+                const data = await facilityRes.json();
+                console.log('Facility schema loaded:', { fieldCount: data.fields?.length, id: data.id });
+                // Normalize fields to ensure showInList property exists
+                const normalizedData = {
+                    ...data,
+                    fields: (data.fields || []).map((f: any) => ({
+                        ...f,
+                        showInList: f.showInList ?? false
+                    }))
+                };
+                setFacilitySchema(normalizedData);
+            } else {
+                console.log('Failed to load facility schema, using default');
+                // Initialize default facility schema if fetch fails
+                setFacilitySchema({
+                    id: 'facility-' + Date.now(),
+                    name: 'Facility Form',
+                    formType: 'facility',
+                    fields: [],
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                });
+            }
+
+            // Load user form schema
+            console.log('Loading user form schema...');
+            const userRes = await fetch('/api/admin/form-schemas/user', { credentials: 'include' });
+            console.log('User schema response status:', userRes.status);
+            if (userRes.ok) {
+                const data = await userRes.json();
+                console.log('User schema loaded:', { fieldCount: data.fields?.length, id: data.id });
+                // Normalize fields to ensure showInList property exists
+                const normalizedData = {
+                    ...data,
+                    fields: (data.fields || []).map((f: any) => ({
+                        ...f,
+                        showInList: f.showInList ?? false
+                    }))
+                };
+                setUserSchema(normalizedData);
+            } else {
+                console.log('Failed to load user schema, using default');
+                // Initialize default user schema if fetch fails
+                setUserSchema({
+                    id: 'user-' + Date.now(),
+                    name: 'User Form',
+                    formType: 'user',
+                    fields: [],
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load form schemas:', error);
+            alert('Failed to load form schemas: ' + String(error));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSaveSchema = async (schema: FormSchema) => {
+        try {
+            console.log('Saving form schema:', schema);
+            const response = await fetch('/api/admin/form-schemas', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(schema),
+            });
+
+            console.log('Save response status:', response.status);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Save error response:', errorText);
+                throw new Error(errorText);
+            }
+
+            const saved = await response.json();
+            console.log('Form schema saved successfully:', saved);
+            if (schema.formType === 'facility') {
+                setFacilitySchema(saved);
+            } else {
+                setUserSchema(saved);
+            }
+        } catch (error) {
+            console.error('Failed to save schema:', error);
+            throw error;
+        }
+    };
+
+    if (loading) {
+        return (
+            <Card>
+                <p className="text-gray-600">Loading form schemas...</p>
+            </Card>
+        );
+    }
+
+    const currentSchema = activeForm === 'facility' ? facilitySchema : userSchema;
+
+    return (
+        <Card>
+            <h3 className="text-lg font-medium mb-4">Form Field Builders</h3>
+            
+            <div className="flex gap-2 mb-4">
+                <button
+                    onClick={() => setActiveForm('facility')}
+                    className={`px-4 py-2 rounded ${
+                        activeForm === 'facility'
+                            ? 'bg-primary-700 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                >
+                    Facility Form
+                </button>
+                <button
+                    onClick={() => setActiveForm('user')}
+                    className={`px-4 py-2 rounded ${
+                        activeForm === 'user'
+                            ? 'bg-primary-700 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                >
+                    User Form
+                </button>
+            </div>
+
+            <div className="border-t pt-4">
+                {currentSchema ? (
+                    <FormBuilder
+                        formType={activeForm}
+                        title={activeForm === 'facility' ? 'Facility Form Fields' : 'User Form Fields'}
+                        description={activeForm === 'facility' ? 'Define custom fields for facility data collection' : 'Define custom fields for user management'}
+                        initialSchema={currentSchema}
+                        onSave={handleSaveSchema}
+                    />
+                ) : (
+                    <p className="text-gray-600">Failed to load form schema</p>
+                )}
+            </div>
+        </Card>
+    );
+};
 
 export default SettingsPage;
 

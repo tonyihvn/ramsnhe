@@ -36,6 +36,8 @@ const LoginPage: React.FC = () => {
   const [regLast, setRegLast] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regOrg, setRegOrg] = useState('');
+  const [regPhone, setRegPhone] = useState('');
   const [regLoading, setRegLoading] = useState(false);
   const [regMessage, setRegMessage] = useState<string | null>(null);
   const [regError, setRegError] = useState<string | null>(null);
@@ -46,6 +48,29 @@ const LoginPage: React.FC = () => {
     // perform role-based redirect using metadata
     if (user) {
       try {
+        // For super admin, try to restore the last selected business
+        const isSuperAdmin = user.role === 'super-admin' || user.role === 'super_admin';
+        if (isSuperAdmin) {
+          const lastBusiness = localStorage.getItem('lastSelectedBusiness');
+          if (lastBusiness) {
+            try {
+              // Set the business context to the previously selected one
+              const contextRes = await fetch(`/api/super-admin/set-business-context/${lastBusiness}`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+              });
+              if (contextRes.ok) {
+                navigate('/dashboard');
+                return;
+              }
+            } catch (e) {
+              console.warn('Failed to restore last business context', e);
+            }
+          }
+        }
+
         const roleMeta = meta.roles?.find((r: any) => r.id === user.role) || meta.roles?.find((r: any) => String(r.name).toLowerCase() === String(user.role).toLowerCase());
         const route = roleMeta?.defaultRoute || '/dashboard';
         navigate(route);
@@ -60,7 +85,7 @@ const LoginPage: React.FC = () => {
     setRegError(null);
     setRegMessage(null);
     try {
-      const r = await fetch('/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstName: regFirst, lastName: regLast, email: regEmail, password: regPassword }) });
+      const r = await fetch('/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstName: regFirst, lastName: regLast, email: regEmail, password: regPassword, organizationName: regOrg || undefined, phoneNumber: regPhone || undefined }) });
       if (!r.ok) {
         let txt = '';
         try { txt = await r.text(); } catch (e) { txt = String(e); }
@@ -128,6 +153,8 @@ const LoginPage: React.FC = () => {
             <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
             <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
             <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
+            <input className="p-2 border rounded w-full" placeholder="Organization name (optional)" value={regOrg} onChange={e => setRegOrg(e.target.value)} disabled={!!regMessage} />
+            <input className="p-2 border rounded w-full" placeholder="Phone number (optional)" value={regPhone} onChange={e => setRegPhone(e.target.value)} disabled={!!regMessage} />
             <input className="p-2 border rounded w-full" placeholder="Password" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setRegOpen(false)}>Cancel</Button>
@@ -135,6 +162,14 @@ const LoginPage: React.FC = () => {
             </div>
           </div>
         </Modal>
+
+        <div className="mt-4 text-center">
+          <div className="text-sm text-gray-600 mb-2">Or try a demo account</div>
+          <div className="flex gap-2 justify-center">
+            <Button onClick={async () => { await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'Admin' }) }); window.location.href = '#/dashboard'; }}>Demo Admin</Button>
+            <Button onClick={async () => { await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'Public' }) }); window.location.href = '#/dashboard'; }}>Demo User</Button>
+          </div>
+        </div>
 
 
       </div>

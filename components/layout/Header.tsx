@@ -75,7 +75,7 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
               {menuOpen && (
                 <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
                   <div className="py-1">
-                    {currentUser?.role === 'Admin' && (
+                    {(currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin') && (
                       <button onClick={() => { setMenuOpen(false); navigate('/settings'); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</button>
                     )}
                     <button onClick={() => { setMenuOpen(false); navigate('/profile'); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Profile</button>

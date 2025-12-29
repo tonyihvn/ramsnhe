@@ -2,6 +2,9 @@
 import express from 'express';
 import { Pool } from 'pg';
 import cors from 'cors';
+import { initializeStartup, logStartupInfo } from './initializeSetup.js';
+import { registerSuperAdminRoutes } from './superAdminRoutes.js';
+
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
 async function upsertReportAnswers(client, reportId, payload, existingRow, req) {
@@ -27,6 +30,9 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
         }
     } catch (e) { /* ignore */ }
 
+    // determine business id to tag answers (prefer session, fallback to existing report row)
+    const answerBusinessId = (req && req.session && req.session.businessId) ? req.session.businessId : (existingRow ? existingRow.business_id : null);
+
     const collectQIds = [];
     for (const [qId, val] of Object.entries(answers)) {
         collectQIds.push(String(qId));
@@ -49,7 +55,8 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
 
     const canCheck = async (pageKey, sectionKey, want) => {
         try {
-            if (currentRole && String(currentRole).toLowerCase() === 'admin') return true;
+            const adminRole = currentRole && String(currentRole).toLowerCase();
+            if (adminRole === 'admin' || adminRole === 'super-admin' || adminRole === 'super_admin') return true;
             const permRes = await client.query(`SELECT can_create, can_edit, can_delete FROM dqai_page_permissions WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
             const perm = permRes.rows && permRes.rows[0] ? permRes.rows[0] : null;
             if (!perm) return false;
@@ -94,9 +101,9 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
                                     existingUsed[key] = true;
                                 } else {
                                     const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
-                                    if (allowedCreate) {
+                                        if (allowedCreate) {
                                         const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                        await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score]);
+                                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
                                     }
                                 }
                             } catch (ie) { console.error('Failed to process repeated answer during update for question', subQId, ie); }
@@ -125,7 +132,7 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
                     } else {
                         const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
                         if (allowedCreate) {
-                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score]);
+                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
                         }
                     }
                 }
@@ -143,7 +150,8 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
         const pageKey = qi.page || '';
         const sectionKey = qi.section || null;
         const canDelete = await canCheck(pageKey, sectionKey, 'delete');
-        if (canDelete || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId)) || (currentRole && String(currentRole).toLowerCase() === 'admin')) {
+        const adminRole = currentRole && String(currentRole).toLowerCase();
+        if (canDelete || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId)) || (adminRole === 'admin' || adminRole === 'super-admin' || adminRole === 'super_admin')) {
             try { await client.query('DELETE FROM dqai_answers WHERE id = $1', [rowObj.id]); } catch (de) { console.error('Failed to delete stale answer row', rowObj.id, de); }
         }
     }
@@ -998,7 +1006,7 @@ app.post('/api/build_report', async (req, res) => {
                     // read file and convert to base64
                     const imgBuf = fs.readFileSync(imgPath);
                     const b64 = imgBuf.toString('base64');
-                    const imgHtml = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#fff;"><div><img src="data:image/jpeg;base64,${b64}" style="width:100%;height:auto;display:block"/></div></body></html>`;
+                    const imgHtml = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;}</style></head><body><img src="data:image/jpeg;base64,${b64}" style="width:100%;height:auto;display:block"/></body></html>`;
                     const docxBuffer = htmlDocx && htmlDocx.asBlob ? Buffer.from(await htmlDocx.asBlob(imgHtml).arrayBuffer()) : Buffer.from(htmlDocx.asHTML ? htmlDocx.asHTML(imgHtml) : imgHtml);
                     const outName = `${safeName}_${Date.now()}.docx`;
                     const outPath = path.join(buildsRoot, outName);
@@ -1006,16 +1014,227 @@ app.post('/api/build_report', async (req, res) => {
                     const publicUrl = `/builds/${outName}`;
                     return res.json({ url: publicUrl, path: outPath });
                 } else {
-                    const docxBuffer = htmlDocx && htmlDocx.asBlob ? Buffer.from(await htmlDocx.asBlob(wrapperHtml).arrayBuffer()) : Buffer.from(htmlDocx.asHTML ? htmlDocx.asHTML(wrapperHtml) : wrapperHtml);
+                    // Sanitize HTML for DOCX by removing problematic elements
+                    let sanitizedHtml = wrapperHtml;
+                    
+                    // Remove script tags and their content
+                    sanitizedHtml = sanitizedHtml.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+                    // Remove style tags and their content
+                    sanitizedHtml = sanitizedHtml.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+                    // Remove meta tags
+                    sanitizedHtml = sanitizedHtml.replace(/<meta[^>]*>/gi, '');
+                    // Remove link tags
+                    sanitizedHtml = sanitizedHtml.replace(/<link[^>]*>/gi, '');
+                    // Remove data attributes that might cause issues
+                    sanitizedHtml = sanitizedHtml.replace(/\s+data-[a-z\-]+="[^"]*"/gi, '');
+                    // Remove content editable attributes
+                    sanitizedHtml = sanitizedHtml.replace(/\s+contenteditable="[^"]*"/gi, '');
+                    // Remove gramm attributes
+                    sanitizedHtml = sanitizedHtml.replace(/\s+data-gramm="[^"]*"/gi, '');
+                    // Remove all event handlers (onclick, onload, etc)
+                    sanitizedHtml = sanitizedHtml.replace(/\s+on[a-z]+="[^"]*"/gi, '');
+                    // Remove class and id attributes that might reference external styles
+                    sanitizedHtml = sanitizedHtml.replace(/\s+class="[^"]*"/gi, '');
+                    // Normalize line breaks
+                    sanitizedHtml = sanitizedHtml.replace(/<br\s*\/?>/g, '<br/>');
+                    // Fix self-closing tags
+                    sanitizedHtml = sanitizedHtml.replace(/<img([^>]*)(?<!\/)>/g, '<img$1/>');
+                    sanitizedHtml = sanitizedHtml.replace(/<hr([^>]*)(?<!\/)>/g, '<hr$1/>');
+                    sanitizedHtml = sanitizedHtml.replace(/<input([^>]*)(?<!\/)>/g, '<input$1/>');
+                    
+                    // Wrap in proper HTML document structure for better compatibility
+                    if (!sanitizedHtml.toLowerCase().includes('<html')) {
+                        sanitizedHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body>${sanitizedHtml}</body></html>`;
+                    }
+                    
+                    try {
+                        let docxBuffer;
+                        let convertedSuccessfully = false;
+                        
+                        // Try primary method: htmlDocx.asBlob
+                        if (htmlDocx && htmlDocx.asBlob && !convertedSuccessfully) {
+                            try {
+                                const blobOrBuffer = await htmlDocx.asBlob(sanitizedHtml);
+                                if (blobOrBuffer) {
+                                    if (Buffer.isBuffer(blobOrBuffer)) {
+                                        docxBuffer = blobOrBuffer;
+                                    } else if (blobOrBuffer instanceof ArrayBuffer) {
+                                        docxBuffer = Buffer.from(blobOrBuffer);
+                                    } else if (blobOrBuffer instanceof Blob) {
+                                        const arrayBuffer = await blobOrBuffer.arrayBuffer();
+                                        docxBuffer = Buffer.from(arrayBuffer);
+                                    } else if (typeof blobOrBuffer === 'string') {
+                                        docxBuffer = Buffer.from(blobOrBuffer, 'binary');
+                                    } else {
+                                        // Try to convert to buffer as last resort
+                                        docxBuffer = Buffer.from(JSON.stringify(blobOrBuffer));
+                                    }
+                                    convertedSuccessfully = true;
+                                }
+                            } catch (e) {
+                                console.warn('asBlob method failed:', e.message);
+                            }
+                        }
+                        
+                        // Try secondary method: htmlDocx.default.asBlob
+                        if (htmlDocx && htmlDocx.default && htmlDocx.default.asBlob && !convertedSuccessfully) {
+                            try {
+                                const blobOrBuffer = await htmlDocx.default.asBlob(sanitizedHtml);
+                                if (blobOrBuffer) {
+                                    if (Buffer.isBuffer(blobOrBuffer)) {
+                                        docxBuffer = blobOrBuffer;
+                                    } else if (blobOrBuffer instanceof ArrayBuffer) {
+                                        docxBuffer = Buffer.from(blobOrBuffer);
+                                    } else if (blobOrBuffer instanceof Blob) {
+                                        const arrayBuffer = await blobOrBuffer.arrayBuffer();
+                                        docxBuffer = Buffer.from(arrayBuffer);
+                                    } else if (typeof blobOrBuffer === 'string') {
+                                        docxBuffer = Buffer.from(blobOrBuffer, 'binary');
+                                    }
+                                    convertedSuccessfully = true;
+                                }
+                            } catch (e) {
+                                console.warn('default.asBlob method failed:', e.message);
+                            }
+                        }
+                        
+                        // Try tertiary method: htmlDocx.asDocument
+                        if (htmlDocx && htmlDocx.asDocument && !convertedSuccessfully) {
+                            try {
+                                const doc = await htmlDocx.asDocument(sanitizedHtml);
+                                if (doc) {
+                                    if (Buffer.isBuffer(doc)) {
+                                        docxBuffer = doc;
+                                    } else if (doc instanceof ArrayBuffer) {
+                                        docxBuffer = Buffer.from(doc);
+                                    } else if (typeof doc === 'string') {
+                                        docxBuffer = Buffer.from(doc, 'binary');
+                                    }
+                                    convertedSuccessfully = true;
+                                }
+                            } catch (e) {
+                                console.warn('asDocument method failed:', e.message);
+                            }
+                        }
+                        
+                        if (!convertedSuccessfully || !docxBuffer) {
+                            throw new Error('All html-docx-js conversion methods failed');
+                        }
+                        
+                        // Verify the buffer is not empty and has reasonable size
+                        if (docxBuffer.length < 100) {
+                            throw new Error(`Generated DOCX buffer too small (${docxBuffer.length} bytes) - likely corrupted`);
+                        }
+                        
+                        const outName = `${safeName}_${Date.now()}.docx`;
+                        const outPath = path.join(buildsRoot, outName);
+                        fs.writeFileSync(outPath, docxBuffer);
+                        
+                        // Verify file was written correctly
+                        const fileStats = fs.statSync(outPath);
+                        if (fileStats.size < 100) {
+                            throw new Error(`Generated DOCX file too small (${fileStats.size} bytes) - file may be corrupted`);
+                        }
+                        
+                        const publicUrl = `/builds/${outName}`;
+                        return res.json({ url: publicUrl, path: outPath });
+                    } catch (e) {
+                        console.error('DOCX sanitization/conversion error:', e.message, e.stack);
+                        throw e;
+                    }
+                }
+            } catch (e) {
+                console.error('DOCX conversion failed with error:', e.message, '- falling back to image rendering');
+                // Fallback: render as image instead of DOCX to ensure user can view content
+                try {
+                    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+                    const page = await browser.newPage();
+                    await page.setContent(wrapperHtml, { waitUntil: 'networkidle0' });
+                    const imgName = `${safeName}_${Date.now()}.jpg`;
+                    const imgPath = path.join(buildsRoot, imgName);
+                    await page.screenshot({ path: imgPath, fullPage: true, type: 'jpeg', quality: 90 });
+                    await browser.close();
+                    
+                    // Create a simple DOCX with the image embedded
+                    const imgBuf = fs.readFileSync(imgPath);
+                    const b64 = imgBuf.toString('base64');
+                    const fallbackHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body style="margin:0;padding:0;"><img src="data:image/jpeg;base64,${b64}" style="width:100%;height:auto;display:block;"/></body></html>`;
+                    
+                    let docxBuffer;
+                    let fallbackDocxGenerated = false;
+                    
+                    try {
+                        // Try multiple methods to create DOCX with image
+                        if (htmlDocx && htmlDocx.asBlob) {
+                            try {
+                                const blobOrBuffer = await htmlDocx.asBlob(fallbackHtml);
+                                if (blobOrBuffer) {
+                                    if (Buffer.isBuffer(blobOrBuffer)) {
+                                        docxBuffer = blobOrBuffer;
+                                    } else if (blobOrBuffer instanceof ArrayBuffer) {
+                                        docxBuffer = Buffer.from(blobOrBuffer);
+                                    } else if (blobOrBuffer instanceof Blob) {
+                                        const arrayBuffer = await blobOrBuffer.arrayBuffer();
+                                        docxBuffer = Buffer.from(arrayBuffer);
+                                    } else if (typeof blobOrBuffer === 'string') {
+                                        docxBuffer = Buffer.from(blobOrBuffer, 'binary');
+                                    }
+                                    fallbackDocxGenerated = true;
+                                }
+                            } catch (e) {
+                                console.warn('Fallback asBlob method failed:', e.message);
+                            }
+                        }
+                        
+                        if (!fallbackDocxGenerated && htmlDocx && htmlDocx.default && htmlDocx.default.asBlob) {
+                            try {
+                                const blobOrBuffer = await htmlDocx.default.asBlob(fallbackHtml);
+                                if (blobOrBuffer) {
+                                    if (Buffer.isBuffer(blobOrBuffer)) {
+                                        docxBuffer = blobOrBuffer;
+                                    } else if (blobOrBuffer instanceof ArrayBuffer) {
+                                        docxBuffer = Buffer.from(blobOrBuffer);
+                                    } else if (blobOrBuffer instanceof Blob) {
+                                        const arrayBuffer = await blobOrBuffer.arrayBuffer();
+                                        docxBuffer = Buffer.from(arrayBuffer);
+                                    } else if (typeof blobOrBuffer === 'string') {
+                                        docxBuffer = Buffer.from(blobOrBuffer, 'binary');
+                                    }
+                                    fallbackDocxGenerated = true;
+                                }
+                            } catch (e) {
+                                console.warn('Fallback default.asBlob method failed:', e.message);
+                            }
+                        }
+                    } catch (docxErr) {
+                        console.error('Failed to create DOCX with image:', docxErr.message);
+                    }
+                    
+                    if (!fallbackDocxGenerated || !docxBuffer || docxBuffer.length < 100) {
+                        console.warn('DOCX generation failed or produced invalid file, returning raw image instead');
+                        // Return image path directly if DOCX creation fails
+                        return res.json({ url: `/builds/${imgName}`, path: imgPath, fallback: true, message: 'Rendered as image due to DOCX compatibility issue' });
+                    }
+                    
                     const outName = `${safeName}_${Date.now()}.docx`;
                     const outPath = path.join(buildsRoot, outName);
                     fs.writeFileSync(outPath, docxBuffer);
+                    
+                    // Verify file was written correctly
+                    const fileStats = fs.statSync(outPath);
+                    if (fileStats.size < 100) {
+                        console.error(`Generated DOCX file too small (${fileStats.size} bytes) - file may be corrupted`);
+                        // Delete the bad file and return image instead
+                        try { fs.unlinkSync(outPath); } catch (e) { /* ignore */ }
+                        return res.json({ url: `/builds/${imgName}`, path: imgPath, fallback: true, message: 'Rendered as image due to DOCX file corruption' });
+                    }
+                    
                     const publicUrl = `/builds/${outName}`;
-                    return res.json({ url: publicUrl, path: outPath });
+                    return res.json({ url: publicUrl, path: outPath, fallback: true, message: 'Rendered as image due to HTML compatibility issues' });
+                } catch (fallbackErr) {
+                    console.error('Fallback image rendering also failed:', fallbackErr);
+                    return res.status(500).json({ error: 'Failed to generate DOCX. Could not render as fallback image either.', details: String(fallbackErr) });
                 }
-            } catch (e) {
-                console.error('docx conversion failed', e);
-                return res.status(500).json({ error: 'Failed to generate DOCX', details: String(e) });
             }
         }
 
@@ -1107,6 +1326,211 @@ const pool = new Pool({
     database: process.env.DB_NAME || 'dqappdb',
     password: process.env.DB_PASSWORD || 'admin',
     port: process.env.DB_PORT || 5432,
+});
+
+// Register Super Admin Routes
+registerSuperAdminRoutes(app, pool);
+
+// Form Schemas API Endpoints (Admin only)
+// POST /api/admin/form-schemas - Save or update a form schema
+app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
+    try {
+        const { name, formType, fields, id } = req.body;
+        const businessId = req.session?.businessId || null;
+
+        console.log('[Form Schema Save] Received:', { formType, businessId, fieldCount: Array.isArray(fields) ? fields.length : 'invalid' });
+
+        if (!name || !formType || !Array.isArray(fields)) {
+            console.log('[Form Schema Save] Validation failed:', { name, formType, fieldsIsArray: Array.isArray(fields) });
+            return res.status(400).json({ error: 'Missing required fields: name, formType, fields' });
+        }
+
+        if (!['facility', 'user'].includes(formType)) {
+            return res.status(400).json({ error: 'formType must be "facility" or "user"' });
+        }
+
+        const schemaId = id || `schema_${formType}_${Date.now()}`;
+        const now = new Date().toISOString();
+
+        // Check if schema already exists
+        const checkRes = await pool.query(
+            'SELECT id FROM dqai_form_schemas WHERE "formType" = $1 AND business_id IS NOT DISTINCT FROM $2 LIMIT 1',
+            [formType, businessId]
+        );
+
+        console.log('[Form Schema Save] Check result:', { found: checkRes.rowCount > 0 });
+
+        if (checkRes.rowCount > 0) {
+            // Update existing schema
+            console.log('[Form Schema Save] Updating existing schema');
+            const updateRes = await pool.query(
+                'UPDATE dqai_form_schemas SET name = $1, fields = $2, "updatedAt" = $3 WHERE "formType" = $4 AND business_id IS NOT DISTINCT FROM $5 RETURNING *',
+                [name, JSON.stringify(fields), now, formType, businessId]
+            );
+            const row = updateRes.rows[0];
+            console.log('[Form Schema Save] Update complete:', { id: row.id, fieldCount: Array.isArray(row.fields) ? row.fields.length : 'unknown' });
+            return res.json({
+                id: row.id,
+                name: row.name,
+                formType: row.formType,
+                fields: Array.isArray(row.fields) ? row.fields : JSON.parse(row.fields || '[]'),
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt,
+            });
+        } else {
+            // Insert new schema
+            console.log('[Form Schema Save] Inserting new schema');
+            const insertRes = await pool.query(
+                'INSERT INTO dqai_form_schemas (id, name, "formType", fields, business_id, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+                [schemaId, name, formType, JSON.stringify(fields), businessId, now, now]
+            );
+            const row = insertRes.rows[0];
+            console.log('[Form Schema Save] Insert complete:', { id: row.id, fieldCount: Array.isArray(row.fields) ? row.fields.length : 'unknown' });
+            return res.json({
+                id: row.id,
+                name: row.name,
+                formType: row.formType,
+                fields: Array.isArray(row.fields) ? row.fields : JSON.parse(row.fields || '[]'),
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt,
+            });
+        }
+    } catch (error) {
+        console.error('[Form Schema Save] Error:', error);
+        res.status(500).json({ error: 'Failed to save form schema: ' + String(error) });
+    }
+});
+
+// GET /api/admin/form-schemas/:formType - Get form schema by type (Admin only)
+app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
+    try {
+        const { formType } = req.params;
+        const businessId = req.session?.businessId || null;
+
+        console.log('[Form Schema Load] Request:', { formType, businessId });
+
+        if (!['facility', 'user'].includes(formType)) {
+            return res.status(400).json({ error: 'formType must be "facility" or "user"' });
+        }
+
+        const dbRes = await pool.query(
+            'SELECT * FROM dqai_form_schemas WHERE "formType" = $1 AND business_id IS NOT DISTINCT FROM $2 LIMIT 1',
+            [formType, businessId]
+        );
+
+        console.log('[Form Schema Load] Query result:', { found: dbRes.rowCount > 0, count: dbRes.rowCount });
+
+        if (dbRes.rowCount === 0) {
+            // Try fallback to NULL business_id (global/default schema)
+            const fallbackRes = await pool.query(
+                'SELECT * FROM dqai_form_schemas WHERE "formType" = $1 AND business_id IS NULL LIMIT 1',
+                [formType]
+            );
+            console.log('[Form Schema Load] Fallback query result:', { found: fallbackRes.rowCount > 0 });
+            
+            if (fallbackRes.rowCount > 0) {
+                const row = fallbackRes.rows[0];
+                return res.json({
+                    id: row.id,
+                    name: row.name,
+                    formType: row.formType,
+                    fields: Array.isArray(row.fields) ? row.fields : JSON.parse(row.fields || '[]'),
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt,
+                });
+            }
+
+            // Return empty schema instead of 404 for admin endpoint too
+            return res.json({
+                id: `default_${formType}`,
+                name: `Default ${formType === 'facility' ? 'Facility' : 'User'} Form`,
+                formType: formType,
+                fields: [],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            });
+        }
+
+        const row = dbRes.rows[0];
+        console.log('[Form Schema Load] Returning schema:', { id: row.id, fieldCount: Array.isArray(row.fields) ? row.fields.length : 'unknown' });
+        res.json({
+            id: row.id,
+            name: row.name,
+            formType: row.formType,
+            fields: Array.isArray(row.fields) ? row.fields : JSON.parse(row.fields || '[]'),
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+        });
+    } catch (error) {
+        console.error('[Form Schema Load] Error:', error);
+        res.status(500).json({ error: 'Failed to get form schema: ' + String(error) });
+    }
+});
+
+// GET /api/form-schemas/:formType - Public endpoint to get form schema for any form (authenticated users)
+app.get('/api/form-schemas/:formType', async (req, res) => {
+    try {
+        const { formType } = req.params;
+        // Get business_id from session or default to null
+        const businessId = req.session?.businessId || null;
+
+        if (!['facility', 'user'].includes(formType)) {
+            return res.status(400).json({ error: 'formType must be "facility" or "user"' });
+        }
+
+        // Return empty schema if no custom fields defined - this is okay for forms
+        const dbRes = await pool.query(
+            'SELECT * FROM dqai_form_schemas WHERE "formType" = $1 AND (business_id = $2 OR business_id IS NULL) LIMIT 1',
+            [formType, businessId]
+        );
+
+        if (dbRes.rowCount === 0) {
+            // Return empty schema instead of 404
+            return res.json({
+                id: `default_${formType}`,
+                name: `Default ${formType === 'facility' ? 'Facility' : 'User'} Form`,
+                formType: formType,
+                fields: [],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            });
+        }
+
+        const row = dbRes.rows[0];
+        res.json({
+            id: row.id,
+            name: row.name,
+            formType: row.formType,
+            fields: Array.isArray(row.fields) ? row.fields : JSON.parse(row.fields || '[]'),
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+        });
+    } catch (error) {
+        console.error('Failed to get form schema:', error);
+        res.status(500).json({ error: 'Failed to get form schema: ' + String(error) });
+    }
+});
+
+// DELETE /api/admin/form-schemas/:formType - Delete form schema
+app.delete('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
+    try {
+        const { formType } = req.params;
+        const businessId = req.session?.businessId || null;
+
+        if (!['facility', 'user'].includes(formType)) {
+            return res.status(400).json({ error: 'formType must be "facility" or "user"' });
+        }
+
+        await pool.query(
+            'DELETE FROM dqai_form_schemas WHERE "formType" = $1 AND business_id = $2',
+            [formType, businessId]
+        );
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Failed to delete form schema:', error);
+        res.status(500).json({ error: 'Failed to delete form schema: ' + String(error) });
+    }
 });
 
 // TABLE_PREFIX can be set in the environment to create an additional set
@@ -1290,6 +1714,21 @@ async function initDb() {
             throw err;
         }
     }
+    // Create a default super-admin user if environment variables provided
+    try {
+        const superEmail = process.env.SUPER_ADMIN_EMAIL || process.env.SUPERADMIN_EMAIL || null;
+        const superPass = process.env.SUPER_ADMIN_PASSWORD || process.env.SUPERADMIN_PASSWORD || null;
+        if (superEmail && superPass) {
+            const r = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [superEmail]);
+            if (r.rows.length === 0) {
+                try {
+                    const hash = await bcrypt.hash(superPass, 10);
+                    await pool.query('INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1,$2,$3,$4,$5,$6)', ['Super', 'Admin', superEmail, hash, 'super-admin', 'Active']);
+                    console.log('Created default super-admin user', superEmail);
+                } catch (e) { console.error('Failed to create super-admin', e); }
+            }
+        }
+    } catch (e) { /* ignore */ }
     // Ensure answers table has reviewer/score columns and remove them from questions if present
     try {
         await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS reviewers_comment TEXT`);
@@ -1309,6 +1748,18 @@ async function initDb() {
         await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS correct_answer TEXT`);
         // Add profile_image to users
         await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS profile_image TEXT`);
+        // Add is_demo_account flag for demo users
+        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS is_demo_account BOOLEAN DEFAULT FALSE`);
+        // Add business_id for multi-tenancy support
+        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES dqai_businesses(id) ON DELETE SET NULL`);
+        // Add account_type (user, admin, etc.)
+        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'user'`);
+        // Add last_login_at for tracking user activity
+        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`);
+        // Add account_activated_at for tracking when accounts were activated
+        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS account_activated_at TIMESTAMP`);
+        // Add deactivated_at for tracking when accounts were deactivated
+        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP`);
         // Add powerbi_url and related columns to activities to support activity-level Power BI embeds
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
         await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
@@ -1350,9 +1801,49 @@ async function initDb() {
             UNIQUE (page_key, section_key, role_name)
         )`);
         await pool.query(`CREATE TABLE IF NOT EXISTS dqai_settings (
-            key TEXT PRIMARY KEY,
-            value JSONB
+            key TEXT NOT NULL,
+            value JSONB,
+            business_id INTEGER,
+            PRIMARY KEY (key, business_id),
+            FOREIGN KEY (business_id) REFERENCES dqai_businesses(id) ON DELETE CASCADE
         )`);
+        // Businesses / organizations table for multi-tenancy
+        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_businesses (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            phone TEXT,
+            email TEXT,
+            address TEXT,
+            website TEXT,
+            logo_url TEXT,
+            settings JSONB DEFAULT '{}'::jsonb,
+            status TEXT DEFAULT 'Active',
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )`);
+
+        // Add business_id FK column to common resource tables for scoping
+        const addBusinessCols = [
+            'dqai_users', 'dqai_programs', 'dqai_facilities', 'dqai_activities', 'dqai_activity_reports',
+            'dqai_questions', 'dqai_answers', 'dqai_uploaded_docs', 'dqai_datasets', 'dqai_report_templates'
+        ];
+        for (const t of addBusinessCols) {
+            try { await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES dqai_businesses(id) ON DELETE SET NULL`); } catch (e) { /* ignore */ }
+        }
+
+        // Ensure dqai_settings has business_id column (critical for multi-tenancy settings)
+        try {
+            await pool.query(`ALTER TABLE dqai_settings ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES dqai_businesses(id) ON DELETE CASCADE`);
+        } catch (e) { /* ignore if already exists */ }
+
+        // If dqai_settings doesn't have proper PRIMARY KEY, we need to handle it
+        try {
+            // Try to add constraint if it doesn't exist
+            await pool.query(`ALTER TABLE dqai_settings DROP CONSTRAINT IF NOT EXISTS dqai_settings_pkey CASCADE`);
+        } catch (e) { /* ignore */ }
+        try {
+            await pool.query(`ALTER TABLE dqai_settings ADD PRIMARY KEY (key, business_id)`);
+        } catch (e) { /* ignore if already exists */ }
         await pool.query(`CREATE TABLE IF NOT EXISTS dqai_llm_providers (
             id SERIAL PRIMARY KEY,
             provider_id TEXT,
@@ -1411,6 +1902,7 @@ async function initDb() {
         // Add location and show_on_map to users so user profiles can optionally store coordinates/visibility
         try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS custom_fields JSONB`); } catch (e) { /* ignore */ }
         // Enhance report templates table to support paper size, orientation and images
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS paper_size TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS orientation TEXT`); } catch (e) { /* ignore */ }
@@ -1421,6 +1913,8 @@ async function initDb() {
         // Add facility location and visibility columns (store as text 'lat,lng')
         try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS custom_fields JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
         // Email verification tokens for self-registered users
         try {
             await pool.query(`CREATE TABLE IF NOT EXISTS dqai_email_verifications (
@@ -1457,6 +1951,102 @@ async function initDb() {
         try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS status TEXT`); } catch (e) { /* ignore */ }
         // Allow per-row role assignments on dataset content rows
         try { await pool.query(`ALTER TABLE dqai_dataset_content ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
+        
+        // Ensure user approvals table exists
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_user_approvals (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES dqai_users(id) ON DELETE CASCADE,
+                status TEXT DEFAULT 'Pending',
+                approved_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+                approval_notes TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (e) { /* ignore */ }
+        
+        // Ensure feedback messages table exists
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_feedback_messages (
+                id SERIAL PRIMARY KEY,
+                business_id INTEGER,
+                sender_name TEXT,
+                sender_email TEXT,
+                sender_phone TEXT,
+                subject TEXT,
+                message TEXT,
+                status TEXT DEFAULT 'New',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (e) { /* ignore */ }
+        
+        // Add last_login_at to users table if missing
+        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`); } catch (e) { /* ignore */ }
+        
+        // Add business_id to datasets table for multi-tenancy
+        try { await pool.query(`ALTER TABLE dqai_datasets ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_dataset_content ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
+        
+        // Create landing page config table if missing
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_landing_page_config (
+                id SERIAL PRIMARY KEY,
+                business_id INTEGER UNIQUE,
+                hero_title TEXT,
+                hero_subtitle TEXT,
+                hero_image_url TEXT,
+                hero_button_text TEXT,
+                hero_button_link TEXT,
+                hero_visible BOOLEAN DEFAULT true,
+                features_title TEXT,
+                features_subtitle TEXT,
+                features_data JSONB,
+                features_visible BOOLEAN DEFAULT true,
+                carousel_title TEXT,
+                carousel_items JSONB,
+                carousel_visible BOOLEAN DEFAULT true,
+                cta_title TEXT,
+                cta_subtitle TEXT,
+                cta_button_text TEXT,
+                cta_button_link TEXT,
+                cta_visible BOOLEAN DEFAULT true,
+                demo_link TEXT,
+                demo_label TEXT,
+                footer_text TEXT,
+                footer_links JSONB,
+                logo_url TEXT,
+                favicon_url TEXT,
+                primary_color TEXT,
+                secondary_color TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (e) { /* ignore */ }
+        
+        // Ensure dqai_landing_page_config has all required columns
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_data JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_items JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS footer_links JSONB`); } catch (e) { /* ignore */ }
+
+        // Create dqai_form_schemas table for custom form field definitions
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_form_schemas (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                "formType" VARCHAR(50) NOT NULL,
+                fields JSONB DEFAULT '[]'::jsonb,
+                business_id INTEGER,
+                "createdAt" TIMESTAMP DEFAULT NOW(),
+                "updatedAt" TIMESTAMP DEFAULT NOW(),
+                UNIQUE ("formType", business_id)
+            )`);
+            console.log('dqai_form_schemas table created/verified');
+        } catch (err) {
+            console.error('Failed to create dqai_form_schemas table:', err);
+        }
     } catch (err) {
         console.error('Failed to sync reviewer/score columns between questions and answers:', err);
         throw err;
@@ -1610,6 +2200,9 @@ async function initDb() {
     // manual seed scripts (e.g., server/scripts/seed_activity.js) to avoid accidental
     // population in production environments.
     console.log('Skipping automatic seeding of programs/activities/questions/answers/facilities on startup.');
+
+    // Initialize multi-tenancy features and startup configuration
+    await initializeStartup(pool);
 }
 
 // Helper: connect to an arbitrary target DB (Postgres or MySQL). Returns { type: 'pg'|'mysql', client }
@@ -1990,6 +2583,17 @@ async function generateRagFromTarget(cfg, prefix = 'dqai_') {
     }
 }
 
+// Helper: normalize admin role to 'Admin' (capital A) for consistent permissions
+function normalizeAdminRole(role) {
+    if (!role) return role;
+    const normalized = String(role).toLowerCase();
+    if (normalized === 'admin' || normalized === 'super-admin' || normalized === 'super_admin') {
+        if (normalized === 'admin') return 'Admin';
+        if (normalized === 'super-admin' || normalized === 'super_admin') return 'super-admin';
+    }
+    return role;
+}
+
 // Helper: require admin middleware
 async function requireAdmin(req, res, next) {
     try {
@@ -1997,7 +2601,7 @@ async function requireAdmin(req, res, next) {
         const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
         if (r.rows.length === 0) return res.status(401).json({ error: 'Unauthorized' });
         const roleFromUser = (r.rows[0].role || '').toString().toLowerCase();
-        if (roleFromUser === 'admin') return next();
+        if (roleFromUser === 'admin' || roleFromUser === 'super-admin' || roleFromUser === 'super_admin') return next();
         // Also allow admin if the user has an Admin role assignment in user_roles -> roles
         try {
             const rr = await pool.query('SELECT r.name FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [req.session.userId]);
@@ -2010,6 +2614,17 @@ async function requireAdmin(req, res, next) {
         }
         return res.status(403).json({ error: 'Forbidden - admin only' });
     } catch (e) { console.error('requireAdmin error', e); return res.status(500).json({ error: 'Server error' }); }
+}
+
+// Helper: check super-admin role
+async function isSuperAdmin(req) {
+    try {
+        if (!req.session || !req.session.userId) return false;
+        const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+        if (r.rows.length === 0) return false;
+        const roleFromUser = (r.rows[0].role || '').toString().toLowerCase();
+        return roleFromUser === 'super-admin' || roleFromUser === 'superadmin' || roleFromUser === 'super admin';
+    } catch (e) { return false; }
 }
 
 // Admin: read .env DB-related settings
@@ -2036,7 +2651,8 @@ app.get('/api/admin/env', requireAdmin, async (req, res) => {
 // Public: expose TinyMCE API key from server .env (if set)
 // This endpoint returns { key: '...' } so frontend can initialize TinyMCE with the configured key.
 // The key comes from process.env.TINY_MCE_API_KEY and is returned as-is. Caller should handle absence.
-app.get('/api/tiny_mce_key', requireAdmin, async (req, res) => {
+// NOTE: This endpoint is intentionally public (no authentication required) so editors can load TinyMCE
+app.get('/api/tiny_mce_key', async (req, res) => {
     try {
         const key = process.env.TINY_MCE_API_KEY || null;
         res.json({ key });
@@ -2321,7 +2937,8 @@ app.post('/api/admin/switch-db', requireAdmin, async (req, res) => {
 // SMTP/POP settings endpoints (stored in settings table under key 'smtp')
 app.get('/api/admin/smtp', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+        const businessId = req.session?.businessId || null;
+        const r = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
         if (r.rows.length === 0) return res.json(null);
         return res.json(r.rows[0].value);
     } catch (e) { console.error('Failed to get smtp settings', e); res.status(500).json({ error: String(e) }); }
@@ -2329,8 +2946,9 @@ app.get('/api/admin/smtp', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/smtp', requireAdmin, async (req, res) => {
     try {
+        const businessId = req.session?.businessId || null;
         const payload = req.body || {};
-        await pool.query("INSERT INTO dqai_settings (key, value) VALUES ('smtp',$1) ON CONFLICT (key) DO UPDATE SET value = $1", [payload]);
+        await pool.query("INSERT INTO dqai_settings (key, value, business_id) VALUES ('smtp',$1,$2) ON CONFLICT (key, business_id) DO UPDATE SET value = $1", [payload, businessId]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to save smtp settings', e); res.status(500).json({ ok: false, error: String(e) }); }
 });
@@ -2341,7 +2959,8 @@ app.post('/api/admin/test-smtp', requireAdmin, async (req, res) => {
         const { to, subject, text } = req.body || {};
         if (!to) return res.status(400).json({ ok: false, error: 'Missing to' });
         // load smtp settings
-        const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+        const businessId = req.session?.businessId || null;
+        const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
         const smtp = sres.rows[0] ? sres.rows[0].value : null;
         if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
         // dynamic import nodemailer
@@ -2405,7 +3024,14 @@ app.post('/auth/reset-password', async (req, res) => {
 // Admin: generic settings store (key/value JSON)
 app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_settings');
+        const businessId = req.session?.businessId || null;
+        // Query for business-specific settings first, then fallback to NULL (global) settings
+        // COALESCE picks business settings if they exist, otherwise global settings
+        const result = await pool.query(`
+            SELECT DISTINCT ON (key) key, value FROM dqai_settings 
+            WHERE business_id = $1 OR business_id IS NULL
+            ORDER BY key, business_id DESC NULLS LAST
+        `, [businessId]);
         const out = {};
         for (const r of result.rows) {
             // The value is stored as JSONB, so we need to extract the actual value
@@ -2429,6 +3055,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
+        const businessId = req.session?.businessId || null;
         const payload = req.body || {};
         for (const [k, v] of Object.entries(payload)) {
             // Convert the JS value to a JSON string and cast to jsonb on the SQL side.
@@ -2436,8 +3063,8 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
             // which can occur when calling functions like to_jsonb($2) with an unknown param type.
             const jsonString = JSON.stringify(v);
             await pool.query(
-                'INSERT INTO dqai_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = $2::jsonb',
-                [k, jsonString]
+                'INSERT INTO dqai_settings (key, value, business_id) VALUES ($1, $2::jsonb, $3) ON CONFLICT (key, business_id) DO UPDATE SET value = $2::jsonb',
+                [k, jsonString, businessId]
             );
         }
         res.json({ success: true });
@@ -2997,7 +3624,12 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
 // Admin: Datasets CRUD
 app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_datasets ORDER BY id DESC');
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        const r = isSuperAdmin && !businessId 
+            ? await pool.query('SELECT * FROM dqai_datasets ORDER BY id DESC')
+            : await pool.query('SELECT * FROM dqai_datasets WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC', [businessId]);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list datasets', e); res.status(500).json({ error: 'Failed to list datasets' }); }
 });
@@ -3005,7 +3637,12 @@ app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
 app.get('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
-        const r = await pool.query('SELECT * FROM dqai_datasets WHERE id = $1', [id]);
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        const r = isSuperAdmin && !businessId 
+            ? await pool.query('SELECT * FROM dqai_datasets WHERE id = $1', [id])
+            : await pool.query('SELECT * FROM dqai_datasets WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)', [id, businessId]);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to get dataset', e); res.status(500).json({ error: 'Failed to get dataset' }); }
@@ -3077,11 +3714,21 @@ app.post('/api/admin/datasets', requireAdmin, async (req, res) => {
             // accept show_in_menu flag if provided
             const showInMenu = (req.body && typeof req.body.show_in_menu !== 'undefined') ? !!req.body.show_in_menu : false;
             if (id) {
-                const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id]);
-                return res.json(r.rows[0]);
+                const businessId = req.session?.businessId || null;
+                const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+                const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+                if (isSuperAdmin && !businessId) {
+                    const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id]);
+                    return res.json(r.rows[0]);
+                } else {
+                    const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 AND (business_id = $7 OR business_id IS NULL) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id, businessId]);
+                    if (r.rows.length === 0) return res.status(403).json({ error: 'Not authorized to update this dataset' });
+                    return res.json(r.rows[0]);
+                }
             }
             const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
-            const r = await pool.query('INSERT INTO dqai_datasets (name, description, category, dataset_fields, show_in_menu, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, createdBy]);
+            const businessId = req.session?.businessId || null;
+            const r = await pool.query('INSERT INTO dqai_datasets (name, description, category, dataset_fields, show_in_menu, created_by, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, createdBy, businessId]);
             res.json(r.rows[0]);
         } catch (dbErr) {
             console.error('Failed to save dataset, normalizedFields preview:', typeof normalizedFields, JSON.stringify(normalizedFields).slice(0, 1000));
@@ -3094,8 +3741,18 @@ app.post('/api/admin/datasets', requireAdmin, async (req, res) => {
 app.delete('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
-        await pool.query('DELETE FROM dqai_dataset_content WHERE dataset_id = $1', [id]);
-        await pool.query('DELETE FROM dqai_datasets WHERE id = $1', [id]);
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        
+        if (isSuperAdmin && !businessId) {
+            await pool.query('DELETE FROM dqai_dataset_content WHERE dataset_id = $1', [id]);
+            await pool.query('DELETE FROM dqai_datasets WHERE id = $1', [id]);
+        } else {
+            await pool.query('DELETE FROM dqai_dataset_content WHERE dataset_id = $1 AND (business_id = $2 OR business_id IS NULL)', [id, businessId]);
+            const result = await pool.query('DELETE FROM dqai_datasets WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)', [id, businessId]);
+            if (result.rowCount === 0) return res.status(403).json({ error: 'Not authorized to delete this dataset' });
+        }
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete dataset', e); res.status(500).json({ error: 'Failed to delete dataset' }); }
 });
@@ -3105,8 +3762,17 @@ app.get('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
     try {
         const datasetId = Number(req.params.id);
         const limit = Number(req.query.limit || 200);
-        const r = await pool.query('SELECT * FROM dqai_dataset_content WHERE dataset_id = $1 ORDER BY id DESC LIMIT $2', [datasetId, limit]);
-        res.json({ rows: r.rows, count: r.rowCount });
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        
+        if (isSuperAdmin && !businessId) {
+            const r = await pool.query('SELECT * FROM dqai_dataset_content WHERE dataset_id = $1 ORDER BY id DESC LIMIT $2', [datasetId, limit]);
+            res.json({ rows: r.rows, count: r.rowCount });
+        } else {
+            const r = await pool.query('SELECT * FROM dqai_dataset_content WHERE dataset_id = $1 AND (business_id = $2 OR business_id IS NULL) ORDER BY id DESC LIMIT $3', [datasetId, businessId, limit]);
+            res.json({ rows: r.rows, count: r.rowCount });
+        }
     } catch (e) { console.error('Failed to list dataset content', e); res.status(500).json({ error: 'Failed to list dataset content' }); }
 });
 
@@ -3116,7 +3782,8 @@ app.post('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
         const payload = req.body || {};
         if (!payload || Object.keys(payload).length === 0) return res.status(400).json({ error: 'Missing dataset_data' });
         const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
-        const r = await pool.query('INSERT INTO dqai_dataset_content (dataset_id, dataset_data, created_by) VALUES ($1,$2,$3) RETURNING *', [datasetId, payload, createdBy]);
+        const businessId = req.session?.businessId || null;
+        const r = await pool.query('INSERT INTO dqai_dataset_content (dataset_id, dataset_data, created_by, business_id) VALUES ($1,$2,$3,$4) RETURNING *', [datasetId, payload, createdBy, businessId]);
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to save dataset content', e); res.status(500).json({ error: 'Failed to save dataset content' }); }
 });
@@ -3639,6 +4306,12 @@ app.post('/auth/login', async (req, res) => {
             } catch (e) { /* ignore */ }
 
             req.session.userId = user.id;
+            // set business id in session for scoping
+            try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
+            // Update last_login_at timestamp
+            try { 
+                await pool.query('UPDATE dqai_users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+            } catch (e) { console.warn('Failed to update last_login_at', e); }
             // Return sanitized user object (omit password)
             const safeUser = {
                 id: user.id,
@@ -3647,6 +4320,7 @@ app.post('/auth/login', async (req, res) => {
                 email: user.email,
                 role: user.role,
                 status: user.status,
+                businessId: user.business_id || null,
                 profileImage: user.profile_image || null
             };
             // Record login in audit_batches for server-side traceability
@@ -3665,13 +4339,25 @@ app.post('/auth/login', async (req, res) => {
         if (result.rows.length > 0) {
             user = result.rows[0];
         } else {
+            // ensure a demo business exists
+            let busRes = await pool.query("SELECT id FROM dqai_businesses WHERE name = 'Demo' LIMIT 1");
+            let busId = busRes.rows[0] ? busRes.rows[0].id : null;
+            if (!busId) {
+                const br = await pool.query('INSERT INTO dqai_businesses (name, phone) VALUES ($1,$2) RETURNING id', ['Demo', null]);
+                busId = br.rows[0].id;
+            }
             const insertRes = await pool.query(
-                'INSERT INTO dqai_users (first_name, last_name, email, role, status) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-                ['Demo', role, demoEmail, role, 'Active']
+                'INSERT INTO dqai_users (first_name, last_name, email, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+                ['Demo', role, demoEmail, role, 'Active', busId]
             );
             user = insertRes.rows[0];
         }
         req.session.userId = user.id;
+        try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
+        // Update last_login_at timestamp
+        try { 
+            await pool.query('UPDATE dqai_users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+        } catch (e) { console.warn('Failed to update last_login_at', e); }
         try {
             await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [user.id || null, JSON.stringify([{ type: 'login', email: user.email || null, success: true, ts: new Date().toISOString(), demo: true, ip: req.ip }])]);
         } catch (e) { console.error('Failed to write audit login record', e); }
@@ -3685,7 +4371,7 @@ app.post('/auth/login', async (req, res) => {
 // Public registration endpoint: allows self-registration for non-admin roles (public/controller/validator)
 app.post('/auth/register', async (req, res) => {
     try {
-        const { firstName, lastName, email, password } = req.body || {};
+        const { firstName, lastName, email, password, organizationName, phoneNumber } = req.body || {};
         if (!email) return res.status(400).json({ error: 'Missing email' });
         // Force self-registered users to be 'public' role only. All other roles must be created by an admin.
         const requested = 'public';
@@ -3704,7 +4390,16 @@ app.post('/auth/register', async (req, res) => {
         const requireVerify = (verifyToggle === 'true' || verifyToggle === '1');
         const initialStatus = requireVerify ? 'Pending' : 'Active';
 
-        const r = await pool.query('INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, first_name, last_name, email, role, status', [firstName || null, lastName || null, email, hashed || null, requested, initialStatus]);
+        // create business/organization record if organization details provided
+        let businessId = null;
+        try {
+            if (organizationName) {
+                const br = await pool.query('INSERT INTO dqai_businesses (name, phone) VALUES ($1, $2) RETURNING id', [organizationName, phoneNumber || null]);
+                businessId = br.rows[0] ? br.rows[0].id : null;
+            }
+        } catch (e) { console.error('Failed to create business during registration', e); }
+
+        const r = await pool.query('INSERT INTO dqai_users (first_name, last_name, email, password, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, role, status, business_id', [firstName || null, lastName || null, email, hashed || null, requested, initialStatus, businessId]);
         const u = r.rows[0];
 
         // If verification is required, create token and send email
@@ -3715,7 +4410,7 @@ app.post('/auth/register', async (req, res) => {
                 await pool.query('INSERT INTO dqai_email_verifications (user_id, token, expires_at) VALUES ($1,$2,$3)', [u.id, token, expires]);
 
                 // load smtp
-                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
                 const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
@@ -3735,7 +4430,9 @@ app.post('/auth/register', async (req, res) => {
         }
 
         // Optionally create default role assignment rows later via admin
-        res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, message: requireVerify ? 'Registered. Check your email for verification link.' : 'Registered' });
+        // set session user and business
+        try { req.session.userId = u.id; req.session.businessId = u.business_id || businessId || null; } catch (e) { /* ignore */ }
+        res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, businessId: u.business_id || businessId || null, message: requireVerify ? 'Registered. Check your email for verification link.' : 'Registered' });
     } catch (e) {
         console.error('Registration failed', e);
         res.status(500).json({ error: 'Registration failed' });
@@ -3785,6 +4482,7 @@ app.get('/api/current_user', async (req, res) => {
                 role: u.role,
                 status: u.status,
                 facilityId: u.facility_id,
+                businessId: u.business_id || null,
                 profileImage: u.profile_image || null
             });
         } else {
@@ -3806,7 +4504,22 @@ app.get('/api/logout', (req, res) => {
 // Programs
 app.get('/api/programs', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_programs ORDER BY created_at DESC');
+        // Scope programs to the user's business unless super-admin
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        
+        let q = 'SELECT * FROM dqai_programs';
+        const params = [];
+        
+        // Super-admin without business context sees all, otherwise filter by business_id
+        if (!isSuperAdmin || businessId) {
+            q += ' WHERE business_id = $1 OR business_id IS NULL';
+            params.push(businessId);
+        }
+        
+        q += ' ORDER BY created_at DESC';
+        const result = await pool.query(q, params);
         res.json(result.rows);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -3821,9 +4534,15 @@ app.post('/api/programs', async (req, res) => {
             );
             res.json(result.rows[0]);
         } else {
+            // attach business_id from session unless super-admin provided explicit businessId
+            let businessId = null;
+            if (req.session && req.session.userId) {
+                if (await isSuperAdmin(req) && req.body.businessId) businessId = req.body.businessId;
+                else businessId = req.session.businessId || null;
+            }
             const result = await pool.query(
-                'INSERT INTO dqai_programs (name, details, type, category) VALUES ($1, $2, $3, $4) RETURNING *',
-                [name, details, type, category]
+                'INSERT INTO dqai_programs (name, details, type, category, business_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                [name, details, type, category, businessId]
             );
             res.json(result.rows[0]);
         }
@@ -3891,7 +4610,22 @@ app.delete('/api/programs/:id', async (req, res) => {
 // Activities
 app.get('/api/activities', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_activities ORDER BY created_at DESC');
+        // Scope activities to business
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        
+        let q = 'SELECT * FROM dqai_activities';
+        const params = [];
+        
+        // Super-admin without business context sees all, otherwise filter by business_id
+        if (!isSuperAdmin || businessId) {
+            q += ' WHERE business_id = $1 OR business_id IS NULL';
+            params.push(businessId);
+        }
+        
+        q += ' ORDER BY created_at DESC';
+        const result = await pool.query(q, params);
         const mapped = result.rows.map(row => ({
             ...row,
             programId: row.program_id,
@@ -3912,6 +4646,11 @@ app.get('/api/activities/:id', async (req, res) => {
         const result = await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [id]);
         if (result.rowCount === 0) return res.status(404).send('Activity not found');
         const row = result.rows[0];
+        // enforce business scoping for non-super-admins
+        if (req.session && req.session.userId && !(await isSuperAdmin(req))) {
+            const bid = req.session.businessId || null;
+            if (String(row.business_id || '') !== String(bid || '')) return res.status(403).json({ error: 'Forbidden - access denied' });
+        }
         const mapped = {
             ...row,
             programId: row.program_id,
@@ -3952,9 +4691,15 @@ app.post('/api/activities', async (req, res) => {
             await syncQuestions(r.id, questions || []);
             res.json({ ...r, programId: r.program_id, startDate: r.start_date, endDate: r.end_date });
         } else {
+            // attach business_id from session unless super-admin provided
+            let businessId = null;
+            if (req.session && req.session.userId) {
+                if (await isSuperAdmin(req) && req.body.businessId) businessId = req.body.businessId;
+                else businessId = req.session.businessId || null;
+            }
             const result = await pool.query(
-                'INSERT INTO dqai_activities (title, subtitle, program_id, details, start_date, end_date, response_type, category, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
-                [title, req.body.subtitle || null, programId, details, startDate, endDate, req.body.responseType || req.body.response_type || null, category, status, createdBy]
+                'INSERT INTO dqai_activities (title, subtitle, program_id, details, start_date, end_date, response_type, category, status, created_by, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+                [title, req.body.subtitle || null, programId, details, startDate, endDate, req.body.responseType || req.body.response_type || null, category, status, createdBy, businessId]
             );
             const r = result.rows[0];
             // Persist questions from form definition into questions table
@@ -4020,7 +4765,21 @@ app.delete('/api/activities/:id', requireAdmin, async (req, res) => {
 // Facilities
 app.get('/api/facilities', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_facilities ORDER BY name ASC');
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        
+        let q = 'SELECT * FROM dqai_facilities';
+        const params = [];
+        
+        // Super-admin without business context sees all, otherwise filter by business_id
+        if (!isSuperAdmin || businessId) {
+            q += ' WHERE business_id = $1 OR business_id IS NULL';
+            params.push(businessId);
+        }
+        
+        q += ' ORDER BY name ASC';
+        const result = await pool.query(q, params);
         res.json(result.rows);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -4250,18 +5009,30 @@ app.get('/api/public/aggregates', async (req, res) => {
 });
 
 app.post('/api/facilities', requireAdmin, async (req, res) => {
-    const { name, state, lga, address, category, id, location, show_on_map } = req.body;
+    const { name, state, lga, address, category, id, location, show_on_map, ...customFields } = req.body;
     try {
+        // Separate custom fields (any field not in the standard set)
+        const standardFields = ['name', 'state', 'lga', 'address', 'category', 'id', 'location', 'show_on_map', 'business_id'];
+        const custom = Object.fromEntries(
+            Object.entries(req.body).filter(([key]) => !standardFields.includes(key))
+        );
+        const customFieldsJson = Object.keys(custom).length > 0 ? JSON.stringify(custom) : null;
+
         if (id) {
             const result = await pool.query(
-                'UPDATE dqai_facilities SET name=$1, state=$2, lga=$3, address=$4, category=$5, location=$6, show_on_map=$7 WHERE id=$8 RETURNING *',
-                [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map), id]
+                'UPDATE dqai_facilities SET name=$1, state=$2, lga=$3, address=$4, category=$5, location=$6, show_on_map=$7, custom_fields=$8 WHERE id=$9 RETURNING *',
+                [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map), customFieldsJson, id]
             );
             res.json(result.rows[0]);
         } else {
+            let businessId = null;
+            if (req.session && req.session.userId) {
+                if (await isSuperAdmin(req) && req.body.businessId) businessId = req.body.businessId;
+                else businessId = req.session.businessId || null;
+            }
             const result = await pool.query(
-                'INSERT INTO dqai_facilities (name, state, lga, address, category, location, show_on_map) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-                [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map)]
+                'INSERT INTO dqai_facilities (name, state, lga, address, category, location, show_on_map, custom_fields, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+                [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map), customFieldsJson, businessId]
             );
             res.json(result.rows[0]);
         }
@@ -4278,12 +5049,21 @@ app.delete('/api/facilities/:id', requireAdmin, async (req, res) => {
 // Users
 app.get('/api/users', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM dqai_users ORDER BY created_at DESC');
+        // Scope users to business for non-super-admins
+        let q = 'SELECT * FROM dqai_users';
+        const params = [];
+        if (req.session && req.session.userId && !(await isSuperAdmin(req))) {
+            q += ' WHERE business_id = $1';
+            params.push(req.session.businessId || null);
+        }
+        q += ' ORDER BY created_at DESC';
+        const result = await pool.query(q, params);
         const mapped = result.rows.map(r => ({
             ...r,
             firstName: r.first_name,
             lastName: r.last_name,
-            profileImage: r.profile_image || null
+            profileImage: r.profile_image || null,
+            businessId: r.business_id || null
         }));
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
@@ -4291,8 +5071,15 @@ app.get('/api/users', async (req, res) => {
 
 // Create or update user
 app.post('/api/users', async (req, res) => {
-    const { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId, profileImage } = req.body;
+    const { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId, profileImage, ...customFieldsRaw } = req.body;
     try {
+        // Separate custom fields (any field not in the standard set)
+        const standardFields = ['id', 'firstName', 'lastName', 'email', 'role', 'status', 'phoneNumber', 'password', 'facilityId', 'profileImage', 'business_id'];
+        const custom = Object.fromEntries(
+            Object.entries(req.body).filter(([key]) => !standardFields.includes(key))
+        );
+        const customFieldsJson = Object.keys(custom).length > 0 ? JSON.stringify(custom) : null;
+
         // If password provided, hash it before persisting
         let hashedPassword = null;
         if (password) {
@@ -4311,12 +5098,21 @@ app.post('/api/users', async (req, res) => {
             if (!actorId) return false;
             try {
                 const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [actorId]);
-                if (r.rows.length > 0 && (r.rows[0].role || '').toString().toLowerCase() === 'admin') return true;
+                if (r.rows.length > 0) {
+                    const role = (r.rows[0].role || '').toString().toLowerCase();
+                    if (role === 'admin' || role === 'super-admin' || role === 'super_admin') return true;
+                }
                 const rr = await pool.query('SELECT r.name FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [actorId]);
                 for (const row of rr.rows) { if (row && row.name && row.name.toString().toLowerCase() === 'admin') return true; }
             } catch (e) { /* ignore */ }
             return false;
         };
+
+        // Normalize admin role to 'Admin' (capital A) for consistent permissions
+        let normalizedRole = role;
+        if (role !== undefined) {
+            normalizedRole = normalizeAdminRole(role);
+        }
 
         if (id) {
             // fetch existing user for diff and existence check
@@ -4328,6 +5124,8 @@ app.post('/api/users', async (req, res) => {
             if (role !== undefined) {
                 const ok = await actorIsAdmin();
                 if (!ok) return res.status(403).json({ error: 'Forbidden - only admins can change roles' });
+                // Normalize admin role to 'Admin' (capital A) for consistent permissions
+                role = normalizeAdminRole(role);
             }
 
             // Build dynamic update so we only change fields that are provided.
@@ -4346,13 +5144,15 @@ app.post('/api/users', async (req, res) => {
             }
             if (profileImage !== undefined) { updates.push(`profile_image=$${idx++}`); values.push(profileImage); }
             // Only change role if explicitly provided (admin-checked above)
-            if (role !== undefined) { updates.push(`role=$${idx++}`); values.push(role); }
+            if (normalizedRole !== undefined) { updates.push(`role=$${idx++}`); values.push(normalizedRole); }
             // Only change password if provided
             if (password) { updates.push(`password=$${idx++}`); values.push(hashedPassword); }
+            // Handle custom fields
+            if (customFieldsJson !== null) { updates.push(`custom_fields=$${idx++}`); values.push(customFieldsJson); }
 
             if (updates.length === 0) {
                 const u = existing;
-                return res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
+                return res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
             }
 
             const sql = `UPDATE dqai_users SET ${updates.join(', ')} WHERE id=$${idx} RETURNING *`;
@@ -4384,7 +5184,8 @@ app.post('/api/users', async (req, res) => {
 
             // send notification email if smtp configured
             try {
-                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+                const businessId = req.session?.businessId || null;
+                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 if (smtp) {
                     try {
@@ -4400,20 +5201,26 @@ app.post('/api/users', async (req, res) => {
                 }
             } catch (e) { console.error('Failed to load smtp settings for user-update notification', e); }
 
-            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
         } else {
             // only admins may create new users
             const okCreate = await actorIsAdmin();
             if (!okCreate) return res.status(403).json({ error: 'Forbidden - only admins can create users' });
 
+            // Determine business for the created user (admins create within their business unless super-admin)
+            let businessIdForNewUser = null;
+            if (req.session && req.session.userId) {
+                if (await isSuperAdmin(req) && req.body.businessId) businessIdForNewUser = req.body.businessId;
+                else businessIdForNewUser = req.session.businessId || null;
+            }
             const result = await pool.query(
-                'INSERT INTO dqai_users (first_name, last_name, email, role, status, password, facility_id, profile_image) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-                [firstName, lastName, email, role, status, hashedPassword || null, facilityId || null, profileImage || null]
+                'INSERT INTO dqai_users (first_name, last_name, email, role, status, password, facility_id, profile_image, custom_fields, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+                [firstName, lastName, email, normalizedRole, status, hashedPassword || null, facilityId || null, profileImage || null, customFieldsJson, businessIdForNewUser]
             );
             const u = result.rows[0];
             // send welcome email if smtp configured
             try {
-                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessIdForNewUser]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 if (smtp) {
                     try {
@@ -4446,7 +5253,7 @@ app.post('/api/users', async (req, res) => {
                 await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, u.id, 'create', details]);
             } catch (e) { console.error('Failed to write audit event for user create', e); }
 
-            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
         }
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
@@ -4484,18 +5291,24 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 app.get('/api/reports', async (req, res) => {
     try {
         // If requester is a validator, only return reports assigned to them
-        let whereClause = '';
         const params = [];
+        const whereParts = [];
         try {
             if (req.session && req.session.userId) {
                 const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
                 if (r.rows.length > 0 && String(r.rows[0].role || '').toLowerCase() === 'validator') {
-                    whereClause = ' WHERE assigned_validator = $1';
+                    whereParts.push('assigned_validator = $' + (params.length + 1));
                     params.push(req.session.userId);
+                }
+                // enforce business scoping unless super-admin
+                if (!(await isSuperAdmin(req))) {
+                    whereParts.push('business_id = $' + (params.length + 1));
+                    params.push(req.session.businessId || null);
                 }
             }
         } catch (e) { /* ignore role-check errors */ }
 
+        const whereClause = whereParts.length ? (' WHERE ' + whereParts.join(' AND ')) : '';
         const q = `SELECT * FROM dqai_activity_reports${whereClause} ORDER BY submission_date DESC`;
         const result = await pool.query(q, params);
         const mapped = result.rows.map(r => ({
@@ -4520,6 +5333,11 @@ app.get('/api/reports/:id', async (req, res) => {
         const result = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
         if (result.rowCount === 0) return res.status(404).send('Report not found');
         const r = result.rows[0];
+        // enforce business scoping for non-super-admins
+        if (req.session && req.session.userId && !(await isSuperAdmin(req))) {
+            const bid = req.session.businessId || null;
+            if (String(r.business_id || '') !== String(bid || '')) return res.status(403).json({ error: 'Forbidden - access denied' });
+        }
         // If requester is a validator, ensure the report is assigned to them
         try {
             if (req.session && req.session.userId) {
@@ -5539,6 +6357,20 @@ app.get('/api/questions', async (req, res) => {
     } catch (e) { res.status(500).send(e.message); }
 });
 
+// Answer Groups endpoint: get unique answer_group values for an activity
+app.get('/api/answer_groups', async (req, res) => {
+    const { activityId } = req.query;
+    try {
+        if (!activityId) return res.status(400).send('Missing activityId');
+        const result = await pool.query(
+            'SELECT DISTINCT answer_group FROM dqai_answers WHERE activity_id = $1 AND answer_group IS NOT NULL AND answer_group != \'\' ORDER BY answer_group ASC',
+            [activityId]
+        );
+        const groups = result.rows.map(r => r.answer_group);
+        res.json(groups);
+    } catch (e) { res.status(500).send(e.message); }
+});
+
 // Answers endpoint: query by activityId, reportId, facilityId
 app.get('/api/answers', async (req, res) => {
     const { activityId, reportId, facilityId } = req.query;
@@ -5869,9 +6701,12 @@ app.post('/api/reports', async (req, res) => {
         }
         // Insert report row (default status to 'Pending' if not provided)
         const finalStatus = status || 'Pending';
+        // Determine business id for report (use session business by default)
+        let reportBusinessId = null;
+        if (req.session && req.session.userId) reportBusinessId = req.session.businessId || null;
         const result = await pool.query(
-            'INSERT INTO dqai_activity_reports (activity_id, user_id, facility_id, status, answers) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [activityId, userId, facilityId, finalStatus, answers || null]
+            'INSERT INTO dqai_activity_reports (activity_id, user_id, facility_id, status, answers, business_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [activityId, userId, facilityId, finalStatus, answers || null, reportBusinessId]
         );
         const report = result.rows[0];
 
@@ -5882,7 +6717,7 @@ app.post('/api/reports', async (req, res) => {
                     try {
                         const filename = file.name || file.filename || file.fileName || null;
                         const content = file.content || file.data || file; // expect JSON-able representation
-                        await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [activityId, facilityId, userId || null, req.session.userId || null, report.id, JSON.stringify(content), filename]);
+                        await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [activityId, facilityId, userId || null, req.session.userId || null, report.id, JSON.stringify(content), filename, reportBusinessId]);
                     } catch (e) {
                         console.error('Failed to persist uploaded file', e);
                     }
@@ -5914,7 +6749,7 @@ app.post('/api/reports', async (req, res) => {
                                         }
                                             const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
                                             const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
+                                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
                                     } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
                                 }
                             }
@@ -5931,7 +6766,7 @@ app.post('/api/reports', async (req, res) => {
                                 score = (typeof val.score !== 'undefined') ? val.score : null;
                             }
                             const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score]);
+                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
                         }
                     } catch (e) {
                         console.error('Failed to insert answer for question', qId, e);
@@ -6149,6 +6984,7 @@ if (process.env.SKIP_DB_ON_INIT === 'true') {
                 console.log(`[startup] CORS allowed origin: ${allowedOrigin}`);
             } catch (e) { }
             app.listen(PORT, () => {
+                logStartupInfo();
                 console.log(`Server running on port ${PORT}`);
             });
         })

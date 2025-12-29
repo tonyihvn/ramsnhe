@@ -22,6 +22,7 @@ import ProgramsPage from './pages/ProgramsPage';
 import IndicatorsPage from './pages/IndicatorsPage';
 import RolePermissionsPage from './pages/RolePermissionsPage';
 import LoginPage from './pages/LoginPage';
+import LandingPage from './pages/LandingPage';
 import SettingsPage from './pages/SettingsPage';
 import RequestPasswordPage from './pages/RequestPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
@@ -30,12 +31,43 @@ import DocsPage from './pages/DocsPage';
 import ApiConnectorsPage from './pages/ApiConnectorsPage';
 import DatasetsPage from './pages/DatasetsPage';
 import DatasetContentPage from './pages/DatasetContentPage';
+import SuperAdminConsole from './pages/SuperAdminConsole';
+import SuperAdminUserManagement from './pages/SuperAdminUserManagement';
+import SuperAdminLandingPageConfig from './pages/SuperAdminLandingPageConfig';
+import SuperAdminBusinesses from './pages/SuperAdminBusinesses';
+import SuperAdminFeedback from './pages/SuperAdminFeedback';
+import PaymentApprovalPage from './pages/PaymentApprovalPage';
+import AccountApprovalPage from './pages/AccountApprovalPage';
+import LandingPageDesignerPage from './pages/LandingPageDesignerPage';
 import { DataProvider, useMockData } from './hooks/useMockData';
+import { ThemeProvider } from './hooks/useTheme';
 import ErrorBoundary from './components/ErrorBoundary';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useMockData();
   if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { currentUser } = useMockData();
+  const isAdmin = currentUser && (
+    String(currentUser.role || '').toLowerCase() === 'admin' ||
+    String(currentUser.role || '').toLowerCase() === 'super-admin' ||
+    String(currentUser.role || '').toLowerCase() === 'super_admin'
+  );
+  if (!isAdmin) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
+const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { currentUser } = useMockData();
+  const isSuperAdmin = currentUser && (String(currentUser.role || '').toLowerCase() === 'super-admin' || String(currentUser.role || '').toLowerCase() === 'super_admin');
+  if (!isSuperAdmin) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;
@@ -73,8 +105,8 @@ const AppRoutes = () => {
       <Route path="/reports/builder" element={<ProtectedRoute><Layout><ReportBuilderPage /></Layout></ProtectedRoute>} />
       <Route path="/reports/:reportId" element={<ProtectedRoute><Layout><ReportViewPage /></Layout></ProtectedRoute>} />
 
-      <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
-      <Route path="/role-permissions" element={<ProtectedRoute><Layout><RolePermissionsPage /></Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<AdminRoute><Layout><SettingsPage /></Layout></AdminRoute>} />
+      <Route path="/role-permissions" element={<AdminRoute><Layout><RolePermissionsPage /></Layout></AdminRoute>} />
       <Route path="/indicators" element={<ProtectedRoute><Layout><IndicatorsPage /></Layout></ProtectedRoute>} />
       <Route path="/connectors" element={<ProtectedRoute><Layout><ApiConnectorsPage /></Layout></ProtectedRoute>} />
       <Route path="/datasets" element={<ProtectedRoute><Layout><DatasetsPage /></Layout></ProtectedRoute>} />
@@ -82,11 +114,21 @@ const AppRoutes = () => {
       <Route path="/docs" element={<Layout><DocsPage /></Layout>} />
       <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
 
-      <Route path="/users" element={<ProtectedRoute><Layout><UsersPage /></Layout></ProtectedRoute>} />
+      <Route path="/users" element={<AdminRoute><Layout><UsersPage /></Layout></AdminRoute>} />
 
       <Route path="/facilities" element={<ProtectedRoute><Layout><FacilitiesPage /></Layout></ProtectedRoute>} />
 
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Super Admin Routes */}
+      <Route path="/super-admin" element={<SuperAdminRoute><SuperAdminConsole /></SuperAdminRoute>} />
+      <Route path="/super-admin/users" element={<SuperAdminRoute><SuperAdminUserManagement /></SuperAdminRoute>} />
+      <Route path="/super-admin/businesses" element={<SuperAdminRoute><SuperAdminBusinesses /></SuperAdminRoute>} />
+      <Route path="/super-admin/landing-page" element={<SuperAdminRoute><SuperAdminLandingPageConfig /></SuperAdminRoute>} />
+      <Route path="/super-admin/feedback" element={<SuperAdminRoute><SuperAdminFeedback /></SuperAdminRoute>} />
+      <Route path="/super-admin/payment-approvals" element={<SuperAdminRoute><Layout><PaymentApprovalPage /></Layout></SuperAdminRoute>} />
+      <Route path="/super-admin/account-approvals" element={<SuperAdminRoute><Layout><AccountApprovalPage /></Layout></SuperAdminRoute>} />
+      <Route path="/super-admin/landing-page-designer" element={<SuperAdminRoute><Layout><LandingPageDesignerPage /></Layout></SuperAdminRoute>} />
+
+      <Route path="/" element={<LandingPage />} />
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
@@ -98,11 +140,13 @@ const App: React.FC = () => {
   return (
     <DataProvider>
       <ErrorBoundary>
-        <MetadataProvider>
-          <HashRouter>
-            <AppRoutes />
-          </HashRouter>
-        </MetadataProvider>
+        <ThemeProvider>
+          <MetadataProvider>
+            <HashRouter>
+              <AppRoutes />
+            </HashRouter>
+          </MetadataProvider>
+        </ThemeProvider>
       </ErrorBoundary>
     </DataProvider>
   );

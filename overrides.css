@@ -50,6 +50,29 @@
     --app-font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
 }
 
+/* Responsive modal styles - 100% on mobile, 90% on large screens */
+/* Fixed/Modal divs should respect viewport width and avoid overflow */
+.fixed.inset-0 {
+    overflow: auto !important;
+}
+
+/* Ensure modals respond to screen size */
+@media (max-width: 640px) {
+    .fixed.inset-0 .inline-block,
+    .fixed.inset-0 > div > div > .inline-block {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+}
+
+@media (min-width: 641px) {
+    .fixed.inset-0 .inline-block,
+    .fixed.inset-0 > div > div > .inline-block {
+        width: 90% !important;
+    }
+}
+}
+
 /* Ensure inputs and editor content default to left-to-right to avoid accidental RTL rendering */
 input,
 textarea,

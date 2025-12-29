@@ -201,13 +201,15 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
                     <span className="text-xs text-gray-700">Searchable (enable type-to-filter in form)</span>
                   </label>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
+                  <div className="text-xs text-gray-500 font-medium mb-2">Label · Value · Score · Show If · Actions</div>
                   {(question.options || []).map((o: any, i: number) => (
-                    <div key={i} className="flex gap-2 items-center">
-                      <input className="border px-2 py-1 rounded w-1/3" value={o.label} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, label: e.target.value } : opt) })} />
-                      <input className="border px-2 py-1 rounded w-1/3" value={o.value} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, value: e.target.value } : opt) })} />
-                      <input type="number" step="any" className="border px-2 py-1 rounded w-1/6" value={o.score ?? ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, score: e.target.value === '' ? undefined : Number(e.target.value) } : opt) })} placeholder="score" />
-                      <button className="text-red-500" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).filter((_: any, idx: number) => idx !== i) })}>Remove</button>
+                    <div key={i} className="flex gap-2 items-center text-sm">
+                      <input className="border px-2 py-1 rounded text-xs flex-1" placeholder="Label" value={o.label} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, label: e.target.value } : opt) })} />
+                      <input className="border px-2 py-1 rounded text-xs flex-1" placeholder="Value" value={o.value} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, value: e.target.value } : opt) })} />
+                      <input type="number" step="any" className="border px-2 py-1 rounded text-xs w-16" placeholder="Score" value={o.score ?? ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, score: e.target.value === '' ? undefined : Number(e.target.value) } : opt) })} />
+                      <input className="border px-2 py-1 rounded text-xs flex-1" placeholder="e.g. dept === 'HR'" value={o.showif ?? ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).map((opt: any, idx: number) => idx === i ? { ...opt, showif: e.target.value } : opt) })} />
+                      <button className="text-red-500 hover:text-red-700 text-sm font-medium" onClick={() => updateQuestion(pIdx, sIdx, qIdx, { options: (question.options || []).filter((_: any, idx: number) => idx !== i) })}>✕</button>
                     </div>
                   ))}
                   <div>
@@ -844,23 +846,28 @@ const BuildFormPage: React.FC = () => {
         const worksheet = workbook.worksheets[0];
         // Read options from second sheet named 'options' (or second worksheet) if present
         const optionsSheet = workbook.getWorksheet('options') || workbook.worksheets[1];
-        const optionsMap: Record<string, Array<{ value: string; label: string }>> = {};
+        const optionsMap: Record<string, Array<{ value: string; label: string; showif?: string; score?: number }>> = {};
         if (optionsSheet) {
-          // Expect header row with columns: name, value, label (case-insensitive)
+          // Expect header row with columns: name, value, label, showif, score (case-insensitive)
           const optHeaders: string[] = [];
           optionsSheet.getRow(1).eachCell((cell) => optHeaders.push(String(cell.value || '').toLowerCase()));
           const nameIdx = optHeaders.findIndex(h => h === 'name' || h === 'field_name' || h === 'fieldname');
           const valueIdx = optHeaders.findIndex(h => h === 'value');
           const labelIdx = optHeaders.findIndex(h => h === 'label');
+          const showifIdx = optHeaders.findIndex(h => h === 'showif' || h === 'show_if' || h === 'show-if');
+          const scoreIdx = optHeaders.findIndex(h => h === 'score');
           if (nameIdx !== -1 && valueIdx !== -1) {
             optionsSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
               if (rowNumber === 1) return;
               const name = String(row.getCell(nameIdx + 1).value || '').trim();
               const value = String(row.getCell(valueIdx + 1).value || '').trim();
               const label = labelIdx !== -1 ? String(row.getCell(labelIdx + 1).value || '').trim() : value;
+              const showif = showifIdx !== -1 ? String(row.getCell(showifIdx + 1).value || '').trim() : '';
+              const scoreVal = scoreIdx !== -1 ? row.getCell(scoreIdx + 1).value : undefined;
+              const score = scoreVal !== undefined && scoreVal !== null ? Number(scoreVal) : undefined;
               if (!name) return;
               if (!optionsMap[name]) optionsMap[name] = [];
-              optionsMap[name].push({ value, label });
+              optionsMap[name].push({ value, label, ...(showif ? { showif } : {}), ...(score !== undefined ? { score } : {}) });
             });
           }
         }
@@ -986,9 +993,9 @@ const BuildFormPage: React.FC = () => {
       sheet.addRow(['What is the program name?', 'textbox', 'Enter program title', 'program_name', 'true', 12, 'Main', 'General', '', '', 0, false, 'Programs']);
 
       const opts = wb.addWorksheet('options');
-      opts.addRow(['name', 'value', 'label']);
-      opts.addRow(['program_type', 'gov', 'Government']);
-      opts.addRow(['program_type', 'ngo', 'NGO']);
+      opts.addRow(['name', 'value', 'label', 'showif', 'score']);
+      opts.addRow(['program_type', 'gov', 'Government', '', 0]);
+      opts.addRow(['program_type', 'ngo', 'NGO', 'org_size > 50', 0]);
 
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1188,10 +1195,10 @@ const BuildFormPage: React.FC = () => {
             <li><strong>Question</strong> (required) — question text.</li>
             <li><strong>Type</strong> — one of: textbox, textarea, number, date, time, dropdown, radio, checkbox, file, computed.</li>
             <li><strong>Helper Text</strong> — optional helper or hint text.</li>
-            <li><strong>Options</strong> — (DEPRECATED inline format) Options must be supplied via a separate worksheet named <strong>options</strong>. The <strong>options</strong> worksheet should contain the columns: <code>name</code> (the target question's <em>field_name</em>), <code>value</code>, and <code>label</code>. Add one row per option; multiple rows with the same <code>name</code> will attach multiple options to the same question. Example rows:
+            <li><strong>Options</strong> — (DEPRECATED inline format) Options must be supplied via a separate worksheet named <strong>options</strong>. The <strong>options</strong> worksheet should contain 5 columns: <code>name</code> (the target question's <em>field_name</em>), <code>value</code>, <code>label</code>, <code>showif</code> (optional), and <code>score</code> (optional). Add one row per option; multiple rows with the same <code>name</code> will attach multiple options to the same question. The <code>showif</code> column can contain conditional expressions (e.g., <code>dept === 'HR'</code>) to hide/show options based on other field values. The <code>score</code> column contains numeric values for scoring assessments. Example rows:
               <div className="ml-4 mt-2">
-                <code>program_type,gov,Government</code><br />
-                <code>program_type,ngo,NGO</code>
+                <code>program_type,gov,Government,,0</code><br />
+                <code>program_type,ngo,NGO,org_size &gt; 50,5</code>
               </div>
             </li>
             <li><strong>Required</strong> — "true" or "false" (optional). Marks the question as mandatory when true.</li>

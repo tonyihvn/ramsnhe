@@ -7,6 +7,7 @@ import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
+import { filterOptionsByCondition } from '../utils/conditionEvaluator';
 
 import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -160,7 +161,7 @@ const SearchableSelect: React.FC<{
     );
 };
 
-    const RenderQuestion = ({ question, value, onChange, facilities, users, disabled }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean }) => {
+    const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any> }) => {
         // Local state/hooks used by some input types (e.g. location picker)
         const [showLocationMap, setShowLocationMap] = useState(false);
         const handleLocationClick = () => setShowLocationMap(s => !s);
@@ -177,15 +178,16 @@ const SearchableSelect: React.FC<{
             case AnswerType.TIME:
                 return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} disabled={!!disabled} />;
             case AnswerType.DROPDOWN:
+                const filteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
                 if (question.metadata && question.metadata.searchable) {
                     return (
                         <SearchableSelect
-                            options={(question.options || []).map(o => ({ value: o.value as any, label: o.label, score: o.score }))}
+                            options={filteredOptions.map(o => ({ value: o.value as any, label: o.label, score: o.score }))}
                             value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
                             onChange={(val: any) => {
                                 if (val && typeof val === 'object' && 'value' in val) onChange(val);
                                 else {
-                                    const sel = (question.options || []).find(o => String(o.value) === String(val));
+                                    const sel = filteredOptions.find(o => String(o.value) === String(val));
                                     if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
                                     else onChange(val);
                                 }
@@ -201,19 +203,20 @@ const SearchableSelect: React.FC<{
                         type="select"
                         value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
                         onChange={(val: any) => {
-                            const sel = (question.options || []).find(o => String(o.value) === String(val));
+                            const sel = filteredOptions.find(o => String(o.value) === String(val));
                             if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
                             else onChange(val);
                         }}
-                        options={(question.options || []).map(o => ({ value: o.value as any, label: o.label }))}
+                        options={filteredOptions.map(o => ({ value: o.value as any, label: o.label }))}
                         placeholder="Select..."
                         disabled={!!disabled}
                     />
                 );
             case AnswerType.RADIO:
+                const radioFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
                 return (
                     <div>
-                        {question.options?.map((opt, idx) => (
+                        {radioFilteredOptions?.map((opt, idx) => (
                             <MInput
                                 key={idx}
                                 type="radio"
@@ -230,6 +233,7 @@ const SearchableSelect: React.FC<{
                     </div>
                 );
             case AnswerType.CHECKBOX:
+                const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
                 const currentVals = Array.isArray(value) ? value : [];
                 const handleCheck = (val: string, checked: boolean) => {
                     if (checked) onChange([...currentVals, val]);
@@ -237,7 +241,7 @@ const SearchableSelect: React.FC<{
                 };
                 return (
                     <div>
-                        {question.options?.map((opt, idx) => (
+                        {checkboxFilteredOptions?.map((opt, idx) => (
                             <MInput key={idx} type="checkbox" name={`${question.id}-${idx}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
                         ))}
                     </div>
@@ -590,8 +594,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
     const hasPermissionFlag = (flag: 'can_view'|'can_create'|'can_edit'|'can_delete', pageKey: string, sectionKey?: string) => {
         try {
-            // Admins always see everything in the UI (builder/admin workflows rely on full visibility)
-            if (currentUser && String(currentUser.role || '').toLowerCase() === 'admin') return true;
+            // Admins and super admins always see everything in the UI (builder/admin workflows rely on full visibility)
+            const role = currentUser && String(currentUser.role || '').toLowerCase();
+            if (role === 'admin' || role === 'super-admin' || role === 'super_admin') return true;
             if (!pagePerms) return true; // default allow when no permissions set
             const norm = normalizePageKey(pageKey || '');
             // exact match first (page+section)
@@ -895,7 +900,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
     // If editing an existing report that is Completed, do not allow edits for non-admins
     const isCompleted = editingReport && (String(editingReport.status || '').toLowerCase() === 'completed');
-    const isAdmin = currentUser && String(currentUser.role || '').toLowerCase() === 'admin';
+    const isAdmin = currentUser && (String(currentUser.role || '').toLowerCase() === 'admin' || String(currentUser.role || '').toLowerCase() === 'super-admin' || String(currentUser.role || '').toLowerCase() === 'super_admin');
     if (isCompleted && !isAdmin) {
         return (
             <Card>
@@ -990,7 +995,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                                 <div key={q.id} className={colClass}>
                                                                     {/* Render the question input; label is provided by the input component itself to avoid duplication */}
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} />
+                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={answers} />
                                                                     {/* Show reviewer comment field below if enabled (but not for paragraph elements) */}
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
                                                                         <div className="mt-2">
@@ -1049,7 +1054,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                             return (
                                                                 <div key={`${q.id}_${rowIndex}`} className={colClass}>
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} />
+                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={row} />
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
                                                                         <div className="mt-2">
                                                                             <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>

@@ -5,14 +5,20 @@ import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import MInput from '../components/ui/MInput';
+import DynamicFormRenderer from '../components/DynamicFormRenderer';
 import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { User } from '../types';
+import { FormSchema } from '../components/FormBuilder';
 
 const UsersPage: React.FC = () => {
   const { users, saveUser, deleteUser, currentUser, facilities } = useMockData();
+  const [userSchema, setUserSchema] = useState<FormSchema | null>(null);
   const [allRoles, setAllRoles] = useState<{ id: number, name: string }[]>([]);
   const [allPermissions, setAllPermissions] = useState<{ id: number, name: string }[]>([]);
   useEffect(() => {
+    // Load user form schema
+    loadUserSchema();
+    
     // Fetch roles and permissions from backend
     fetch('/api/admin/roles', { credentials: 'include' })
       .then(async (r) => { if (!r.ok) { setAllRoles([]); return; } const j = await r.json(); setAllRoles(Array.isArray(j) ? j : []); })
@@ -26,7 +32,29 @@ const UsersPage: React.FC = () => {
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
 
-  const canEdit = currentUser?.role === 'Admin';
+  const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
+
+  const loadUserSchema = async () => {
+    try {
+      const response = await fetch('/api/form-schemas/user', {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Normalize fields to ensure showInList property exists
+        const normalizedData = {
+          ...data,
+          fields: (data.fields || []).map((f: any) => ({
+            ...f,
+            showInList: f.showInList ?? false
+          }))
+        };
+        setUserSchema(normalizedData);
+      }
+    } catch (error) {
+      console.error('Failed to load user form schema:', error);
+    }
+  };
 
   const openModal = (u?: User) => {
     setAvatarFile(null);
@@ -102,6 +130,9 @@ const UsersPage: React.FC = () => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              {userSchema?.fields?.filter(f => f.showInList).map((field) => (
+                <th key={field.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{field.label}</th>
+              ))}
               {canEdit && <th className="relative px-6 py-3"><span className="sr-only">Actions</span></th>}
             </tr>
           </thead>
@@ -124,9 +155,6 @@ const UsersPage: React.FC = () => {
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.role}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <a href={`#/users/${user.id}/dashboard`} className="text-primary-600 hover:underline">Open Dashboard</a>
-                </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {user.status === 'Active' && (
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
@@ -138,6 +166,11 @@ const UsersPage: React.FC = () => {
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-100 text-amber-800">Suspended</span>
                   )}
                 </td>
+                {userSchema?.fields?.filter(f => f.showInList).map((field) => (
+                  <td key={field.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {String((user as any)[field.name] || '-')}
+                  </td>
+                ))}
                 {canEdit && (
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                     <button onClick={() => openModal(user)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
@@ -262,6 +295,15 @@ const UsersPage: React.FC = () => {
             <MInput label="Status" type="select" value={currentUserEdit.status} onChange={v => setCurrentUserEdit({ ...currentUserEdit, status: v })}
               options={[{ value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }, { value: 'Suspended', label: 'Suspended' }]} />
           </div>
+
+          {/* Render dynamic custom fields from form schema */}
+          <DynamicFormRenderer
+            formType="user"
+            formData={currentUserEdit}
+            onChange={(fieldName, value) => {
+              setCurrentUserEdit({ ...currentUserEdit, [fieldName]: value });
+            }}
+          />
         </div>
       </Modal>
     </div>

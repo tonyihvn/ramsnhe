@@ -4,18 +4,31 @@ import Card from '../components/ui/Card';
 import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
+import DynamicFormRenderer from '../components/DynamicFormRenderer';
 import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Facility } from '../types';
+import { FormSchema } from '../components/FormBuilder';
 
 const FacilitiesPage: React.FC = () => {
   const { facilities, saveFacility, deleteFacility, currentUser } = useMockData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentFacility, setCurrentFacility] = useState<Partial<Facility>>({});
+  const [facilitySchema, setFacilitySchema] = useState<FormSchema | null>(null);
 
-  const canEdit = currentUser?.role === 'Admin';
+  const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
 
   const openModal = (fac?: Facility) => {
-    setCurrentFacility(fac || { name: '', state: '', lga: '', address: '', category: '' });
+    const newFacility = fac || { name: '', state: '', lga: '', address: '', category: '' };
+    setCurrentFacility(newFacility);
+    // Initialize availableLgas if facility already has a state
+    if (newFacility.state && lgasMap) {
+      const mapped = (lgasMap as any)[newFacility.state] || [];
+      if (mapped && mapped.length) {
+        setAvailableLgas(mapped);
+      }
+    } else {
+      setAvailableLgas([]);
+    }
     setIsModalOpen(true);
   };
 
@@ -24,15 +37,54 @@ const FacilitiesPage: React.FC = () => {
   const [availableLgas, setAvailableLgas] = useState<string[]>([]);
 
   useEffect(() => {
+    // Load facility form schema
+    loadFacilitySchema();
+    
     // load states list
-    fetch('/metadata/nigerian-states.json').then(r => r.ok ? r.json() : []).then((data) => {
-      if (Array.isArray(data)) setStatesList(data as string[]);
-    }).catch(() => { });
+    fetch('/metadata/nigerian-states.json')
+      .then(r => r.ok ? r.json() : [])
+      .then((data) => {
+        if (Array.isArray(data)) {
+          console.log('States loaded:', data.length, 'states');
+          setStatesList(data as string[]);
+        }
+      })
+      .catch((e) => console.error('Failed to load states:', e));
+    
     // load small lgas map (optional file)
-    fetch('/metadata/lgas_by_state.json').then(r => r.ok ? r.json() : {}).then((data) => {
-      if (data && typeof data === 'object') setLgasMap(data as Record<string, string[]>);
-    }).catch(() => { });
+    fetch('/metadata/lgas_by_state.json')
+      .then(r => r.ok ? r.json() : {})
+      .then((data) => {
+        if (data && typeof data === 'object') {
+          console.log('LGA map loaded:', Object.keys(data).length, 'states have LGAs');
+          console.log('LGA map keys:', Object.keys(data));
+          setLgasMap(data as Record<string, string[]>);
+        }
+      })
+      .catch((e) => console.error('Failed to load LGA map:', e));
   }, []);
+
+  const loadFacilitySchema = async () => {
+    try {
+      const response = await fetch('/api/form-schemas/facility', {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Normalize fields to ensure showInList property exists
+        const normalizedData = {
+          ...data,
+          fields: (data.fields || []).map((f: any) => ({
+            ...f,
+            showInList: f.showInList ?? false
+          }))
+        };
+        setFacilitySchema(normalizedData);
+      }
+    } catch (error) {
+      console.error('Failed to load facility form schema:', error);
+    }
+  };
 
   const handleSave = () => {
     if (currentFacility.name && currentFacility.state) {
@@ -57,6 +109,9 @@ const FacilitiesPage: React.FC = () => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
+              {facilitySchema?.fields?.filter(f => f.showInList).map((field) => (
+                <th key={field.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{field.label}</th>
+              ))}
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dashboard</th>
               {canEdit && <th className="relative px-6 py-3"><span className="sr-only">Actions</span></th>}
             </tr>
@@ -68,6 +123,11 @@ const FacilitiesPage: React.FC = () => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.category}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.lga}, {facility.state}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.address}</td>
+                {facilitySchema?.fields?.filter(f => f.showInList).map((field) => (
+                  <td key={field.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {String((facility as any)[field.name] || '-')}
+                  </td>
+                ))}
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   <a href={`#/facilities/${facility.id}/dashboard`} className="text-primary-600 hover:underline">Open Dashboard</a>
                 </td>
@@ -110,23 +170,40 @@ const FacilitiesPage: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700">State</label>
               <select value={currentFacility.state || ''} onChange={(e) => {
                 const st = e.target.value;
+                console.log('State selected:', st);
+                console.log('Available lgasMap keys:', Object.keys(lgasMap));
                 setCurrentFacility({ ...currentFacility, state: st, lga: '' });
+                
                 // load LGAs from in-memory map if available
                 const mapped = (lgasMap && (lgasMap as any)[st]) || [];
+                console.log('LGAs for state:', st, '=', mapped);
+                
                 if (mapped && mapped.length) {
+                  console.log('Setting availableLgas:', mapped);
                   setAvailableLgas(mapped);
                 } else {
+                  console.log('No LGAs found in map, attempting to fetch per-state file');
                   // attempt to fetch a per-state LGAs file (optional)
-                  fetch(`/metadata/lgas/${encodeURIComponent(st)}.json`).then(r => {
-                    if (!r.ok) return [];
-                    return r.json();
-                  }).then((data) => {
-                    if (Array.isArray(data)) {
-                      setAvailableLgas(data as string[]);
-                    } else {
+                  fetch(`/metadata/lgas/${encodeURIComponent(st)}.json`)
+                    .then(r => {
+                      if (!r.ok) {
+                        console.log('Per-state LGA file not found for:', st);
+                        return [];
+                      }
+                      return r.json();
+                    })
+                    .then((data) => {
+                      if (Array.isArray(data)) {
+                        console.log('Loaded LGAs from per-state file:', st, data);
+                        setAvailableLgas(data as string[]);
+                      } else {
+                        setAvailableLgas([]);
+                      }
+                    })
+                    .catch((e) => {
+                      console.error('Error loading per-state LGAs:', e);
                       setAvailableLgas([]);
-                    }
-                  }).catch(() => setAvailableLgas([]));
+                    });
                 }
               }} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm">
                 <option value="">-- Select state --</option>
@@ -160,6 +237,15 @@ const FacilitiesPage: React.FC = () => {
               <label htmlFor="fac-show-map" className="ml-2 text-sm text-gray-700">Show on map</label>
             </div>
           </div>
+
+          {/* Render dynamic custom fields from form schema */}
+          <DynamicFormRenderer
+            formType="facility"
+            formData={currentFacility}
+            onChange={(fieldName, value) => {
+              setCurrentFacility({ ...currentFacility, [fieldName]: value });
+            }}
+          />
         </div>
       </Modal>
     </div>
