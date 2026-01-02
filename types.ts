@@ -151,3 +151,27 @@ export interface User {
   business_id?: string; // Business/Organization ID for multi-tenancy
   canSwitchBusiness?: boolean; // Super admin flag for switching businesses
 }
+
+export interface Plan {
+  id: string;
+  name: string;
+  description?: string;
+  max_programs_per_business: number;
+  max_activities_per_program: number;
+  max_users?: number | null; // null means unlimited
+  features?: Record<string, any>; // Flexible feature flags (e.g., { "reports": true, "analytics": false })
+  price_monthly?: number; // Optional pricing information
+  status: 'Active' | 'Inactive';
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface PlanAssignment {
+  id: string;
+  business_id: string;
+  plan_id: string;
+  assigned_at: string;
+  assigned_by: string; // User ID of super admin who assigned the plan
+  expires_at?: string; // Optional expiration date for trial periods
+  status: 'Active' | 'Expired' | 'Cancelled';
+}

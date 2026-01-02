@@ -43,6 +43,7 @@ const LoginPage: React.FC = () => {
   const [regLoading, setRegLoading] = useState(false);
   const [regMessage, setRegMessage] = useState<string | null>(null);
   const [regError, setRegError] = useState<string | null>(null);
+  const [landingConfig, setLandingConfig] = useState<any>(null);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -110,7 +111,7 @@ const LoginPage: React.FC = () => {
     setRegLoading(false);
   };
 
-  // Fetch landing page config to check if registrations are allowed
+  // Fetch landing page config to check if registrations are allowed and get styling
   React.useEffect(() => {
     const fetchConfig = async () => {
       try {
@@ -118,6 +119,7 @@ const LoginPage: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           const config = data.config || data;
+          setLandingConfig(config);
           setAllowNewRegistrations(config.allowNewRegistrations !== false);
           setLockedOrgId(config.lockedOrganizationId || config.locked_organization_id || null);
         }
@@ -129,26 +131,33 @@ const LoginPage: React.FC = () => {
     fetchConfig();
   }, []);
 
+  // Determine background image and app name
+  const heroFeaturedImages = landingConfig?.heroFeaturedImages || landingConfig?.hero_featured_images || [];
+  const backgroundImage = (heroFeaturedImages && heroFeaturedImages.length > 0) ? heroFeaturedImages[0] : settings?.backgroundImage;
+  const appName = landingConfig?.appName || 'OneApp';
+  const logoUrl = landingConfig?.logoUrl;
+  const navBackgroundColor = landingConfig?.navBackgroundColor || landingConfig?.nav_background_color || '#ffffff';
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: settings?.backgroundImage ? `url(${settings.backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: backgroundImage ? `url(${backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
       <div className="max-w-md w-full space-y-8 bg-white bg-opacity-90 p-10 rounded-lg shadow-md" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.15)', backdropFilter: 'blur(4px)' }}>
         <div>
           <div className="mx-auto h-12 w-12 text-primary-600 flex justify-center">
-            {settings?.logoDataUrl ? <img src={settings.logoDataUrl!} alt="logo" className="w-12 h-12 object-contain" /> : (
+            {logoUrl ? <img src={logoUrl} alt="logo" className="w-12 h-12 object-contain" /> : (settings?.logoDataUrl ? <img src={settings.logoDataUrl!} alt="logo" className="w-12 h-12 object-contain" /> : (
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
               </svg>
-            )}
+            ))}
           </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in</h2>
-          <div className="mt-2 text-center">
-            <div className="text-sm text-gray-600">{settings?.logoText || ''}</div>
-            <div className="mt-1"><Typewriter text={settings?.organizationName} /></div>
-          </div>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Enter your email and password to sign in.
-          </p>
         </div>
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in</h2>
+        <div className="mt-2 text-center">
+          <div className="text-sm text-gray-600">{settings?.logoText || ''}</div>
+          <div className="mt-1"><Typewriter text={appName} /></div>
+        </div>
+        <p className="mt-2 text-center text-sm text-gray-600">
+          Enter your email and password to sign in.
+        </p>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
             <MInput id="email" name="email" type="email" label="Email" value={email} onChange={v => setEmail(v)} placeholder="Email address" class="active" />
@@ -198,7 +207,6 @@ const LoginPage: React.FC = () => {
             </div>
           </div>
         </Modal>
-
       </div>
     </div>
   );

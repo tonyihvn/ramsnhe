@@ -1,6 +1,10 @@
 -- Multi-Tenancy and Super User Management System Migration
 -- This migration adds comprehensive multi-tenancy support with business_id scoping
 -- and super-admin capabilities for managing multiple businesses and users
+--
+-- NOTE: The dqai_ prefix in this file will be dynamically replaced with the TABLE_PREFIX
+-- environment variable value during startup (see initializeSetup.js). If TABLE_PREFIX is set
+-- to a different value (e.g., nherams_), all dqai_ prefixes will be replaced automatically.
 
 -- ======================================
 -- 1. Create businesses table (already defined in initDb but ensuring it's here)
@@ -153,6 +157,37 @@ CREATE TABLE IF NOT EXISTS dqai_audit_logs (
 -- ======================================
 -- 8. Create indexes for performance
 -- ======================================
+-- ======================================
+-- Plans and Plan Assignments (SaaS Tier Management)
+-- ======================================
+CREATE TABLE IF NOT EXISTS dqai_plans (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    max_programs_per_business INTEGER DEFAULT 10,
+    max_activities_per_program INTEGER DEFAULT 50,
+    max_users INTEGER, -- NULL means unlimited
+    features JSONB DEFAULT '{}'::jsonb, -- Flexible feature flags
+    price_monthly DECIMAL(10, 2),
+    status TEXT DEFAULT 'Active', -- Active, Inactive
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dqai_plan_assignments (
+    id SERIAL PRIMARY KEY,
+    business_id INTEGER NOT NULL REFERENCES dqai_businesses(id) ON DELETE CASCADE,
+    plan_id INTEGER NOT NULL REFERENCES dqai_plans(id) ON DELETE RESTRICT,
+    assigned_at TIMESTAMP DEFAULT NOW(),
+    assigned_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+    expires_at TIMESTAMP, -- NULL means no expiration
+    status TEXT DEFAULT 'Active', -- Active, Expired, Cancelled
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(business_id, status) -- Only one active plan per business
+);
+
+-- Create indexes for plan queries
 CREATE INDEX IF NOT EXISTS idx_users_business_id ON dqai_users(business_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON dqai_users(email);
 CREATE INDEX IF NOT EXISTS idx_programs_business_id ON dqai_programs(business_id);
@@ -168,3 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_user_approvals_status ON dqai_user_approvals(stat
 CREATE INDEX IF NOT EXISTS idx_audit_logs_business_id ON dqai_audit_logs(business_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON dqai_audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON dqai_audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_plan_assignments_business_id ON dqai_plan_assignments(business_id);
+CREATE INDEX IF NOT EXISTS idx_plan_assignments_plan_id ON dqai_plan_assignments(plan_id);
+CREATE INDEX IF NOT EXISTS idx_plan_assignments_status ON dqai_plan_assignments(status);
+CREATE INDEX IF NOT EXISTS idx_plans_status ON dqai_plans(status);

@@ -4,7 +4,8 @@
  */
 
 import nodemailer from 'nodemailer';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcrypt'
+import { tables } from './tablePrefix.js';
 
 // Email transporter configuration
 function createEmailTransporter() {
@@ -52,7 +53,7 @@ async function createAuditLog(pool, businessId, userId, action, entityType, enti
         const userAgent = req?.headers['user-agent'] || 'unknown';
         
         await pool.query(
-            `INSERT INTO dqai_audit_logs (business_id, user_id, action, entity_type, entity_id, old_values, new_values, ip_address, user_agent)
+            `INSERT INTO ${tables.AUDIT_LOGS} (business_id, user_id, action, entity_type, entity_id, old_values, new_values, ip_address, user_agent)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [businessId, userId, action, entityType, entityId, JSON.stringify(oldValues), JSON.stringify(newValues), ipAddress, userAgent]
         );
@@ -94,12 +95,12 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const user = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const user = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
-            const result = await pool.query('SELECT * FROM dqai_businesses ORDER BY created_at DESC');
+            const result = await pool.query(`SELECT * FROM ${tables.BUSINESSES} ORDER BY created_at DESC`);
             res.json({ businesses: result.rows });
         } catch (error) {
             console.error('GET businesses error:', error);
@@ -117,7 +118,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const user = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const user = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -125,7 +126,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const { name, phone, email, address, website, settings } = req.body;
             
             const result = await pool.query(
-                `INSERT INTO dqai_businesses (name, phone, email, address, website, settings)
+                `INSERT INTO ${tables.BUSINESSES} (name, phone, email, address, website, settings)
                  VALUES ($1, $2, $3, $4, $5, $6)
                  RETURNING *`,
                 [name, phone, email, address, website, JSON.stringify(settings || {})]
@@ -151,7 +152,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const user = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const user = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -159,10 +160,10 @@ export function registerSuperAdminRoutes(app, pool) {
             const { businessId } = req.params;
             const { name, phone, email, address, website, status, settings } = req.body;
 
-            const old = await pool.query('SELECT * FROM dqai_businesses WHERE id = $1', [businessId]);
+            const old = await pool.query(`SELECT * FROM ${tables.BUSINESSES} WHERE id = $1`, [businessId]);
             
             const result = await pool.query(
-                `UPDATE dqai_businesses 
+                `UPDATE ${tables.BUSINESSES} 
                  SET name = $1, phone = $2, email = $3, address = $4, website = $5, status = $6, settings = $7, updated_at = NOW()
                  WHERE id = $8
                  RETURNING *`,
@@ -192,12 +193,12 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const user = await pool.query('SELECT role, business_id FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const user = await pool.query(`SELECT role, business_id FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (user.rows.length === 0) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
-            let query = 'SELECT id, first_name, last_name, email, role, status, business_id, created_at, last_login_at, account_type, is_demo_account FROM dqai_users WHERE 1=1';
+            let query = `SELECT id, first_name, last_name, email, role, status, business_id, created_at, last_login_at, account_type, is_demo_account FROM ${tables.USERS} WHERE 1=1`;
             const params = [];
 
             // Super admin sees all users, business admin sees only their business
@@ -226,13 +227,13 @@ export function registerSuperAdminRoutes(app, pool) {
             }
 
             const { userId } = req.params;
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             
             if (currentUser.rows.length === 0 || !isSuperAdminRole(currentUser.rows[0].role)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
-            const user = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [userId]);
+            const user = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [userId]);
             if (user.rows.length === 0) {
                 return res.status(404).json({ error: 'User not found' });
             }
@@ -254,7 +255,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role, business_id FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role, business_id FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !currentUser.rows[0].business_id)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -269,7 +270,7 @@ export function registerSuperAdminRoutes(app, pool) {
             }
 
             // Check if user already exists
-            const exists = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [email]);
+            const exists = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [email]);
             if (exists.rows.length > 0) {
                 return res.status(400).json({ error: 'User with this email already exists' });
             }
@@ -279,7 +280,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
             const result = await pool.query(
-                `INSERT INTO dqai_users (first_name, last_name, email, password, role, status, business_id, account_type)
+                `INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status, business_id, account_type)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING *`,
                 [firstName, lastName, email, hashedPassword, normalizedRole, 'Pending', assignedBusinessId, 'user']
@@ -317,14 +318,14 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
             const { userId } = req.params;
             const result = await pool.query(
-                `UPDATE dqai_users 
+                `UPDATE ${tables.USERS} 
                  SET status = 'Active', account_activated_at = NOW()
                  WHERE id = $1
                  RETURNING *`,
@@ -360,14 +361,14 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
             const { userId } = req.params;
             const result = await pool.query(
-                `UPDATE dqai_users 
+                `UPDATE ${tables.USERS} 
                  SET status = 'Inactive', deactivated_at = NOW()
                  WHERE id = $1
                  RETURNING *`,
@@ -397,7 +398,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -405,9 +406,9 @@ export function registerSuperAdminRoutes(app, pool) {
             const { userId } = req.params;
             const { role } = req.body;
 
-            const old = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [userId]);
+            const old = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [userId]);
             const result = await pool.query(
-                'UPDATE dqai_users SET role = $1 WHERE id = $2 RETURNING *',
+                `UPDATE ${tables.USERS} SET role = $1 WHERE id = $2 RETURNING *`,
                 [role, userId]
             );
 
@@ -455,7 +456,7 @@ export function registerSuperAdminRoutes(app, pool) {
         try {
             // Fetch universal config using business_id = 0 (reserved for universal config)
             let config = await pool.query(
-                'SELECT * FROM dqai_landing_page_config WHERE business_id = $1',
+                `SELECT * FROM ${tables.LANDING_PAGE_CONFIG} WHERE business_id = $1`,
                 [0]
             );
 
@@ -516,7 +517,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role, business_id FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role, business_id FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -524,7 +525,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const config = req.body;
 
             const result = await pool.query(
-                `INSERT INTO dqai_landing_page_config 
+                `INSERT INTO ${tables.LANDING_PAGE_CONFIG} 
                  (business_id, hero_title, hero_subtitle, hero_image_url, hero_button_text, hero_button_link, hero_visible,
                   features_title, features_subtitle, features_data, features_visible,
                   carousel_title, carousel_items, carousel_visible,
@@ -590,7 +591,7 @@ export function registerSuperAdminRoutes(app, pool) {
         try {
             const { businessId } = req.params;
             let config = await pool.query(
-                'SELECT * FROM dqai_landing_page_config WHERE business_id = $1',
+                `SELECT * FROM ${tables.LANDING_PAGE_CONFIG} WHERE business_id = $1`,
                 [businessId]
             );
 
@@ -629,7 +630,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role, business_id FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role, business_id FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -638,7 +639,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const config = req.body;
 
             const result = await pool.query(
-                `INSERT INTO dqai_landing_page_config 
+                `INSERT INTO ${tables.LANDING_PAGE_CONFIG} 
                  (business_id, hero_title, hero_subtitle, hero_image_url, hero_button_text, hero_button_link, hero_visible,
                   features_title, features_subtitle, features_data, features_visible,
                   carousel_title, carousel_items, carousel_visible,
@@ -700,7 +701,7 @@ export function registerSuperAdminRoutes(app, pool) {
             }
 
             const result = await pool.query(
-                `INSERT INTO dqai_feedback_messages 
+                `INSERT INTO ${tables.FEEDBACK_MESSAGES} 
                  (business_id, sender_name, sender_email, sender_phone, subject, message, status)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)
                  RETURNING *`,
@@ -737,13 +738,13 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
             const result = await pool.query(
-                'SELECT * FROM dqai_feedback_messages ORDER BY created_at DESC LIMIT 500'
+                `SELECT * FROM ${tables.FEEDBACK_MESSAGES} ORDER BY created_at DESC LIMIT 500`
             );
 
             res.json({ messages: result.rows });
@@ -763,7 +764,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -772,7 +773,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const { status, notes } = req.body;
 
             const result = await pool.query(
-                `UPDATE dqai_feedback_messages 
+                `UPDATE ${tables.FEEDBACK_MESSAGES} 
                  SET status = $1, notes = $2, updated_at = NOW()
                  WHERE id = $3
                  RETURNING *`,
@@ -805,7 +806,7 @@ export function registerSuperAdminRoutes(app, pool) {
             }
 
             const demoEmail = process.env.DEMO_ACCOUNT_EMAIL || 'demo@demo.com';
-            const user = await pool.query('SELECT * FROM dqai_users WHERE email = $1 AND is_demo_account = true', [demoEmail]);
+            const user = await pool.query(`SELECT * FROM ${tables.USERS} WHERE email = $1 AND is_demo_account = true`, [demoEmail]);
 
             if (user.rows.length === 0) {
                 return res.status(404).json({ error: 'Demo account not available' });
@@ -845,7 +846,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const currentUser = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (currentUser.rows.length === 0 || (!isSuperAdminRole(currentUser.rows[0].role) && !isAdminRole(currentUser.rows[0].role))) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -853,28 +854,28 @@ export function registerSuperAdminRoutes(app, pool) {
             const stats = {};
 
             // Total businesses
-            const businesses = await pool.query('SELECT COUNT(*) as count FROM dqai_businesses');
+            const businesses = await pool.query(`SELECT COUNT(*) as count FROM ${tables.BUSINESSES}`);
             stats.totalBusinesses = parseInt(businesses.rows[0].count);
 
             // Total users
-            const users = await pool.query('SELECT COUNT(*) as count FROM dqai_users');
+            const users = await pool.query(`SELECT COUNT(*) as count FROM ${tables.USERS}`);
             stats.totalUsers = parseInt(users.rows[0].count);
 
             // Active users (last 30 days)
             const activeUsers = await pool.query(
-                'SELECT COUNT(*) as count FROM dqai_users WHERE last_login_at > NOW() - INTERVAL \'30 days\''
+                `SELECT COUNT(*) as count FROM ${tables.USERS} WHERE last_login_at > NOW() - INTERVAL \'30 days\'`
             );
             stats.activeUsers = parseInt(activeUsers.rows[0].count);
 
             // Pending user approvals
             const pending = await pool.query(
-                'SELECT COUNT(*) as count FROM dqai_user_approvals WHERE status = \'Pending\''
+                `SELECT COUNT(*) as count FROM ${tables.USER_APPROVALS} WHERE status = \'Pending\'`
             );
             stats.pendingApprovals = parseInt(pending.rows[0].count);
 
             // New feedback (unreviewed)
             const feedback = await pool.query(
-                'SELECT COUNT(*) as count FROM dqai_feedback_messages WHERE status = \'New\''
+                `SELECT COUNT(*) as count FROM ${tables.FEEDBACK_MESSAGES} WHERE status = \'New\'`
             );
             stats.newFeedback = parseInt(feedback.rows[0].count);
 
@@ -895,7 +896,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(401).json({ error: 'Not authenticated' });
             }
 
-            const user = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+            const user = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -903,7 +904,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const businessId = parseInt(req.params.businessId);
             
             // Verify business exists
-            const business = await pool.query('SELECT id FROM dqai_businesses WHERE id = $1', [businessId]);
+            const business = await pool.query(`SELECT id FROM ${tables.BUSINESSES} WHERE id = $1`, [businessId]);
             if (business.rows.length === 0) {
                 return res.status(404).json({ error: 'Business not found' });
             }
@@ -916,6 +917,375 @@ export function registerSuperAdminRoutes(app, pool) {
             res.status(500).json({ error: error.message });
         }
     });
+
+    // ======================================
+    // Plan Management Routes (Super Admin Only)
+    // ======================================
+
+    /**
+     * GET /api/super-admin/plans
+     * Retrieve all plans
+     */
+    app.get('/api/super-admin/plans', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const result = await pool.query(
+                `SELECT id, name, description, max_programs_per_business, max_activities_per_program, 
+                        max_users, features, price_monthly, status, created_at, updated_at
+                 FROM ${tables.PLANS}
+                 ORDER BY created_at DESC`
+            );
+
+            res.json(result.rows);
+        } catch (error) {
+            console.error('GET /api/super-admin/plans error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/super-admin/plans
+     * Create a new plan
+     */
+    app.post('/api/super-admin/plans', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const {
+                name,
+                description,
+                max_programs_per_business,
+                max_activities_per_program,
+                max_users,
+                features,
+                price_monthly,
+                status
+            } = req.body;
+
+            const result = await pool.query(
+                `INSERT INTO ${tables.PLANS} 
+                 (name, description, max_programs_per_business, max_activities_per_program, max_users, 
+                  features, price_monthly, status, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                 RETURNING id, name, description, max_programs_per_business, max_activities_per_program, 
+                          max_users, features, price_monthly, status, created_at`,
+                [
+                    name,
+                    description,
+                    max_programs_per_business,
+                    max_activities_per_program,
+                    max_users,
+                    JSON.stringify(features || {}),
+                    price_monthly,
+                    status || 'Active'
+                ]
+            );
+
+            res.status(201).json(result.rows[0]);
+        } catch (error) {
+            console.error('POST /api/super-admin/plans error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/super-admin/plans/:planId
+     * Update an existing plan
+     */
+    app.put('/api/super-admin/plans/:planId', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const planId = parseInt(req.params.planId);
+            const {
+                name,
+                description,
+                max_programs_per_business,
+                max_activities_per_program,
+                max_users,
+                features,
+                price_monthly,
+                status
+            } = req.body;
+
+            const result = await pool.query(
+                `UPDATE ${tables.PLANS}
+                 SET name = $1, description = $2, max_programs_per_business = $3, 
+                     max_activities_per_program = $4, max_users = $5, features = $6, 
+                     price_monthly = $7, status = $8, updated_at = NOW()
+                 WHERE id = $9
+                 RETURNING id, name, description, max_programs_per_business, max_activities_per_program, 
+                          max_users, features, price_monthly, status, created_at, updated_at`,
+                [
+                    name,
+                    description,
+                    max_programs_per_business,
+                    max_activities_per_program,
+                    max_users,
+                    JSON.stringify(features || {}),
+                    price_monthly,
+                    status,
+                    planId
+                ]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'Plan not found' });
+            }
+
+            res.json(result.rows[0]);
+        } catch (error) {
+            console.error('PUT /api/super-admin/plans/:planId error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * DELETE /api/super-admin/plans/:planId
+     * Delete a plan
+     */
+    app.delete('/api/super-admin/plans/:planId', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const planId = parseInt(req.params.planId);
+
+            // Check if plan is in use
+            const inUse = await pool.query(
+                `SELECT COUNT(*) FROM ${tables.PLAN_ASSIGNMENTS} WHERE plan_id = $1 AND status = 'Active'`,
+                [planId]
+            );
+
+            if (parseInt(inUse.rows[0].count) > 0) {
+                return res.status(400).json({ error: 'Cannot delete plan in use. Reassign or deactivate businesses first.' });
+            }
+
+            await pool.query(
+                `DELETE FROM ${tables.PLANS} WHERE id = $1`,
+                [planId]
+            );
+
+            res.json({ success: true, message: 'Plan deleted' });
+        } catch (error) {
+            console.error('DELETE /api/super-admin/plans/:planId error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/super-admin/plan-assignments
+     * Get all plan assignments with business and plan details
+     */
+    app.get('/api/super-admin/plan-assignments', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const result = await pool.query(
+                `SELECT 
+                    pa.id,
+                    pa.business_id,
+                    b.name as business_name,
+                    pa.plan_id,
+                    p.name as plan_name,
+                    p.max_programs_per_business,
+                    p.max_activities_per_program,
+                    p.max_users,
+                    pa.assigned_at,
+                    pa.expires_at,
+                    pa.status,
+                    u.firstName as assigned_by_name
+                 FROM ${tables.PLAN_ASSIGNMENTS} pa
+                 JOIN ${tables.BUSINESSES} b ON pa.business_id = b.id
+                 JOIN ${tables.PLANS} p ON pa.plan_id = p.id
+                 LEFT JOIN ${tables.USERS} u ON pa.assigned_by = u.id
+                 ORDER BY pa.created_at DESC`
+            );
+
+            res.json(result.rows);
+        } catch (error) {
+            console.error('GET /api/super-admin/plan-assignments error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/super-admin/plan-assignments
+     * Assign a plan to a business
+     */
+    app.post('/api/super-admin/plan-assignments', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const { business_id, plan_id, expires_at } = req.body;
+
+            // Verify business exists
+            const businessCheck = await pool.query(
+                `SELECT id FROM ${tables.BUSINESSES} WHERE id = $1`,
+                [business_id]
+            );
+            if (businessCheck.rows.length === 0) {
+                return res.status(404).json({ error: 'Business not found' });
+            }
+
+            // Verify plan exists
+            const planCheck = await pool.query(
+                `SELECT id FROM ${tables.PLANS} WHERE id = $1`,
+                [plan_id]
+            );
+            if (planCheck.rows.length === 0) {
+                return res.status(404).json({ error: 'Plan not found' });
+            }
+
+            // Deactivate any existing active plans for this business
+            await pool.query(
+                `UPDATE ${tables.PLAN_ASSIGNMENTS}
+                 SET status = 'Cancelled', updated_at = NOW()
+                 WHERE business_id = $1 AND status = 'Active'`,
+                [business_id]
+            );
+
+            // Create new assignment
+            const result = await pool.query(
+                `INSERT INTO ${tables.PLAN_ASSIGNMENTS}
+                 (business_id, plan_id, assigned_by, expires_at, status, created_at)
+                 VALUES ($1, $2, $3, $4, 'Active', NOW())
+                 RETURNING id, business_id, plan_id, assigned_at, expires_at, status`,
+                [business_id, plan_id, userId, expires_at || null]
+            );
+
+            res.status(201).json(result.rows[0]);
+        } catch (error) {
+            console.error('POST /api/super-admin/plan-assignments error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/super-admin/plan-assignments/:assignmentId
+     * Update a plan assignment
+     */
+    app.put('/api/super-admin/plan-assignments/:assignmentId', async (req, res) => {
+        try {
+            const userId = req.session?.userId;
+            const user = await pool.query(
+                `SELECT role FROM ${tables.USERS} WHERE id = $1`,
+                [userId]
+            );
+
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const assignmentId = parseInt(req.params.assignmentId);
+            const { plan_id, expires_at, status } = req.body;
+
+            const result = await pool.query(
+                `UPDATE ${tables.PLAN_ASSIGNMENTS}
+                 SET plan_id = $1, expires_at = $2, status = $3, updated_at = NOW()
+                 WHERE id = $4
+                 RETURNING id, business_id, plan_id, assigned_at, expires_at, status`,
+                [plan_id, expires_at || null, status, assignmentId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'Assignment not found' });
+            }
+
+            res.json(result.rows[0]);
+        } catch (error) {
+            console.error('PUT /api/super-admin/plan-assignments/:assignmentId error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/super-admin/business/:businessId/plan
+     * Get current active plan for a business
+     */
+    app.get('/api/super-admin/business/:businessId/plan', async (req, res) => {
+        try {
+            const businessId = parseInt(req.params.businessId);
+
+            const result = await pool.query(
+                `SELECT 
+                    pa.id,
+                    pa.business_id,
+                    pa.plan_id,
+                    p.name,
+                    p.max_programs_per_business,
+                    p.max_activities_per_program,
+                    p.max_users,
+                    p.features,
+                    pa.expires_at,
+                    pa.status
+                 FROM ${tables.PLAN_ASSIGNMENTS} pa
+                 JOIN ${tables.PLANS} p ON pa.plan_id = p.id
+                 WHERE pa.business_id = $1 AND pa.status = 'Active'
+                 ORDER BY pa.assigned_at DESC
+                 LIMIT 1`,
+                [businessId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'No active plan found for business' });
+            }
+
+            res.json(result.rows[0]);
+        } catch (error) {
+            console.error('GET /api/super-admin/business/:businessId/plan error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
 }
 
 export { sendEmail, createAuditLog };
+

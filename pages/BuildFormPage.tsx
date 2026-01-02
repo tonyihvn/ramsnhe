@@ -1013,6 +1013,100 @@ const BuildFormPage: React.FC = () => {
     }
   };
 
+  // Export current form as Excel
+  const handleDownloadForm = async () => {
+    try {
+      if (!formDef) {
+        alert('No form to download');
+        return;
+      }
+
+      const wb = new ExcelJS.Workbook();
+      const sheet = wb.addWorksheet('questions');
+      
+      // Add header row
+      sheet.addRow(['Question', 'Type', 'Helper Text', 'field_name', 'Required', 'ColumnSize', 'Page', 'Section', 'ShowIf', 'calculation', 'score', 'reviewers_comment', 'group_name']);
+      
+      // Format header row
+      const headerRow = sheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F81BD' } };
+      
+      // Add all questions from all pages/sections
+      formDef.pages.forEach((page: FormPage) => {
+        page.sections.forEach((section: FormSection) => {
+          section.questions.forEach((question: Question) => {
+            sheet.addRow([
+              question.questionText,
+              question.answerType,
+              question.questionHelper || '',
+              question.fieldName || '',
+              question.required ? 'true' : 'false',
+              question.columnSize,
+              page.name,
+              section.name,
+              question.metadata?.showif || '',
+              question.metadata?.calculation || '',
+              question.metadata?.score || 0,
+              question.metadata?.reviewersComment ? 'true' : 'false',
+              section.groupName || ''
+            ]);
+          });
+        });
+      });
+
+      // Auto-fit columns
+      sheet.columns.forEach((column: any) => {
+        column.width = 15;
+      });
+
+      // Create options sheet
+      const optsSheet = wb.addWorksheet('options');
+      optsSheet.addRow(['name', 'value', 'label', 'showif', 'score']);
+      
+      const optionsSet = new Set<string>();
+      formDef.pages.forEach((page: FormPage) => {
+        page.sections.forEach((section: FormSection) => {
+          section.questions.forEach((question: Question) => {
+            if (question.options && question.options.length > 0) {
+              const fieldName = question.fieldName || question.questionText;
+              question.options.forEach((opt: any) => {
+                const key = `${fieldName}|${opt.value}`;
+                if (!optionsSet.has(key)) {
+                  optionsSet.add(key);
+                  optsSheet.addRow([
+                    fieldName,
+                    opt.value,
+                    opt.label || opt.value,
+                    opt.showif || '',
+                    opt.score || 0
+                  ]);
+                }
+              });
+            }
+          });
+        });
+      });
+
+      // Write and download
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = url;
+      downloadLink.download = `form_${activity?.id || 'export'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      URL.revokeObjectURL(url);
+      
+      alert('Form exported successfully!');
+    } catch (e) {
+      console.error('Failed to export form', e);
+      alert('Failed to export form: ' + (e instanceof Error ? e.message : 'Unknown error'));
+    }
+  };
+
 
   if (!activity || !formDef) return <div>Loading...</div>;
 
@@ -1030,6 +1124,7 @@ const BuildFormPage: React.FC = () => {
         </div>
         <div className="space-x-2">
           <Button variant="secondary" onClick={() => setIsGuideModalOpen(true)} leftIcon={<QuestionMarkCircleIcon className="h-5 w-5" />}>Guide</Button>
+          <Button variant="secondary" onClick={handleDownloadForm} leftIcon={<ArrowDownIcon className="h-5 w-5" />}>Download</Button>
           <Button variant="secondary" onClick={() => setIsImportModalOpen(true)} leftIcon={<ArrowUpTrayIcon className="h-5 w-5" />}>Bulk Import</Button>
           <Button onClick={handleSave}>{isSaved ? 'Update Form' : 'Save Form'}</Button>
         </div>

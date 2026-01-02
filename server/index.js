@@ -1,17 +1,22 @@
 
+// MUST be first! Load environment variables before importing anything that uses them
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import { Pool } from 'pg';
 import cors from 'cors';
 import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
+import { tables } from './tablePrefix.js';
 
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
 async function upsertReportAnswers(client, reportId, payload, existingRow, req) {
-    // existingRow: the dqai_activity_reports row for this report
+    // existingRow: the ${tables.ACTIVITY_REPORTS} row for this report
     const answers = payload.answers || {};
     // load existing answers for this report
-    const existRes = await client.query('SELECT * FROM dqai_answers WHERE report_id = $1', [reportId]);
+    const existRes = await client.query(`SELECT * FROM ${tables.ANSWERS} WHERE report_id = $1`, [reportId]);
     const existingRows = existRes.rows || [];
     const existingMap = {};
     const existingUsed = {};
@@ -25,7 +30,7 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
     let currentRole = 'public';
     try {
         if (currentUserId) {
-            const ur = await client.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [currentUserId]);
+            const ur = await client.query(`SELECT role FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [currentUserId]);
             if (ur.rowCount) currentRole = ur.rows[0].role || currentRole;
         }
     } catch (e) { /* ignore */ }
@@ -48,7 +53,7 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
     const qInfo = {};
     if (uniqueQIds.length) {
         try {
-            const qres = await client.query('SELECT id, page_name, section_name FROM dqai_questions WHERE id = ANY($1::text[])', [uniqueQIds]);
+            const qres = await client.query(`SELECT id, page_name, section_name FROM ${tables.QUESTIONS} WHERE id = ANY($1::text[])`, [uniqueQIds]);
             for (const q of qres.rows) qInfo[String(q.id)] = { page: q.page_name || '', section: (q.section_name === undefined ? null : q.section_name) };
         } catch (e) { /* ignore */ }
     }
@@ -57,7 +62,7 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
         try {
             const adminRole = currentRole && String(currentRole).toLowerCase();
             if (adminRole === 'admin' || adminRole === 'super-admin' || adminRole === 'super_admin') return true;
-            const permRes = await client.query(`SELECT can_create, can_edit, can_delete FROM dqai_page_permissions WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
+            const permRes = await client.query(`SELECT can_create, can_edit, can_delete FROM ${tables.PAGE_PERMISSIONS} WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
             const perm = permRes.rows && permRes.rows[0] ? permRes.rows[0] : null;
             if (!perm) return false;
             if (want === 'create') return !!perm.can_create;
@@ -96,14 +101,14 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
                                     const rowObj = existingMap[key];
                                     const allowed = (await canCheck(pageKey, sectionKey, 'edit')) || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId));
                                     if (allowed) {
-                                        await client.query('UPDATE dqai_answers SET answer_value=$1, reviewers_comment=$2, quality_improvement_followup=$3, score=$4, answer_datetime=$5 WHERE id = $6', [storedAnswerValue, reviewersComment, qiFollowup, score, new Date(), rowObj.id]);
+                                        await client.query(`UPDATE ${tables.ANSWERS} SET answer_value=$1, reviewers_comment=$2, quality_improvement_followup=$3, score=$4, answer_datetime=$5 WHERE id = $6`, [storedAnswerValue, reviewersComment, qiFollowup, score, new Date(), rowObj.id]);
                                     }
                                     existingUsed[key] = true;
                                 } else {
                                     const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
                                         if (allowedCreate) {
                                         const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
+                                            await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
                                     }
                                 }
                             } catch (ie) { console.error('Failed to process repeated answer during update for question', subQId, ie); }
@@ -126,13 +131,13 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
                         const rowObj = existingMap[key];
                         const allowed = (await canCheck(pageKey, sectionKey, 'edit')) || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId));
                         if (allowed) {
-                            await client.query('UPDATE dqai_answers SET answer_value=$1, reviewers_comment=$2, quality_improvement_followup=$3, score=$4, answer_datetime=$5 WHERE id = $6', [storedAnswerValue, reviewersComment, qiFollowup, score, new Date(), rowObj.id]);
+                            await client.query(`UPDATE ${tables.ANSWERS} SET answer_value=$1, reviewers_comment=$2, quality_improvement_followup=$3, score=$4, answer_datetime=$5 WHERE id = $6`, [storedAnswerValue, reviewersComment, qiFollowup, score, new Date(), rowObj.id]);
                         }
                         existingUsed[key] = true;
                     } else {
                         const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
                         if (allowedCreate) {
-                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
+                            await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
                         }
                     }
                 }
@@ -152,12 +157,11 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
         const canDelete = await canCheck(pageKey, sectionKey, 'delete');
         const adminRole = currentRole && String(currentRole).toLowerCase();
         if (canDelete || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId)) || (adminRole === 'admin' || adminRole === 'super-admin' || adminRole === 'super_admin')) {
-            try { await client.query('DELETE FROM dqai_answers WHERE id = $1', [rowObj.id]); } catch (de) { console.error('Failed to delete stale answer row', rowObj.id, de); }
+            try { await client.query(`DELETE FROM ${tables.ANSWERS} WHERE id = $1`, [rowObj.id]); } catch (de) { console.error('Failed to delete stale answer row', rowObj.id, de); }
         }
     }
 }
 import cookieSession from 'cookie-session';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -168,7 +172,6 @@ import puppeteer from 'puppeteer';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
 import { OpenAIEmbeddings } from '@langchain/openai';
-dotenv.config();
 
 // ESM: provide __dirname/__filename helpers since Node ESM doesn't provide them by default
 const __filename = typeof fileURLToPath === 'function' ? fileURLToPath(import.meta.url) : undefined;
@@ -351,7 +354,7 @@ async function selectOptimalSchemas(prompt, ragRows) {
         // Always include compulsory schemas
         let compulsoryRags = (ragRows || []).filter(rr => String(rr.category || '').toLowerCase() === 'compulsory');
         if (!compulsoryRags || compulsoryRags.length === 0) {
-            const coreNames = ['dqai_activity_reports', 'dqai_answers', 'dqai_questions'];
+            const coreNames = [tables.ACTIVITY_REPORTS, tables.ANSWERS, tables.QUESTIONS];
             compulsoryRags = ragRows.filter(rr => coreNames.includes(((rr.table_name || '')).toString()));
         }
 
@@ -539,7 +542,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             }
         } catch (e) { /* ignore */ }
 
-        const rres = await pool.query('SELECT * FROM dqai_rag_schemas');
+        const rres = await pool.query(`SELECT * FROM ${tables.RAG_SCHEMAS}`);
         const ragRows = rres.rows || [];
 
         // Use intelligent schema selector
@@ -626,14 +629,14 @@ ${combinedPrompt}
 Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY the schemas provided above.`;
 
             if (providerId) {
-                const pr = await pool.query('SELECT * FROM dqai_llm_providers WHERE id = $1', [providerId]);
+                const pr = await pool.query(`SELECT * FROM ${tables.LLM_PROVIDERS} WHERE id = $1`, [providerId]);
                 if (pr.rows.length) {
                     const prov = pr.rows[0];
                     providerResponse = await tryCallProvider(prov, enrichedPrompt, ragContext);
                     if (providerResponse) providerUsed = prov.name || prov.provider_id;
                 }
             } else {
-                const pres = await pool.query('SELECT * FROM dqai_llm_providers ORDER BY priority ASC NULLS LAST');
+                const pres = await pool.query(`SELECT * FROM ${tables.LLM_PROVIDERS} ORDER BY priority ASC NULLS LAST`);
                 for (const prov of pres.rows) {
                     try {
                         const r = await tryCallProvider(prov, enrichedPrompt, ragContext);
@@ -1385,7 +1388,7 @@ app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
 
         // Check if schema already exists
         const checkRes = await pool.query(
-            'SELECT id FROM dqai_form_schemas WHERE "formType" = $1 AND business_id IS NOT DISTINCT FROM $2 LIMIT 1',
+            `SELECT id FROM ${tables.FORM_SCHEMAS} WHERE "formType" = $1 AND business_id IS NOT DISTINCT FROM $2 LIMIT 1`,
             [formType, businessId]
         );
 
@@ -1395,7 +1398,7 @@ app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
             // Update existing schema
             console.log('[Form Schema Save] Updating existing schema');
             const updateRes = await pool.query(
-                'UPDATE dqai_form_schemas SET name = $1, fields = $2, "updatedAt" = $3 WHERE "formType" = $4 AND business_id IS NOT DISTINCT FROM $5 RETURNING *',
+                `UPDATE ${tables.FORM_SCHEMAS} SET name = $1, fields = $2, "updatedAt" = $3 WHERE "formType" = $4 AND business_id IS NOT DISTINCT FROM $5 RETURNING *`,
                 [name, JSON.stringify(fields), now, formType, businessId]
             );
             const row = updateRes.rows[0];
@@ -1412,7 +1415,7 @@ app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
             // Insert new schema
             console.log('[Form Schema Save] Inserting new schema');
             const insertRes = await pool.query(
-                'INSERT INTO dqai_form_schemas (id, name, "formType", fields, business_id, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+                `INSERT INTO ${tables.FORM_SCHEMAS} (id, name, "formType", fields, business_id, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
                 [schemaId, name, formType, JSON.stringify(fields), businessId, now, now]
             );
             const row = insertRes.rows[0];
@@ -1445,7 +1448,7 @@ app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
         }
 
         const dbRes = await pool.query(
-            'SELECT * FROM dqai_form_schemas WHERE "formType" = $1 AND business_id IS NOT DISTINCT FROM $2 LIMIT 1',
+            `SELECT * FROM ${tables.FORM_SCHEMAS} WHERE "formType" = $1 AND business_id IS NOT DISTINCT FROM $2 LIMIT 1`,
             [formType, businessId]
         );
 
@@ -1454,7 +1457,7 @@ app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
         if (dbRes.rowCount === 0) {
             // Try fallback to NULL business_id (global/default schema)
             const fallbackRes = await pool.query(
-                'SELECT * FROM dqai_form_schemas WHERE "formType" = $1 AND business_id IS NULL LIMIT 1',
+                `SELECT * FROM ${tables.FORM_SCHEMAS} WHERE "formType" = $1 AND business_id IS NULL LIMIT 1`,
                 [formType]
             );
             console.log('[Form Schema Load] Fallback query result:', { found: fallbackRes.rowCount > 0 });
@@ -1511,7 +1514,7 @@ app.get('/api/form-schemas/:formType', async (req, res) => {
 
         // Return empty schema if no custom fields defined - this is okay for forms
         const dbRes = await pool.query(
-            'SELECT * FROM dqai_form_schemas WHERE "formType" = $1 AND (business_id = $2 OR business_id IS NULL) LIMIT 1',
+            `SELECT * FROM ${tables.FORM_SCHEMAS} WHERE "formType" = $1 AND (business_id = $2 OR business_id IS NULL) LIMIT 1`,
             [formType, businessId]
         );
 
@@ -1553,7 +1556,7 @@ app.delete('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) =
         }
 
         await pool.query(
-            'DELETE FROM dqai_form_schemas WHERE "formType" = $1 AND business_id = $2',
+            `DELETE FROM ${tables.FORM_SCHEMAS} WHERE "formType" = $1 AND business_id = $2`,
             [formType, businessId]
         );
 
@@ -1574,7 +1577,21 @@ const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqai_');
 // Initialize database schema if tables don't exist
 async function initDb() {
     const queries = [
-        `CREATE TABLE IF NOT EXISTS dqai_users (
+        // Create BUSINESSES table FIRST since other tables reference it
+        `CREATE TABLE IF NOT EXISTS ${tables.BUSINESSES} (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            phone TEXT,
+            email TEXT,
+            address TEXT,
+            website TEXT,
+            logo_url TEXT,
+            settings JSONB DEFAULT '{}'::jsonb,
+            status TEXT DEFAULT 'Active',
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${tables.USERS} (
             id SERIAL PRIMARY KEY,
             first_name TEXT,
             last_name TEXT,
@@ -1585,7 +1602,7 @@ async function initDb() {
             facility_id INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_programs (
+        `CREATE TABLE IF NOT EXISTS ${tables.PROGRAMS} (
             id SERIAL PRIMARY KEY,
             name TEXT,
             details TEXT,
@@ -1593,7 +1610,7 @@ async function initDb() {
             category TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_facilities (
+        `CREATE TABLE IF NOT EXISTS ${tables.FACILITIES} (
             id SERIAL PRIMARY KEY,
             name TEXT,
             state TEXT,
@@ -1601,37 +1618,37 @@ async function initDb() {
             address TEXT,
             category TEXT
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_activities (
+        `CREATE TABLE IF NOT EXISTS ${tables.ACTIVITIES} (
             id SERIAL PRIMARY KEY,
             title TEXT,
             subtitle TEXT,
-            program_id INTEGER REFERENCES dqai_programs(id) ON DELETE SET NULL,
+            program_id INTEGER REFERENCES ${tables.PROGRAMS}(id) ON DELETE SET NULL,
             details TEXT,
             start_date TIMESTAMP,
             end_date TIMESTAMP,
             response_type TEXT,
             category TEXT,
             status TEXT,
-            created_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+            created_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
             form_definition JSONB DEFAULT '{}'::jsonb,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_activity_reports (
+        `CREATE TABLE IF NOT EXISTS ${tables.ACTIVITY_REPORTS} (
             id SERIAL PRIMARY KEY,
-            activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
-            user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
-            facility_id INTEGER REFERENCES dqai_facilities(id) ON DELETE SET NULL,
+            activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+            facility_id INTEGER REFERENCES ${tables.FACILITIES}(id) ON DELETE SET NULL,
             status TEXT,
             answers JSONB,
             reviewers_report TEXT,
             overall_score NUMERIC,
-            reported_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+            reported_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
             submission_date TIMESTAMP DEFAULT NOW()
         )`
         ,
-        `CREATE TABLE IF NOT EXISTS dqai_questions (
+        `CREATE TABLE IF NOT EXISTS ${tables.QUESTIONS} (
             id TEXT PRIMARY KEY,
-            activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
+            activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
             page_name TEXT,
             section_name TEXT,
             question_text TEXT,
@@ -1643,40 +1660,40 @@ async function initDb() {
             status TEXT,
             options JSONB,
             metadata JSONB,
-                created_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+                created_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_answers (
+        `CREATE TABLE IF NOT EXISTS ${tables.ANSWERS} (
             id SERIAL PRIMARY KEY,
-            report_id INTEGER REFERENCES dqai_activity_reports(id) ON DELETE CASCADE,
-            activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
+            report_id INTEGER REFERENCES ${tables.ACTIVITY_REPORTS}(id) ON DELETE CASCADE,
+            activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
             question_id TEXT,
             answer_value TEXT,
             answer_row_index INTEGER,
             question_group TEXT,
             answer_group TEXT,
-            facility_id INTEGER REFERENCES dqai_facilities(id) ON DELETE SET NULL,
-            user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
-            recorded_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+            facility_id INTEGER REFERENCES ${tables.FACILITIES}(id) ON DELETE SET NULL,
+            user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+            recorded_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
             answer_datetime TIMESTAMP DEFAULT NOW(),
             reviewers_comment TEXT,
             quality_improvement_followup TEXT,
             score NUMERIC,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_uploaded_docs (
+        `CREATE TABLE IF NOT EXISTS ${tables.UPLOADED_DOCS} (
             id SERIAL PRIMARY KEY,
-            activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
-            facility_id INTEGER REFERENCES dqai_facilities(id) ON DELETE SET NULL,
-            user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
-            uploaded_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
-                report_id INTEGER REFERENCES dqai_activity_reports(id) ON DELETE CASCADE,
+            activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
+            facility_id INTEGER REFERENCES ${tables.FACILITIES}(id) ON DELETE SET NULL,
+            user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+            uploaded_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+                report_id INTEGER REFERENCES ${tables.ACTIVITY_REPORTS}(id) ON DELETE CASCADE,
                 file_content JSONB,
             filename TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`
         ,
-        `CREATE TABLE IF NOT EXISTS dqai_rag_schemas (
+        `CREATE TABLE IF NOT EXISTS ${tables.RAG_SCHEMAS} (
             id SERIAL PRIMARY KEY,
             table_name TEXT UNIQUE,
             schema JSONB,
@@ -1684,7 +1701,7 @@ async function initDb() {
             generated_at TIMESTAMP DEFAULT NOW()
         )`
         ,
-        `CREATE TABLE IF NOT EXISTS dqai_datasets (
+        `CREATE TABLE IF NOT EXISTS ${tables.DATASETS} (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             description TEXT,
@@ -1694,31 +1711,31 @@ async function initDb() {
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
-        `CREATE TABLE IF NOT EXISTS dqai_dataset_content (
+        `CREATE TABLE IF NOT EXISTS ${tables.DATASET_CONTENT} (
             id SERIAL PRIMARY KEY,
-            dataset_id INTEGER REFERENCES dqai_datasets(id) ON DELETE CASCADE,
+            dataset_id INTEGER REFERENCES ${tables.DATASETS}(id) ON DELETE CASCADE,
             dataset_data JSONB,
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`
-        , `CREATE TABLE IF NOT EXISTS dqai_reports_powerbi (
+        , `CREATE TABLE IF NOT EXISTS ${tables.REPORTS_POWERBI} (
             id SERIAL PRIMARY KEY,
-            activity_reports_id INTEGER REFERENCES dqai_activity_reports(id) ON DELETE CASCADE,
+            activity_reports_id INTEGER REFERENCES ${tables.ACTIVITY_REPORTS}(id) ON DELETE CASCADE,
             powerbi_link TEXT,
             link_type TEXT,
             mode TEXT,
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`
-        , `CREATE TABLE IF NOT EXISTS dqai_report_templates (
+        , `CREATE TABLE IF NOT EXISTS ${tables.REPORT_TEMPLATES} (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
-            activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE CASCADE,
+            activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
             template_json JSONB,
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`
-        , `CREATE TABLE IF NOT EXISTS dqai_api_connectors (
+        , `CREATE TABLE IF NOT EXISTS ${tables.API_CONNECTORS} (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             base_url TEXT,
@@ -1728,9 +1745,9 @@ async function initDb() {
             created_by INTEGER,
             created_at TIMESTAMP DEFAULT NOW()
         )`
-        , `CREATE TABLE IF NOT EXISTS dqai_api_ingests (
+        , `CREATE TABLE IF NOT EXISTS ${tables.API_INGESTS} (
             id SERIAL PRIMARY KEY,
-            connector_id INTEGER REFERENCES dqai_api_connectors(id) ON DELETE SET NULL,
+            connector_id INTEGER REFERENCES ${tables.API_CONNECTORS}(id) ON DELETE SET NULL,
             received_at TIMESTAMP DEFAULT NOW(),
             raw_data JSONB,
             metadata JSONB
@@ -1750,11 +1767,11 @@ async function initDb() {
         const superEmail = process.env.SUPER_ADMIN_EMAIL || process.env.SUPERADMIN_EMAIL || null;
         const superPass = process.env.SUPER_ADMIN_PASSWORD || process.env.SUPERADMIN_PASSWORD || null;
         if (superEmail && superPass) {
-            const r = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [superEmail]);
+            const r = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [superEmail]);
             if (r.rows.length === 0) {
                 try {
                     const hash = await bcrypt.hash(superPass, 10);
-                    await pool.query('INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1,$2,$3,$4,$5,$6)', ['Super', 'Admin', superEmail, hash, 'super-admin', 'Active']);
+                    await pool.query(`INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status) VALUES ($1,$2,$3,$4,$5,$6)`, ['Super', 'Admin', superEmail, hash, 'super-admin', 'Active']);
                     console.log('Created default super-admin user', superEmail);
                 } catch (e) { console.error('Failed to create super-admin', e); }
             }
@@ -1762,64 +1779,64 @@ async function initDb() {
     } catch (e) { /* ignore */ }
     // Ensure answers table has reviewer/score columns and remove them from questions if present
     try {
-        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS reviewers_comment TEXT`);
-        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS quality_improvement_followup TEXT`);
-        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS score NUMERIC`);
-        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS question_group TEXT`);
-        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS answer_group TEXT`);
-        await pool.query(`ALTER TABLE dqai_answers ADD COLUMN IF NOT EXISTS answer_row_index INTEGER`);
+        await pool.query(`ALTER TABLE ${tables.ANSWERS} ADD COLUMN IF NOT EXISTS reviewers_comment TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ANSWERS} ADD COLUMN IF NOT EXISTS quality_improvement_followup TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ANSWERS} ADD COLUMN IF NOT EXISTS score NUMERIC`);
+        await pool.query(`ALTER TABLE ${tables.ANSWERS} ADD COLUMN IF NOT EXISTS question_group TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ANSWERS} ADD COLUMN IF NOT EXISTS answer_group TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ANSWERS} ADD COLUMN IF NOT EXISTS answer_row_index INTEGER`);
         // If existing deployments used JSONB for answer_value, convert to TEXT safely
         try {
-            await pool.query(`ALTER TABLE dqai_answers ALTER COLUMN answer_value TYPE TEXT USING (answer_value::text)`);
+            await pool.query(`ALTER TABLE ${tables.ANSWERS} ALTER COLUMN answer_value TYPE TEXT USING (answer_value::text)`);
         } catch (e) {
             // ignore conversion errors in case column already text or conversion not needed
         }
-        await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS required BOOLEAN`);
+        await pool.query(`ALTER TABLE ${tables.QUESTIONS} ADD COLUMN IF NOT EXISTS required BOOLEAN`);
         // allow storing a correct answer for question types that support it
-        await pool.query(`ALTER TABLE dqai_questions ADD COLUMN IF NOT EXISTS correct_answer TEXT`);
+        await pool.query(`ALTER TABLE ${tables.QUESTIONS} ADD COLUMN IF NOT EXISTS correct_answer TEXT`);
         // Add profile_image to users
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS profile_image TEXT`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS profile_image TEXT`);
         // Add is_demo_account flag for demo users
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS is_demo_account BOOLEAN DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS is_demo_account BOOLEAN DEFAULT FALSE`);
         // Add business_id for multi-tenancy support
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES dqai_businesses(id) ON DELETE SET NULL`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES ${tables.BUSINESSES}(id) ON DELETE SET NULL`);
         // Add account_type (user, admin, etc.)
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'user'`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'user'`);
         // Add last_login_at for tracking user activity
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`);
         // Add account_activated_at for tracking when accounts were activated
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS account_activated_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS account_activated_at TIMESTAMP`);
         // Add deactivated_at for tracking when accounts were deactivated
-        await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP`);
         // Add powerbi_url and related columns to activities to support activity-level Power BI embeds
-        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
-        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
-        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`);
         // Add show_in_menu flag for datasets so datasets can be shown in sidebar
-        await pool.query(`ALTER TABLE dqai_datasets ADD COLUMN IF NOT EXISTS show_in_menu BOOLEAN DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE ${tables.DATASETS} ADD COLUMN IF NOT EXISTS show_in_menu BOOLEAN DEFAULT FALSE`);
         // Create roles, permissions and settings tables
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_roles (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.ROLES} (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
             description TEXT
         )`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_permissions (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PERMISSIONS} (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
             description TEXT
         )`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_role_permissions (
-            role_id INTEGER REFERENCES dqai_roles(id) ON DELETE CASCADE,
-            permission_id INTEGER REFERENCES dqai_permissions(id) ON DELETE CASCADE,
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.ROLE_PERMISSIONS} (
+            role_id INTEGER REFERENCES ${tables.ROLES}(id) ON DELETE CASCADE,
+            permission_id INTEGER REFERENCES ${tables.PERMISSIONS}(id) ON DELETE CASCADE,
             PRIMARY KEY (role_id, permission_id)
         )`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_user_roles (
-            user_id INTEGER REFERENCES dqai_users(id) ON DELETE CASCADE,
-            role_id INTEGER REFERENCES dqai_roles(id) ON DELETE CASCADE,
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.USER_ROLES} (
+            user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE CASCADE,
+            role_id INTEGER REFERENCES ${tables.ROLES}(id) ON DELETE CASCADE,
             PRIMARY KEY (user_id, role_id)
         )`);
         // Page/section-level permissions: store per-role flags for pages/sections
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_page_permissions (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PAGE_PERMISSIONS} (
             id SERIAL PRIMARY KEY,
             page_key TEXT NOT NULL,
             section_key TEXT,
@@ -1831,55 +1848,43 @@ async function initDb() {
             created_at TIMESTAMP DEFAULT NOW(),
             UNIQUE (page_key, section_key, role_name)
         )`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_settings (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.SETTINGS} (
             key TEXT NOT NULL,
             value JSONB,
             business_id INTEGER,
             PRIMARY KEY (key, business_id),
-            FOREIGN KEY (business_id) REFERENCES dqai_businesses(id) ON DELETE CASCADE
+            FOREIGN KEY (business_id) REFERENCES ${tables.BUSINESSES}(id) ON DELETE CASCADE
         )`);
-        // Businesses / organizations table for multi-tenancy
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_businesses (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            phone TEXT,
-            email TEXT,
-            address TEXT,
-            website TEXT,
-            logo_url TEXT,
-            settings JSONB DEFAULT '{}'::jsonb,
-            status TEXT DEFAULT 'Active',
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        )`);
+        // SaaS Plans and Plan Assignments are created in migration_multi_tenancy.sql
+        // They are handled during the initializeStartup() call
 
         // Add business_id FK column to common resource tables for scoping
         const addBusinessCols = [
-            'dqai_users', 'dqai_programs', 'dqai_facilities', 'dqai_activities', 'dqai_activity_reports',
-            'dqai_questions', 'dqai_answers', 'dqai_uploaded_docs', 'dqai_datasets', 'dqai_report_templates'
+            tables.USERS, tables.PROGRAMS, tables.FACILITIES, tables.ACTIVITIES, tables.ACTIVITY_REPORTS,
+            tables.QUESTIONS, tables.ANSWERS, tables.UPLOADED_DOCS, tables.DATASETS, tables.REPORT_TEMPLATES
         ];
         for (const t of addBusinessCols) {
-            try { await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES dqai_businesses(id) ON DELETE SET NULL`); } catch (e) { /* ignore */ }
+            try { await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES ${tables.BUSINESSES}(id) ON DELETE SET NULL`); } catch (e) { /* ignore */ }
         }
 
-        // Ensure dqai_settings has business_id column (critical for multi-tenancy settings)
+        // Ensure ${tables.SETTINGS} has business_id column (critical for multi-tenancy settings)
         try {
-            await pool.query(`ALTER TABLE dqai_settings ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES dqai_businesses(id) ON DELETE CASCADE`);
+            await pool.query(`ALTER TABLE ${tables.SETTINGS} ADD COLUMN IF NOT EXISTS business_id INTEGER REFERENCES ${tables.BUSINESSES}(id) ON DELETE CASCADE`);
         } catch (e) { /* ignore if already exists */ }
 
-        // If dqai_settings doesn't have proper PRIMARY KEY, we need to handle it
+        // If ${tables.SETTINGS} doesn't have proper PRIMARY KEY, we need to handle it
         try {
             // Try to add constraint if it doesn't exist
-            await pool.query(`ALTER TABLE dqai_settings DROP CONSTRAINT IF NOT EXISTS dqai_settings_pkey CASCADE`);
+            await pool.query(`ALTER TABLE ${tables.SETTINGS} DROP CONSTRAINT IF NOT EXISTS ${tables.SETTINGS}_pkey CASCADE`);
         } catch (e) { /* ignore */ }
         try {
-            await pool.query(`ALTER TABLE dqai_settings ADD PRIMARY KEY (key, business_id)`);
+            await pool.query(`ALTER TABLE ${tables.SETTINGS} ADD PRIMARY KEY (key, business_id)`);
         } catch (e) { /* ignore if already exists */ }
         // Ensure a unique index exists so ON CONFLICT (key, business_id) works even if primary key couldn't be set
         try {
-            await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_dqai_settings_key_business ON dqai_settings (key, business_id)`);
+            await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_${tables.SETTINGS}_key_business ON ${tables.SETTINGS} (key, business_id)`);
         } catch (e) { /* ignore */ }
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_llm_providers (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.LLM_PROVIDERS} (
             id SERIAL PRIMARY KEY,
             provider_id TEXT,
             name TEXT,
@@ -1887,88 +1892,88 @@ async function initDb() {
             config JSONB,
             priority INTEGER
         )`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_rag_schemas (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.RAG_SCHEMAS} (
             id SERIAL PRIMARY KEY,
             table_name TEXT UNIQUE,
             schema JSONB,
             sample_rows JSONB,
             generated_at TIMESTAMP DEFAULT NOW()
         )`);
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_rag_chroma_ids (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.RAG_CHROMA_IDS} (
             id SERIAL PRIMARY KEY,
             rag_table_name TEXT,
             chroma_id TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`);
         // Audit batches: store arrays of events pushed from clients (minimalistic records)
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_batches (
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.AUDIT_BATCHES} (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+            user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
             events JSONB,
             created_at TIMESTAMP DEFAULT NOW()
         )`);
         // Ensure RAG schemas table has category and business rules fields
-        await pool.query(`ALTER TABLE dqai_rag_schemas ADD COLUMN IF NOT EXISTS category TEXT`);
-        await pool.query(`ALTER TABLE dqai_rag_schemas ADD COLUMN IF NOT EXISTS business_rules TEXT`);
+        await pool.query(`ALTER TABLE ${tables.RAG_SCHEMAS} ADD COLUMN IF NOT EXISTS category TEXT`);
+        await pool.query(`ALTER TABLE ${tables.RAG_SCHEMAS} ADD COLUMN IF NOT EXISTS business_rules TEXT`);
         // Add a minimal text summary field for RAG records to provide concise context to LLMs
-        await pool.query(`ALTER TABLE dqai_rag_schemas ADD COLUMN IF NOT EXISTS summary_text TEXT`);
+        await pool.query(`ALTER TABLE ${tables.RAG_SCHEMAS} ADD COLUMN IF NOT EXISTS summary_text TEXT`);
         // Ensure uploaded_docs has a report_id reference so files can be tied to a specific report
-        await pool.query(`ALTER TABLE dqai_uploaded_docs ADD COLUMN IF NOT EXISTS report_id INTEGER`);
+        await pool.query(`ALTER TABLE ${tables.UPLOADED_DOCS} ADD COLUMN IF NOT EXISTS report_id INTEGER`);
         // Ensure activities has response_type and form_definition (sync with schema)
-        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS response_type TEXT`);
-        await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS form_definition JSONB`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS response_type TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS form_definition JSONB`);
         // Remove legacy columns from questions if they exist
-        await pool.query(`ALTER TABLE dqai_questions DROP COLUMN IF EXISTS reviewers_comment`);
-        await pool.query(`ALTER TABLE dqai_questions DROP COLUMN IF EXISTS quality_improvement_followup`);
-        await pool.query(`ALTER TABLE dqai_questions DROP COLUMN IF EXISTS score`);
+        await pool.query(`ALTER TABLE ${tables.QUESTIONS} DROP COLUMN IF EXISTS reviewers_comment`);
+        await pool.query(`ALTER TABLE ${tables.QUESTIONS} DROP COLUMN IF EXISTS quality_improvement_followup`);
+        await pool.query(`ALTER TABLE ${tables.QUESTIONS} DROP COLUMN IF EXISTS score`);
         // Ensure activity_reports schema: remove uploaded_files and data_collection_level, add reviewer report fields
-        await pool.query(`ALTER TABLE dqai_activity_reports DROP COLUMN IF EXISTS uploaded_files`);
-        await pool.query(`ALTER TABLE dqai_activity_reports DROP COLUMN IF EXISTS data_collection_level`);
-        await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS reviewers_report TEXT`);
-        await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS overall_score NUMERIC`);
-        await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS reported_by INTEGER`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} DROP COLUMN IF EXISTS uploaded_files`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} DROP COLUMN IF EXISTS data_collection_level`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS reviewers_report TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS overall_score NUMERIC`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS reported_by INTEGER`);
         // Add optional template association for reports
-        await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS report_template_id INTEGER`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS report_template_id INTEGER`);
         // Allow storing a picked location and visibility flag on reports and users
-        try { await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN`); } catch (e) { /* ignore */ }
         // Allow assigning a validator to a report
-        try { await pool.query(`ALTER TABLE dqai_activity_reports ADD COLUMN IF NOT EXISTS assigned_validator INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITY_REPORTS} ADD COLUMN IF NOT EXISTS assigned_validator INTEGER`); } catch (e) { /* ignore */ }
         // Add location and show_on_map to users so user profiles can optionally store coordinates/visibility
-        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS custom_fields JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS custom_fields JSONB`); } catch (e) { /* ignore */ }
         // Enhance report templates table to support paper size, orientation and images
-        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS paper_size TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS orientation TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS header_image TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS footer_image TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS watermark_image TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_report_templates ADD COLUMN IF NOT EXISTS assets JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.REPORT_TEMPLATES} ADD COLUMN IF NOT EXISTS paper_size TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.REPORT_TEMPLATES} ADD COLUMN IF NOT EXISTS orientation TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.REPORT_TEMPLATES} ADD COLUMN IF NOT EXISTS header_image TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.REPORT_TEMPLATES} ADD COLUMN IF NOT EXISTS footer_image TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.REPORT_TEMPLATES} ADD COLUMN IF NOT EXISTS watermark_image TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.REPORT_TEMPLATES} ADD COLUMN IF NOT EXISTS assets JSONB`); } catch (e) { /* ignore */ }
         // Add facility location and visibility columns (store as text 'lat,lng')
-        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS custom_fields JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_facilities ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.FACILITIES} ADD COLUMN IF NOT EXISTS location TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.FACILITIES} ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.FACILITIES} ADD COLUMN IF NOT EXISTS custom_fields JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.FACILITIES} ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
         // Email verification tokens for self-registered users
         try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_email_verifications (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.EMAIL_VERIFICATIONS} (
                 id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES dqai_users(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE CASCADE,
                 token TEXT UNIQUE,
                 expires_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT NOW()
             )`);
         } catch (e) { /* ignore */ }
         // Add show_on_map to programs and activities so they can be toggled on the map
-        try { await pool.query(`ALTER TABLE dqai_programs ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.PROGRAMS} ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
         // Ensure indicators table exists for computed indicators definitions
         try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_indicators (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.INDICATORS} (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
-                activity_id INTEGER REFERENCES dqai_activities(id) ON DELETE SET NULL,
+                activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE SET NULL,
                 formula TEXT,
                 formula_type TEXT,
                 created_by INTEGER,
@@ -1976,24 +1981,24 @@ async function initDb() {
             )`);
         } catch (e) { /* ignore */ }
         // Ensure indicator fields requested by UI exist (idempotent)
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS title TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS subtitle TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS indicator_level TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS unit_of_measurement TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT false`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS program_id INTEGER`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS notes JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS status TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS title TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS subtitle TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS indicator_level TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS unit_of_measurement TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS show_on_map BOOLEAN DEFAULT false`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS program_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS notes JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS status TEXT`); } catch (e) { /* ignore */ }
         // Allow per-row role assignments on dataset content rows
-        try { await pool.query(`ALTER TABLE dqai_dataset_content ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.DATASET_CONTENT} ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
         
         // Ensure user approvals table exists
         try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_user_approvals (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.USER_APPROVALS} (
                 id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES dqai_users(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE CASCADE,
                 status TEXT DEFAULT 'Pending',
-                approved_by INTEGER REFERENCES dqai_users(id) ON DELETE SET NULL,
+                approved_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
                 approval_notes TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
@@ -2002,7 +2007,7 @@ async function initDb() {
         
         // Ensure feedback messages table exists
         try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_feedback_messages (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.FEEDBACK_MESSAGES} (
                 id SERIAL PRIMARY KEY,
                 business_id INTEGER,
                 sender_name TEXT,
@@ -2017,15 +2022,15 @@ async function initDb() {
         } catch (e) { /* ignore */ }
         
         // Add last_login_at to users table if missing
-        try { await pool.query(`ALTER TABLE dqai_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`); } catch (e) { /* ignore */ }
         
         // Add business_id to datasets table for multi-tenancy
-        try { await pool.query(`ALTER TABLE dqai_datasets ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_dataset_content ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.DATASETS} ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.DATASET_CONTENT} ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
         
         // Create landing page config table if missing
         try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_landing_page_config (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.LANDING_PAGE_CONFIG} (
                 id SERIAL PRIMARY KEY,
                 business_id INTEGER UNIQUE,
                 hero_title TEXT,
@@ -2052,6 +2057,10 @@ async function initDb() {
                 footer_links JSONB,
                 logo_url TEXT,
                 favicon_url TEXT,
+                company_name TEXT,
+                app_name TEXT,
+                nav_background_color TEXT DEFAULT '#ffffff',
+                nav_text_color TEXT DEFAULT '#000000',
                 primary_color TEXT,
                 secondary_color TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
@@ -2059,45 +2068,45 @@ async function initDb() {
             )`);
         } catch (e) { /* ignore */ }
         
-        // Ensure dqai_landing_page_config has all required columns
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_data JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_items JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS footer_links JSONB`); } catch (e) { /* ignore */ }
+        // Ensure ${tables.LANDING_PAGE_CONFIG} has all required columns
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS features_data JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS carousel_items JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS carousel_title TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS carousel_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS footer_links JSONB`); } catch (e) { /* ignore */ }
         // Add font styling columns for all sections
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_title_font_size TEXT DEFAULT '48px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_subtitle_font_size TEXT DEFAULT '20px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_subtitle_font_size TEXT DEFAULT '18px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_subtitle_font_size TEXT DEFAULT '18px'`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS hero_title_font_size TEXT DEFAULT '48px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS hero_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS hero_subtitle_font_size TEXT DEFAULT '20px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS hero_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS features_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS features_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS features_subtitle_font_size TEXT DEFAULT '18px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS features_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS carousel_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS carousel_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS cta_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS cta_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS cta_subtitle_font_size TEXT DEFAULT '18px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS cta_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
         // New columns for extended landing page features
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS app_name TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS nav_background_color TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS nav_text_color TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS pricing_items JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS pricing_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS pricing_currency TEXT`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS custom_pages JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_featured_images JSONB`); } catch (e) { /* ignore */ }
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS locked_organization_id INTEGER`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS app_name TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS nav_background_color TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS nav_text_color TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS pricing_items JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS pricing_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS pricing_currency TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS custom_pages JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS hero_featured_images JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS locked_organization_id INTEGER`); } catch (e) { /* ignore */ }
         // Remove foreign key constraint on business_id (not needed for universal config)
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config DROP CONSTRAINT IF EXISTS dqai_landing_page_config_business_id_fkey`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} DROP CONSTRAINT IF EXISTS ${tables.LANDING_PAGE_CONFIG}_business_id_fkey`); } catch (e) { /* ignore */ }
         // Ensure unique constraint on business_id exists (for ON CONFLICT clause)
-        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD CONSTRAINT unique_business_id UNIQUE(business_id)`); } catch (e) { /* ignore - may already exist */ }
+        try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD CONSTRAINT unique_business_id UNIQUE(business_id)`); } catch (e) { /* ignore - may already exist */ }
 
-        // Create dqai_form_schemas table for custom form field definitions
+        // Create ${tables.FORM_SCHEMAS} table for custom form field definitions
         try {
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_form_schemas (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.FORM_SCHEMAS} (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 "formType" VARCHAR(50) NOT NULL,
@@ -2107,21 +2116,55 @@ async function initDb() {
                 "updatedAt" TIMESTAMP DEFAULT NOW(),
                 UNIQUE ("formType", business_id)
             )`);
-            console.log('dqai_form_schemas table created/verified');
+            console.log(`${tables.FORM_SCHEMAS} table created/verified`);
         } catch (err) {
-            console.error('Failed to create dqai_form_schemas table:', err);
+            console.error(`Failed to create ${tables.FORM_SCHEMAS} table:`, err);
         }
+
+        // Create PLANS table for subscription/licensing
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PLANS} (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                price NUMERIC(10, 2) DEFAULT 0,
+                max_programs_per_business INTEGER DEFAULT -1,
+                max_activities_per_program INTEGER DEFAULT -1,
+                max_questions_per_activity INTEGER DEFAULT -1,
+                max_facilities INTEGER DEFAULT -1,
+                max_users INTEGER DEFAULT -1,
+                features JSONB DEFAULT '{}'::jsonb,
+                status TEXT DEFAULT 'Active',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (err) { /* ignore - table may already exist */ }
+
+        // Create PLAN_ASSIGNMENTS table
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PLAN_ASSIGNMENTS} (
+                id SERIAL PRIMARY KEY,
+                plan_id INTEGER REFERENCES ${tables.PLANS}(id) ON DELETE SET NULL,
+                business_id INTEGER REFERENCES ${tables.BUSINESSES}(id) ON DELETE CASCADE,
+                assigned_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+                status TEXT DEFAULT 'Active',
+                start_date DATE,
+                end_date DATE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (err) { /* ignore - table may already exist */ }
     } catch (err) {
         console.error('Failed to sync reviewer/score columns between questions and answers:', err);
         throw err;
     }
     // Ensure legacy tables get required columns (safe check + alter if missing)
     try {
-        const colCheck = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name='dqai_users' AND column_name='password'");
+        const colCheck = await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name=$1 AND column_name='password'`, [tables.USERS.replace(/^${TABLE_PREFIX}/, '')]);
         if (colCheck.rowCount === 0) {
-            console.log('dqai_users.password column missing — adding column');
-            await pool.query('ALTER TABLE dqai_users ADD COLUMN password TEXT');
-            console.log('dqai_users.password column added');
+            console.log(`${tables.USERS}.password column missing — adding column`);
+            await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN password TEXT`);
+            console.log(`${tables.USERS}.password column added`);
         } else {
             console.log('users.password column already exists');
         }
@@ -2171,11 +2214,11 @@ async function initDb() {
         // Only create a default admin if no Admin user exists. This avoids overwriting
         // or re-creating the default admin when an Admin account has been modified by the user.
         try {
-            const adminsRes = await pool.query("SELECT u.id FROM dqai_users u WHERE u.role = 'Admin' OR u.id IN (SELECT ur.user_id FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE LOWER(r.name) = 'admin') LIMIT 1");
+            const adminsRes = await pool.query(`SELECT u.id FROM ${tables.USERS} u WHERE u.role = 'Admin' OR u.id IN (SELECT ur.user_id FROM ${tables.USER_ROLES} ur JOIN ${tables.ROLES} r ON ur.role_id = r.id WHERE LOWER(r.name) = 'admin') LIMIT 1`);
             if (!adminsRes.rows || adminsRes.rows.length === 0) {
                 // No admin user exists; create the default admin
                 await pool.query(
-                    'INSERT INTO dqai_users (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6)',
+                    `INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status) VALUES ($1, $2, $3, $4, $5, $6)`,
                     ['System', 'Administrator', adminEmail, hashedAdminPassword, 'Admin', 'Active']
                 );
                 console.log('Default admin user created:', adminEmail);
@@ -2203,7 +2246,7 @@ async function initDb() {
             ['manage_llm', 'Manage LLM providers and RAG settings']
         ];
         for (const [name, desc] of perms) {
-            await pool.query('INSERT INTO dqai_permissions (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+            await pool.query(`INSERT INTO ${tables.PERMISSIONS} (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING`, [name, desc]);
         }
 
         const roles = [
@@ -2214,7 +2257,7 @@ async function initDb() {
             ['Viewer', 'Read-only access to reports and dashboards']
         ];
         for (const [name, desc] of roles) {
-            await pool.query('INSERT INTO dqai_roles (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+            await pool.query(`INSERT INTO ${tables.ROLES} (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING`, [name, desc]);
         }
 
         // Map role to permissions
@@ -2226,14 +2269,14 @@ async function initDb() {
             'Viewer': ['view_reports']
         };
         for (const [roleName, permNames] of Object.entries(rolePermMap)) {
-            const r = await pool.query('SELECT id FROM dqai_roles WHERE name = $1', [roleName]);
+            const r = await pool.query(`SELECT id FROM ${tables.ROLES} WHERE name = $1`, [roleName]);
             if (r.rows.length === 0) continue;
             const roleId = r.rows[0].id;
             for (const pname of permNames) {
-                const p = await pool.query('SELECT id FROM dqai_permissions WHERE name = $1', [pname]);
+                const p = await pool.query(`SELECT id FROM ${tables.PERMISSIONS} WHERE name = $1`, [pname]);
                 if (p.rows.length === 0) continue;
                 const permId = p.rows[0].id;
-                await pool.query('INSERT INTO dqai_role_permissions (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [roleId, permId]);
+                await pool.query(`INSERT INTO ${tables.ROLE_PERMISSIONS} (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [roleId, permId]);
             }
         }
         console.log('Default roles and permissions seeded (if they were missing).');
@@ -2244,12 +2287,12 @@ async function initDb() {
     // After seeding roles, ensure default admin user is assigned the Admin role in user_roles
     try {
         const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
-        const ures = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [adminEmail]);
-        const rres = await pool.query("SELECT id FROM dqai_roles WHERE name = 'Admin'");
+        const ures = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [adminEmail]);
+        const rres = await pool.query(`SELECT id FROM ${tables.ROLES} WHERE name = 'Admin'`);
         if (ures.rows.length > 0 && rres.rows.length > 0) {
             const userId = ures.rows[0].id;
             const roleId = rres.rows[0].id;
-            await pool.query('INSERT INTO dqai_user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [userId, roleId]);
+            await pool.query(`INSERT INTO ${tables.USER_ROLES} (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, roleId]);
             console.log('Assigned Admin role to default admin user (post-seed)');
         } else {
             console.log('Admin user or Admin role not found during post-seed assignment');
@@ -2599,7 +2642,7 @@ async function generateRagFromTarget(cfg, prefix = 'dqai_') {
                 try { const sres = await p.query(`SELECT * FROM "${t}" LIMIT 5`); sample = truncateSampleRows(sres.rows); } catch (e) { sample = []; }
                 // upsert into local rag_schemas (without prefix in stored name)
                 const shortName = t.startsWith(prefix) ? t.slice(prefix.length) : t;
-                await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [shortName, JSON.stringify(colsRes.rows), JSON.stringify(sample)]);
+                await pool.query(`INSERT INTO ${tables.RAG_SCHEMAS} (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()`, [shortName, JSON.stringify(colsRes.rows), JSON.stringify(sample)]);
                 // optional: push to Chroma/Vector DB if configured via CHROMA_API_URL
                 if (process.env.CHROMA_API_URL) {
                     try {
@@ -2609,7 +2652,7 @@ async function generateRagFromTarget(cfg, prefix = 'dqai_') {
                             const chromaId = `${shortName}_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
                             try {
                                 await fetch(chromaUrl + '/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: chromaId, text: JSON.stringify(row), metadata: { table: shortName, rowIndex: i } }) });
-                                try { await pool.query('INSERT INTO dqai_rag_chroma_ids (rag_table_name, chroma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [shortName, chromaId]); } catch (e) { /* ignore */ }
+                                try { await pool.query(`INSERT INTO ${tables.RAG_CHROMA_IDS} (rag_table_name, chroma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [shortName, chromaId]); } catch (e) { /* ignore */ }
                             } catch (e) { console.error('Failed to index row to Chroma for', shortName, e); }
                         }
                     } catch (e) { console.error('Failed to push to CHROMA for', shortName, e); }
@@ -2625,7 +2668,7 @@ async function generateRagFromTarget(cfg, prefix = 'dqai_') {
                 let sample = [];
                 try { const [srows] = await c.execute(`SELECT * FROM \`${t}\` LIMIT 5`); sample = truncateSampleRows(srows); } catch (e) { sample = []; }
                 const shortName = t.startsWith(prefix) ? t.slice(prefix.length) : t;
-                await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [shortName, JSON.stringify(cols), JSON.stringify(sample)]);
+                await pool.query(`INSERT INTO ${tables.RAG_SCHEMAS} (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()`, [shortName, JSON.stringify(cols), JSON.stringify(sample)]);
                 if (process.env.CHROMA_API_URL) {
                     try {
                         const chromaUrl = (process.env.CHROMA_API_URL || '').replace(/\/$/, '');
@@ -2634,7 +2677,7 @@ async function generateRagFromTarget(cfg, prefix = 'dqai_') {
                             const chromaId = `${shortName}_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
                             try {
                                 await fetch(chromaUrl + '/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: chromaId, text: JSON.stringify(row), metadata: { table: shortName, rowIndex: i } }) });
-                                try { await pool.query('INSERT INTO dqai_rag_chroma_ids (rag_table_name, chroma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [shortName, chromaId]); } catch (e) { /* ignore */ }
+                                try { await pool.query(`INSERT INTO ${tables.RAG_CHROMA_IDS} (rag_table_name, chroma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [shortName, chromaId]); } catch (e) { /* ignore */ }
                             } catch (e) { console.error('Failed to index row to Chroma for', shortName, e); }
                         }
                     } catch (e) { console.error('Failed to push to CHROMA for', shortName, e); }
@@ -2662,13 +2705,13 @@ function normalizeAdminRole(role) {
 async function requireAdmin(req, res, next) {
     try {
         if (!req.session || !req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
-        const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+        const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
         if (r.rows.length === 0) return res.status(401).json({ error: 'Unauthorized' });
         const roleFromUser = (r.rows[0].role || '').toString().toLowerCase();
         if (roleFromUser === 'admin' || roleFromUser === 'super-admin' || roleFromUser === 'super_admin') return next();
         // Also allow admin if the user has an Admin role assignment in user_roles -> roles
         try {
-            const rr = await pool.query('SELECT r.name FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [req.session.userId]);
+            const rr = await pool.query(`SELECT r.name FROM ${tables.USER_ROLES} ur JOIN ${tables.ROLES} r ON ur.role_id = r.id WHERE ur.user_id = $1`, [req.session.userId]);
             for (const row of rr.rows) {
                 if (row && row.name && row.name.toString().toLowerCase() === 'admin') return next();
             }
@@ -2684,7 +2727,7 @@ async function requireAdmin(req, res, next) {
 async function isSuperAdmin(req) {
     try {
         if (!req.session || !req.session.userId) return false;
-        const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId]);
+        const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
         if (r.rows.length === 0) return false;
         const roleFromUser = (r.rows[0].role || '').toString().toLowerCase();
         return roleFromUser === 'super-admin' || roleFromUser === 'superadmin' || roleFromUser === 'super admin';
@@ -2774,7 +2817,7 @@ app.post('/api/admin/env', requireAdmin, async (req, res) => {
                         sample = truncateSampleRows(sres.rows);
                     } catch (e) { /* ignore sampling errors */ }
                     // upsert into rag_schemas
-                    await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, JSON.stringify(schema), JSON.stringify(sample)]);
+                    await pool.query(`INSERT INTO ${tables.RAG_SCHEMAS} (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()`, [tname, JSON.stringify(schema), JSON.stringify(sample)]);
                 }
                 await tempPool.end();
                 console.log('RAG schemas generated/updated based on provided DB settings');
@@ -2823,7 +2866,7 @@ app.post('/api/env', async (req, res) => {
                     const schema = colsRes.rows;
                     let sample = [];
                     try { const sres = await tempPool.query(`SELECT * FROM "${tname}" LIMIT 5`); sample = truncateSampleRows(sres.rows); } catch (e) { /* ignore */ }
-                    await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, JSON.stringify(schema), JSON.stringify(sample)]);
+                    await pool.query(`INSERT INTO ${tables.RAG_SCHEMAS} (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()`, [tname, JSON.stringify(schema), JSON.stringify(sample)]);
                 }
                 await tempPool.end();
                 console.log('RAG schemas generated/updated (public env update)');
@@ -2845,7 +2888,7 @@ app.get('/api/admin/db/tables', requireAdmin, async (req, res) => {
 // Admin: get all page/section permissions
 app.get('/api/admin/page_permissions', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_page_permissions ORDER BY page_key, section_key, role_name');
+        const r = await pool.query(`SELECT * FROM ${tables.PAGE_PERMISSIONS} ORDER BY page_key, section_key, role_name`);
         res.json(r.rows);
     } catch (e) { console.error('admin page_permissions get error', e); res.status(500).json({ error: 'Failed to fetch page permissions' }); }
 });
@@ -2855,7 +2898,7 @@ app.get('/api/page_permissions', async (req, res) => {
     try {
         const role = String(req.query.role || req.query.roleName || '').trim();
         if (!role) return res.status(400).json({ error: 'Missing role query param' });
-        const r = await pool.query('SELECT * FROM dqai_page_permissions WHERE role_name = $1 ORDER BY page_key, section_key', [role]);
+        const r = await pool.query(`SELECT * FROM ${tables.PAGE_PERMISSIONS} WHERE role_name = $1 ORDER BY page_key, section_key`, [role]);
         res.json(r.rows);
     } catch (e) { console.error('page_permissions fetch error', e); res.status(500).json({ error: 'Failed to fetch page permissions' }); }
 });
@@ -2878,7 +2921,7 @@ app.post('/api/admin/page_permissions', requireAdmin, async (req, res) => {
                 const canEdit = !!p.can_edit || !!p.canEdit;
                 const canDelete = !!p.can_delete || !!p.canDelete;
                 if (!pageKey || !roleName) continue;
-                await client.query(`INSERT INTO dqai_page_permissions (page_key, section_key, role_name, can_create, can_view, can_edit, can_delete)
+                await client.query(`INSERT INTO ${tables.PAGE_PERMISSIONS} (page_key, section_key, role_name, can_create, can_view, can_edit, can_delete)
                     VALUES ($1,$2,$3,$4,$5,$6,$7)
                     ON CONFLICT (page_key, section_key, role_name) DO UPDATE SET can_create = EXCLUDED.can_create, can_view = EXCLUDED.can_view, can_edit = EXCLUDED.can_edit, can_delete = EXCLUDED.can_delete`, [pageKey, sectionKey, roleName, canCreate, canView, canEdit, canDelete]);
             }
@@ -3002,7 +3045,7 @@ app.post('/api/admin/switch-db', requireAdmin, async (req, res) => {
 app.get('/api/admin/smtp', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
-        const r = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
+        const r = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
         if (r.rows.length === 0) return res.json(null);
         return res.json(r.rows[0].value);
     } catch (e) { console.error('Failed to get smtp settings', e); res.status(500).json({ error: String(e) }); }
@@ -3012,7 +3055,7 @@ app.post('/api/admin/smtp', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
         const payload = req.body || {};
-        await pool.query("INSERT INTO dqai_settings (key, value, business_id) VALUES ('smtp',$1,$2) ON CONFLICT (key, business_id) DO UPDATE SET value = $1", [payload, businessId]);
+        await pool.query("INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ('smtp',$1,$2) ON CONFLICT (key, business_id) DO UPDATE SET value = $1", [payload, businessId]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to save smtp settings', e); res.status(500).json({ ok: false, error: String(e) }); }
 });
@@ -3024,7 +3067,7 @@ app.post('/api/admin/test-smtp', requireAdmin, async (req, res) => {
         if (!to) return res.status(400).json({ ok: false, error: 'Missing to' });
         // load smtp settings
         const businessId = req.session?.businessId || null;
-        const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
+        const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
         const smtp = sres.rows[0] ? sres.rows[0].value : null;
         if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
         // dynamic import nodemailer
@@ -3045,16 +3088,16 @@ app.post('/auth/request-password-reset', async (req, res) => {
     try {
         const { email } = req.body || {};
         if (!email) return res.status(400).json({ ok: false, error: 'Missing email' });
-        const ures = await pool.query('SELECT id, email, first_name FROM dqai_users WHERE email = $1', [email]);
+        const ures = await pool.query(`SELECT id, email, first_name FROM ${tables.USERS} WHERE email = $1`, [email]);
         if (ures.rows.length === 0) return res.status(404).json({ ok: false, error: 'User not found' });
         const user = ures.rows[0];
         // ensure password_resets table exists
-        await pool.query(`CREATE TABLE IF NOT EXISTS dqai_password_resets (user_id INTEGER, token TEXT PRIMARY KEY, expires_at TIMESTAMP)`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PASSWORD_RESETS} (user_id INTEGER, token TEXT PRIMARY KEY, expires_at TIMESTAMP)`);
         const token = crypto.randomBytes(24).toString('hex');
         const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
-        await pool.query('INSERT INTO dqai_password_resets (user_id, token, expires_at) VALUES ($1,$2,$3)', [user.id, token, expires]);
+        await pool.query(`INSERT INTO ${tables.PASSWORD_RESETS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [user.id, token, expires]);
         // load smtp
-        const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp'");
+        const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp'");
         const smtp = sres.rows[0] ? sres.rows[0].value : null;
         if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
         const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -3074,13 +3117,13 @@ app.post('/auth/reset-password', async (req, res) => {
     try {
         const { token, newPassword } = req.body || {};
         if (!token || !newPassword) return res.status(400).json({ ok: false, error: 'Missing token or newPassword' });
-        const tres = await pool.query('SELECT user_id, expires_at FROM dqai_password_resets WHERE token = $1', [token]);
+        const tres = await pool.query(`SELECT user_id, expires_at FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
         if (tres.rows.length === 0) return res.status(400).json({ ok: false, error: 'Invalid token' });
         const row = tres.rows[0];
         if (new Date(row.expires_at) < new Date()) return res.status(400).json({ ok: false, error: 'Token expired' });
         const hash = await bcrypt.hash(newPassword, 10);
-        await pool.query('UPDATE dqai_users SET password = $1 WHERE id = $2', [hash, row.user_id]);
-        await pool.query('DELETE FROM dqai_password_resets WHERE token = $1', [token]);
+        await pool.query(`UPDATE ${tables.USERS} SET password = $1 WHERE id = $2`, [hash, row.user_id]);
+        await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
         return res.json({ ok: true });
     } catch (e) { console.error('reset-password error', e); res.status(500).json({ ok: false, error: String(e) }); }
 });
@@ -3092,7 +3135,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
         // Query for business-specific settings first, then fallback to NULL (global) settings
         // COALESCE picks business settings if they exist, otherwise global settings
         const result = await pool.query(`
-            SELECT DISTINCT ON (key) key, value FROM dqai_settings 
+            SELECT DISTINCT ON (key) key, value FROM ${tables.SETTINGS} 
             WHERE business_id = $1 OR business_id IS NULL
             ORDER BY key, business_id DESC NULLS LAST
         `, [businessId]);
@@ -3127,7 +3170,7 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
             // which can occur when calling functions like to_jsonb($2) with an unknown param type.
             const jsonString = JSON.stringify(v);
             await pool.query(
-                'INSERT INTO dqai_settings (key, value, business_id) VALUES ($1, $2::jsonb, $3) ON CONFLICT (key, business_id) DO UPDATE SET value = $2::jsonb',
+                `INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ($1, $2::jsonb, $3) ON CONFLICT (key, business_id) DO UPDATE SET value = $2::jsonb`,
                 [k, jsonString, businessId]
             );
         }
@@ -3196,7 +3239,7 @@ app.post('/api/admin/test-db', requireAdmin, async (req, res) => {
                             // sampling failure is non-fatal
                             sample = [];
                         }
-                        await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()', [tname, JSON.stringify(schema), JSON.stringify(sample)]);
+                        await pool.query(`INSERT INTO ${tables.RAG_SCHEMAS} (table_name, schema, sample_rows) VALUES ($1,$2,$3) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, generated_at = NOW()`, [tname, JSON.stringify(schema), JSON.stringify(sample)]);
                     } catch (e) {
                         console.error('Failed processing table', tname, e);
                     }
@@ -3245,7 +3288,7 @@ app.post('/api/admin/seed-roles', requireAdmin, async (req, res) => {
             ['manage_llm', 'Manage LLM providers and RAG settings']
         ];
         for (const [name, desc] of perms) {
-            await pool.query('INSERT INTO dqai_permissions (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+            await pool.query(`INSERT INTO ${tables.PERMISSIONS} (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING`, [name, desc]);
         }
         const roles = [
             ['Admin', 'Full system administrator'],
@@ -3255,7 +3298,7 @@ app.post('/api/admin/seed-roles', requireAdmin, async (req, res) => {
             ['Viewer', 'Read-only access to reports and dashboards']
         ];
         for (const [name, desc] of roles) {
-            await pool.query('INSERT INTO dqai_roles (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING', [name, desc]);
+            await pool.query(`INSERT INTO ${tables.ROLES} (name, description) VALUES ($1,$2) ON CONFLICT (name) DO NOTHING`, [name, desc]);
         }
         const rolePermMap = {
             'Admin': ['manage_users', 'manage_roles', 'manage_settings', 'edit_forms', 'submit_reports', 'view_reports', 'manage_llm'],
@@ -3265,21 +3308,21 @@ app.post('/api/admin/seed-roles', requireAdmin, async (req, res) => {
             'Viewer': ['view_reports']
         };
         for (const [roleName, permNames] of Object.entries(rolePermMap)) {
-            const r = await pool.query('SELECT id FROM dqai_roles WHERE name = $1', [roleName]);
+            const r = await pool.query(`SELECT id FROM ${tables.ROLES} WHERE name = $1`, [roleName]);
             if (r.rows.length === 0) continue;
             const roleId = r.rows[0].id;
             for (const pname of permNames) {
-                const p = await pool.query('SELECT id FROM dqai_permissions WHERE name = $1', [pname]);
+                const p = await pool.query(`SELECT id FROM ${tables.PERMISSIONS} WHERE name = $1`, [pname]);
                 if (p.rows.length === 0) continue;
                 const permId = p.rows[0].id;
-                await pool.query('INSERT INTO dqai_role_permissions (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [roleId, permId]);
+                await pool.query(`INSERT INTO ${tables.ROLE_PERMISSIONS} (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [roleId, permId]);
             }
         }
         // Ensure default admin user is assigned Admin role
         try {
             const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
-            const ures = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [adminEmail]);
-            const rres = await pool.query("SELECT id FROM dqai_roles WHERE name = 'Admin'");
+            const ures = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [adminEmail]);
+            const rres = await pool.query("SELECT id FROM ${tables.ROLES} WHERE name = 'Admin'");
             if (ures.rows.length > 0 && rres.rows.length > 0) {
                 const userId = ures.rows[0].id;
                 const roleId = rres.rows[0].id;
@@ -3293,7 +3336,7 @@ app.post('/api/admin/seed-roles', requireAdmin, async (req, res) => {
 // Admin: CRUD for llm_providers
 app.get('/api/admin/llm_providers', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_llm_providers ORDER BY priority ASC');
+        const r = await pool.query(`SELECT * FROM ${tables.LLM_PROVIDERS} ORDER BY priority ASC`);
         res.json(r.rows);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list llm providers' }); }
 });
@@ -3302,10 +3345,10 @@ app.post('/api/admin/llm_providers', requireAdmin, async (req, res) => {
     try {
         const { id, provider_id, name, model, config, priority } = req.body;
         if (id) {
-            const r = await pool.query('UPDATE dqai_llm_providers SET provider_id=$1, name=$2, model=$3, config=$4, priority=$5 WHERE id=$6 RETURNING *', [provider_id, name, model, config || {}, priority || 0, id]);
+            const r = await pool.query(`UPDATE ${tables.LLM_PROVIDERS} SET provider_id=$1, name=$2, model=$3, config=$4, priority=$5 WHERE id=$6 RETURNING *`, [provider_id, name, model, config || {}, priority || 0, id]);
             return res.json(r.rows[0]);
         }
-        const r = await pool.query('INSERT INTO dqai_llm_providers (provider_id, name, model, config, priority) VALUES ($1,$2,$3,$4,$5) RETURNING *', [provider_id, name, model, config || {}, priority || 0]);
+        const r = await pool.query(`INSERT INTO ${tables.LLM_PROVIDERS} (provider_id, name, model, config, priority) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [provider_id, name, model, config || {}, priority || 0]);
         res.json(r.rows[0]);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save provider' }); }
 });
@@ -3314,7 +3357,7 @@ app.post('/api/admin/llm_providers', requireAdmin, async (req, res) => {
 if (allowPublicAdmin) {
     app.get('/api/llm_providers', async (req, res) => {
         try {
-            const r = await pool.query('SELECT * FROM dqai_llm_providers ORDER BY priority ASC');
+            const r = await pool.query(`SELECT * FROM ${tables.LLM_PROVIDERS} ORDER BY priority ASC`);
             return res.json(r.rows);
         } catch (e) { console.error('public llm_providers list failed', e); return res.status(500).json({ error: 'Failed to list llm providers' }); }
     });
@@ -3323,10 +3366,10 @@ if (allowPublicAdmin) {
         try {
             const { id, provider_id, name, model, config, priority } = req.body;
             if (id) {
-                const r = await pool.query('UPDATE dqai_llm_providers SET provider_id=$1, name=$2, model=$3, config=$4, priority=$5 WHERE id=$6 RETURNING *', [provider_id, name, model, config || {}, priority || 0, id]);
+                const r = await pool.query(`UPDATE ${tables.LLM_PROVIDERS} SET provider_id=$1, name=$2, model=$3, config=$4, priority=$5 WHERE id=$6 RETURNING *`, [provider_id, name, model, config || {}, priority || 0, id]);
                 return res.json(r.rows[0]);
             }
-            const r = await pool.query('INSERT INTO dqai_llm_providers (provider_id, name, model, config, priority) VALUES ($1,$2,$3,$4,$5) RETURNING *', [provider_id, name, model, config || {}, priority || 0]);
+            const r = await pool.query(`INSERT INTO ${tables.LLM_PROVIDERS} (provider_id, name, model, config, priority) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [provider_id, name, model, config || {}, priority || 0]);
             return res.json(r.rows[0]);
         } catch (e) { console.error('public llm_providers save failed', e); return res.status(500).json({ error: 'Failed to save provider' }); }
     });
@@ -3334,7 +3377,7 @@ if (allowPublicAdmin) {
     // Public (dev) RAG schemas listing
     app.get('/api/rag_schemas', async (req, res) => {
         try {
-            const r = await pool.query('SELECT * FROM dqai_rag_schemas ORDER BY id');
+            const r = await pool.query(`SELECT * FROM ${tables.RAG_SCHEMAS} ORDER BY id`);
             return res.json(r.rows);
         } catch (e) { console.error('public rag_schemas list failed', e); return res.status(500).json({ error: 'Failed to list rag schemas' }); }
     });
@@ -3373,7 +3416,7 @@ if (allowPublicAdmin) {
 // Admin: CRUD for RAG schemas (list/create/update/delete)
 app.get('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_rag_schemas ORDER BY id');
+        const r = await pool.query(`SELECT * FROM ${tables.RAG_SCHEMAS} ORDER BY id`);
         res.json(r.rows);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list rag schemas' }); }
 });
@@ -3390,7 +3433,7 @@ app.post('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
         const br = business_rules ? String(business_rules) : null;
         let saved;
         if (id) {
-            const r = await pool.query('UPDATE dqai_rag_schemas SET table_name=$1, schema=$2, sample_rows=$3, category=$4, business_rules=$5, generated_at = NOW() WHERE id=$6 RETURNING *', [table_name, schemaJson, sampleJson, cat, br, id]);
+            const r = await pool.query(`UPDATE ${tables.RAG_SCHEMAS} SET table_name=$1, schema=$2, sample_rows=$3, category=$4, business_rules=$5, generated_at = NOW() WHERE id=$6 RETURNING *`, [table_name, schemaJson, sampleJson, cat, br, id]);
             saved = r.rows[0];
         } else {
             // Compute a minimal textual summary for the RAG record if not provided
@@ -3410,7 +3453,7 @@ app.post('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
                 } catch (e) { return `${table_name}`; }
             };
             const summaryText = computeSummary();
-            const r = await pool.query('INSERT INTO dqai_rag_schemas (table_name, schema, sample_rows, category, business_rules, summary_text) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, category = $4, business_rules = $5, summary_text = $6, generated_at = NOW() RETURNING *', [table_name, schemaJson, sampleJson, cat, br, summaryText]);
+            const r = await pool.query(`INSERT INTO ${tables.RAG_SCHEMAS} (table_name, schema, sample_rows, category, business_rules, summary_text) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (table_name) DO UPDATE SET schema = $2, sample_rows = $3, category = $4, business_rules = $5, summary_text = $6, generated_at = NOW() RETURNING *`, [table_name, schemaJson, sampleJson, cat, br, summaryText]);
             saved = r.rows[0];
         }
 
@@ -3419,18 +3462,18 @@ app.post('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
             const chromaUrl = (process.env.CHROMA_API_URL || '').replace(/\/$/, '');
             try {
                 // cleanup existing chroma ids for this table
-                const existing = await pool.query('SELECT chroma_id FROM dqai_rag_chroma_ids WHERE rag_table_name = $1', [table_name]);
+                const existing = await pool.query(`SELECT chroma_id FROM ${tables.RAG_CHROMA_IDS} WHERE rag_table_name = $1`, [table_name]);
                 for (const row of existing.rows) {
                     try { await fetch(chromaUrl + '/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: row.chroma_id }) }); } catch (e) { /* ignore */ }
                 }
-                await pool.query('DELETE FROM dqai_rag_chroma_ids WHERE rag_table_name = $1', [table_name]);
+                await pool.query(`DELETE FROM ${tables.RAG_CHROMA_IDS} WHERE rag_table_name = $1`, [table_name]);
 
                 for (let i = 0; i < processedSamples.length; i++) {
                     const rrow = processedSamples[i];
                     const chromaId = `${table_name}_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
                     try {
                         await fetch(chromaUrl + '/index', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: chromaId, text: JSON.stringify(rrow), metadata: { table: table_name, rag_id: saved.id, rowIndex: i } }) });
-                        try { await pool.query('INSERT INTO dqai_rag_chroma_ids (rag_table_name, chroma_id) VALUES ($1,$2)', [table_name, chromaId]); } catch (e) { /* ignore */ }
+                        try { await pool.query(`INSERT INTO ${tables.RAG_CHROMA_IDS} (rag_table_name, chroma_id) VALUES ($1,$2)`, [table_name, chromaId]); } catch (e) { /* ignore */ }
                     } catch (e) { console.error('Failed to push sample to Chroma', e); }
                 }
             } catch (e) { console.error('Chroma push error', e); }
@@ -3443,19 +3486,19 @@ app.post('/api/admin/rag_schemas', requireAdmin, async (req, res) => {
 app.delete('/api/admin/rag_schemas/:id', requireAdmin, async (req, res) => {
     try {
         const id = req.params.id;
-        const r = await pool.query('SELECT table_name FROM dqai_rag_schemas WHERE id = $1', [id]);
+        const r = await pool.query(`SELECT table_name FROM ${tables.RAG_SCHEMAS} WHERE id = $1`, [id]);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
         const tableName = r.rows[0].table_name;
         // delete DB record
-        await pool.query('DELETE FROM dqai_rag_schemas WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.RAG_SCHEMAS} WHERE id = $1`, [id]);
         // delete indexed chroma items if present
         if (process.env.CHROMA_API_URL) {
             const chromaUrl = (process.env.CHROMA_API_URL || '').replace(/\/$/, '');
-            const ids = await pool.query('SELECT chroma_id FROM dqai_rag_chroma_ids WHERE rag_table_name = $1', [tableName]);
+            const ids = await pool.query(`SELECT chroma_id FROM ${tables.RAG_CHROMA_IDS} WHERE rag_table_name = $1`, [tableName]);
             for (const row of ids.rows) {
                 try { await fetch(chromaUrl + '/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: row.chroma_id }) }); } catch (e) { /* ignore */ }
             }
-            await pool.query('DELETE FROM dqai_rag_chroma_ids WHERE rag_table_name = $1', [tableName]);
+            await pool.query(`DELETE FROM ${tables.RAG_CHROMA_IDS} WHERE rag_table_name = $1`, [tableName]);
         }
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete rag schema', e); res.status(500).json({ error: 'Failed to delete rag schema' }); }
@@ -3464,7 +3507,7 @@ app.delete('/api/admin/rag_schemas/:id', requireAdmin, async (req, res) => {
 // Admin: CRUD for indicators (computed metrics built from answers or SQL)
 app.get('/api/admin/indicators', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_indicators ORDER BY id DESC');
+        const r = await pool.query(`SELECT * FROM ${tables.INDICATORS} ORDER BY id DESC`);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list indicators', e); res.status(500).json({ error: 'Failed to list indicators' }); }
 });
@@ -3476,17 +3519,17 @@ app.post('/api/admin/indicators', requireAdmin, async (req, res) => {
         const finalName = name || title || null;
         if (!finalName) return res.status(400).json({ error: 'Missing name/title' });
         // Ensure category column exists (idempotent safe migration)
-        try { await pool.query("ALTER TABLE dqai_indicators ADD COLUMN IF NOT EXISTS category TEXT"); } catch (e) { /* ignore migration errors */ }
+        try { await pool.query("ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS category TEXT"); } catch (e) { /* ignore migration errors */ }
         if (id) {
             const r = await pool.query(
-                'UPDATE dqai_indicators SET name=$1, title=$2, subtitle=$3, program_id=$4, activity_id=$5, formula=$6, formula_type=$7, indicator_level=$8, unit_of_measurement=$9, show_on_map=$10, notes=$11, status=$12, category=$13 WHERE id=$14 RETURNING *',
+                `UPDATE ${tables.INDICATORS} SET name=$1, title=$2, subtitle=$3, program_id=$4, activity_id=$5, formula=$6, formula_type=$7, indicator_level=$8, unit_of_measurement=$9, show_on_map=$10, notes=$11, status=$12, category=$13 WHERE id=$14 RETURNING *`,
                 [finalName, title || null, subtitle || null, program_id || null, activity_id || null, formula || null, formula_type || null, indicator_level || null, unit_of_measurement || null, (show_on_map === undefined ? false : show_on_map), notes ? (typeof notes === 'object' ? JSON.stringify(notes) : notes) : null, status || null, category || null, id]
             );
             return res.json(r.rows[0]);
         }
         const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
         const r = await pool.query(
-            'INSERT INTO dqai_indicators (name, title, subtitle, program_id, activity_id, formula, formula_type, indicator_level, unit_of_measurement, show_on_map, notes, status, category, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
+            `INSERT INTO ${tables.INDICATORS} (name, title, subtitle, program_id, activity_id, formula, formula_type, indicator_level, unit_of_measurement, show_on_map, notes, status, category, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
             [finalName, title || null, subtitle || null, program_id || null, activity_id || null, formula || null, formula_type || null, indicator_level || null, unit_of_measurement || null, (show_on_map === undefined ? false : show_on_map), notes ? (typeof notes === 'object' ? JSON.stringify(notes) : notes) : null, status || null, category || null, createdBy]
         );
         res.json(r.rows[0]);
@@ -3495,7 +3538,7 @@ app.post('/api/admin/indicators', requireAdmin, async (req, res) => {
 
 app.delete('/api/admin/indicators/:id', requireAdmin, async (req, res) => {
     try {
-        await pool.query('DELETE FROM dqai_indicators WHERE id = $1', [req.params.id]);
+        await pool.query(`DELETE FROM ${tables.INDICATORS} WHERE id = $1`, [req.params.id]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete indicator', e); res.status(500).json({ error: 'Failed to delete indicator' }); }
 });
@@ -3503,7 +3546,7 @@ app.delete('/api/admin/indicators/:id', requireAdmin, async (req, res) => {
 // Public: list indicators
 app.get('/api/indicators', async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_indicators ORDER BY id DESC');
+        const r = await pool.query(`SELECT * FROM ${tables.INDICATORS} ORDER BY id DESC`);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list indicators', e); res.status(500).json({ error: 'Failed to list indicators' }); }
 });
@@ -3516,7 +3559,7 @@ app.get('/api/indicators/compute', async (req, res) => {
         const indicatorId = Number(req.query.indicatorId || req.query.id);
         const facilityId = req.query.facilityId ? Number(req.query.facilityId) : null;
         if (!indicatorId) return res.status(400).json({ error: 'Missing indicatorId' });
-        const ir = await pool.query('SELECT * FROM dqai_indicators WHERE id = $1', [indicatorId]);
+        const ir = await pool.query(`SELECT * FROM ${tables.INDICATORS} WHERE id = $1`, [indicatorId]);
         if (ir.rows.length === 0) return res.status(404).json({ error: 'Indicator not found' });
         const ind = ir.rows[0];
         const formula = ind.formula || '';
@@ -3575,7 +3618,7 @@ app.get('/api/indicators/compute', async (req, res) => {
         const qids = (formula || '').split(',').map(s => String(s || '').trim()).filter(Boolean);
         if (ftype === 'sum_answers' || qids.length > 0) {
             try {
-                // Build query to sum numeric answer_value across dqai_answers for specified question_ids.
+                // Build query to sum numeric answer_value across ${tables.ANSWERS} for specified question_ids.
                 // We assume answer_value contains either a numeric JSON value or a bare number.
                 const params = [];
                 let where = `question_id = ANY($1::text[])`;
@@ -3584,7 +3627,7 @@ app.get('/api/indicators/compute', async (req, res) => {
                     where += ' AND facility_id = $2';
                     params.push(facilityId);
                 }
-                const q = `SELECT question_id, SUM( (CASE WHEN answer_value ~ '^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)$' THEN (answer_value::numeric) ELSE NULL END) ) as sum_value FROM dqai_answers WHERE ${where} GROUP BY question_id`;
+                const q = `SELECT question_id, SUM( (CASE WHEN answer_value ~ '^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)$' THEN (answer_value::numeric) ELSE NULL END) ) as sum_value FROM ${tables.ANSWERS} WHERE ${where} GROUP BY question_id`;
                 console.log(`[indicator/compute] Executing sum_answers for indicator ${indicatorId}, facility ${facilityId}:`, q, 'params=', params);
                 const r = await pool.query(q, params);
                 // aggregate across questions
@@ -3606,7 +3649,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
         if (!Array.isArray(facilityIds) || facilityIds.length === 0) return res.status(400).json({ error: 'Missing facilityIds' });
 
         // Fetch indicators
-        const ir = await pool.query('SELECT * FROM dqai_indicators WHERE id = ANY($1::int[])', [indicatorIds]);
+        const ir = await pool.query(`SELECT * FROM ${tables.INDICATORS} WHERE id = ANY($1::int[])`, [indicatorIds]);
         const indicators = ir.rows || [];
 
         const out = {};
@@ -3665,7 +3708,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
             if (ftype === 'sum_answers' || qids.length > 0) {
                 try {
                     const params = [qids, facilityIds];
-                    const q = `SELECT facility_id, SUM( (CASE WHEN answer_value ~ '^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)$' THEN (answer_value::numeric) ELSE NULL END) ) as sum_value FROM dqai_answers WHERE question_id = ANY($1::text[]) AND facility_id = ANY($2::int[]) GROUP BY facility_id`;
+                    const q = `SELECT facility_id, SUM( (CASE WHEN answer_value ~ '^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)$' THEN (answer_value::numeric) ELSE NULL END) ) as sum_value FROM ${tables.ANSWERS} WHERE question_id = ANY($1::text[]) AND facility_id = ANY($2::int[]) GROUP BY facility_id`;
                     console.log(`[indicator/compute_bulk] Executing sum_answers for indicator ${iid} across facilities:`, q, 'params=', params);
                     const r = await pool.query(q, params);
                     // map by facility
@@ -3689,11 +3732,11 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
 app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         const r = isSuperAdmin && !businessId 
-            ? await pool.query('SELECT * FROM dqai_datasets ORDER BY id DESC')
-            : await pool.query('SELECT * FROM dqai_datasets WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC', [businessId]);
+            ? await pool.query(`SELECT * FROM ${tables.DATASETS} ORDER BY id DESC`)
+            : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC`, [businessId]);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list datasets', e); res.status(500).json({ error: 'Failed to list datasets' }); }
 });
@@ -3702,11 +3745,11 @@ app.get('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         const r = isSuperAdmin && !businessId 
-            ? await pool.query('SELECT * FROM dqai_datasets WHERE id = $1', [id])
-            : await pool.query('SELECT * FROM dqai_datasets WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)', [id, businessId]);
+            ? await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE id = $1`, [id])
+            : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)`, [id, businessId]);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to get dataset', e); res.status(500).json({ error: 'Failed to get dataset' }); }
@@ -3779,20 +3822,20 @@ app.post('/api/admin/datasets', requireAdmin, async (req, res) => {
             const showInMenu = (req.body && typeof req.body.show_in_menu !== 'undefined') ? !!req.body.show_in_menu : false;
             if (id) {
                 const businessId = req.session?.businessId || null;
-                const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+                const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
                 const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
                 if (isSuperAdmin && !businessId) {
-                    const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id]);
+                    const r = await pool.query(`UPDATE ${tables.DATASETS} SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 RETURNING *`, [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id]);
                     return res.json(r.rows[0]);
                 } else {
-                    const r = await pool.query('UPDATE dqai_datasets SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 AND (business_id = $7 OR business_id IS NULL) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id, businessId]);
+                    const r = await pool.query(`UPDATE ${tables.DATASETS} SET name=$1, description=$2, category=$3, dataset_fields=$4, show_in_menu=$5 WHERE id=$6 AND (business_id = $7 OR business_id IS NULL) RETURNING *`, [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, id, businessId]);
                     if (r.rows.length === 0) return res.status(403).json({ error: 'Not authorized to update this dataset' });
                     return res.json(r.rows[0]);
                 }
             }
             const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
             const businessId = req.session?.businessId || null;
-            const r = await pool.query('INSERT INTO dqai_datasets (name, description, category, dataset_fields, show_in_menu, created_by, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, createdBy, businessId]);
+            const r = await pool.query(`INSERT INTO ${tables.DATASETS} (name, description, category, dataset_fields, show_in_menu, created_by, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [name, description || null, category || null, JSON.stringify(normalizedFields), showInMenu, createdBy, businessId]);
             res.json(r.rows[0]);
         } catch (dbErr) {
             console.error('Failed to save dataset, normalizedFields preview:', typeof normalizedFields, JSON.stringify(normalizedFields).slice(0, 1000));
@@ -3806,15 +3849,15 @@ app.delete('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         
         if (isSuperAdmin && !businessId) {
-            await pool.query('DELETE FROM dqai_dataset_content WHERE dataset_id = $1', [id]);
-            await pool.query('DELETE FROM dqai_datasets WHERE id = $1', [id]);
+            await pool.query(`DELETE FROM ${tables.DATASET_CONTENT} WHERE dataset_id = $1`, [id]);
+            await pool.query(`DELETE FROM ${tables.DATASETS} WHERE id = $1`, [id]);
         } else {
-            await pool.query('DELETE FROM dqai_dataset_content WHERE dataset_id = $1 AND (business_id = $2 OR business_id IS NULL)', [id, businessId]);
-            const result = await pool.query('DELETE FROM dqai_datasets WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)', [id, businessId]);
+            await pool.query(`DELETE FROM ${tables.DATASET_CONTENT} WHERE dataset_id = $1 AND (business_id = $2 OR business_id IS NULL)`, [id, businessId]);
+            const result = await pool.query(`DELETE FROM ${tables.DATASETS} WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)`, [id, businessId]);
             if (result.rowCount === 0) return res.status(403).json({ error: 'Not authorized to delete this dataset' });
         }
         res.json({ ok: true });
@@ -3827,14 +3870,14 @@ app.get('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
         const datasetId = Number(req.params.id);
         const limit = Number(req.query.limit || 200);
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         
         if (isSuperAdmin && !businessId) {
-            const r = await pool.query('SELECT * FROM dqai_dataset_content WHERE dataset_id = $1 ORDER BY id DESC LIMIT $2', [datasetId, limit]);
+            const r = await pool.query(`SELECT * FROM ${tables.DATASET_CONTENT} WHERE dataset_id = $1 ORDER BY id DESC LIMIT $2`, [datasetId, limit]);
             res.json({ rows: r.rows, count: r.rowCount });
         } else {
-            const r = await pool.query('SELECT * FROM dqai_dataset_content WHERE dataset_id = $1 AND (business_id = $2 OR business_id IS NULL) ORDER BY id DESC LIMIT $3', [datasetId, businessId, limit]);
+            const r = await pool.query(`SELECT * FROM ${tables.DATASET_CONTENT} WHERE dataset_id = $1 AND (business_id = $2 OR business_id IS NULL) ORDER BY id DESC LIMIT $3`, [datasetId, businessId, limit]);
             res.json({ rows: r.rows, count: r.rowCount });
         }
     } catch (e) { console.error('Failed to list dataset content', e); res.status(500).json({ error: 'Failed to list dataset content' }); }
@@ -3847,7 +3890,7 @@ app.post('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
         if (!payload || Object.keys(payload).length === 0) return res.status(400).json({ error: 'Missing dataset_data' });
         const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
         const businessId = req.session?.businessId || null;
-        const r = await pool.query('INSERT INTO dqai_dataset_content (dataset_id, dataset_data, created_by, business_id) VALUES ($1,$2,$3,$4) RETURNING *', [datasetId, payload, createdBy, businessId]);
+        const r = await pool.query(`INSERT INTO ${tables.DATASET_CONTENT} (dataset_id, dataset_data, created_by, business_id) VALUES ($1,$2,$3,$4) RETURNING *`, [datasetId, payload, createdBy, businessId]);
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to save dataset content', e); res.status(500).json({ error: 'Failed to save dataset content' }); }
 });
@@ -3867,7 +3910,7 @@ app.put('/api/admin/datasets/:id/content/:contentId', requireAdmin, async (req, 
         if (payload.dataset_roles !== undefined) { updates.push(`dataset_roles = $${idx}`); params.push(payload.dataset_roles); idx++; }
         if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
         params.push(contentId);
-        const q = `UPDATE dqai_dataset_content SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`;
+        const q = `UPDATE ${tables.DATASET_CONTENT} SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`;
         const r = await pool.query(q, params);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
         res.json(r.rows[0]);
@@ -3877,7 +3920,7 @@ app.put('/api/admin/datasets/:id/content/:contentId', requireAdmin, async (req, 
 app.delete('/api/admin/datasets/:id/content/:contentId', requireAdmin, async (req, res) => {
     try {
         const contentId = Number(req.params.contentId);
-        await pool.query('DELETE FROM dqai_dataset_content WHERE id = $1', [contentId]);
+        await pool.query(`DELETE FROM ${tables.DATASET_CONTENT} WHERE id = $1`, [contentId]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete dataset content', e); res.status(500).json({ error: 'Failed to delete dataset content' }); }
 });
@@ -3922,7 +3965,7 @@ app.post('/api/admin/datasets/:id/content/upload', requireAdmin, async (req, res
                 obj[key] = val;
             }
             try {
-                const rres = await pool.query('INSERT INTO dqai_dataset_content (dataset_id, dataset_data, created_by) VALUES ($1,$2,$3) RETURNING *', [datasetId, obj, (req.session && req.session.userId) ? req.session.userId : null]);
+                const rres = await pool.query(`INSERT INTO ${tables.DATASET_CONTENT} (dataset_id, dataset_data, created_by) VALUES ($1,$2,$3) RETURNING *`, [datasetId, obj, (req.session && req.session.userId) ? req.session.userId : null]);
                 inserted.push(rres.rows[0]);
             } catch (ie) { console.error('Failed to insert dataset row', ie); }
         }
@@ -3935,7 +3978,7 @@ app.post('/api/admin/datasets/:id/content/upload', requireAdmin, async (req, res
 app.get('/api/reports/:id/powerbi', async (req, res) => {
     try {
         const reportId = Number(req.params.id);
-        const r = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [reportId]);
+        const r = await pool.query(`SELECT * FROM ${tables.REPORTS_POWERBI} WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1`, [reportId]);
         if (r.rows.length === 0) return res.json(null);
         return res.json(r.rows[0]);
     } catch (e) {
@@ -3952,13 +3995,13 @@ app.post('/api/admin/reports/:id/powerbi', requireAdmin, async (req, res) => {
         if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
         const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
         // Check if exists
-        const exist = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [reportId]);
+        const exist = await pool.query(`SELECT * FROM ${tables.REPORTS_POWERBI} WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1`, [reportId]);
         if (exist.rows.length) {
             const id = exist.rows[0].id;
-            const ur = await pool.query('UPDATE dqai_reports_powerbi SET powerbi_link=$1, link_type=$2, mode=$3, created_by=$4 WHERE id=$5 RETURNING *', [powerbi_link, link_type || null, mode || null, createdBy, id]);
+            const ur = await pool.query(`UPDATE ${tables.REPORTS_POWERBI} SET powerbi_link=$1, link_type=$2, mode=$3, created_by=$4 WHERE id=$5 RETURNING *`, [powerbi_link, link_type || null, mode || null, createdBy, id]);
             return res.json(ur.rows[0]);
         }
-        const r = await pool.query('INSERT INTO dqai_reports_powerbi (activity_reports_id, powerbi_link, link_type, mode, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *', [reportId, powerbi_link, link_type || null, mode || null, createdBy]);
+        const r = await pool.query(`INSERT INTO ${tables.REPORTS_POWERBI} (activity_reports_id, powerbi_link, link_type, mode, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [reportId, powerbi_link, link_type || null, mode || null, createdBy]);
         res.json(r.rows[0]);
     } catch (e) {
         console.error('Failed to save report powerbi', e);
@@ -3974,13 +4017,13 @@ app.put('/api/admin/reports/:id/powerbi', requireAdmin, async (req, res) => {
         if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
         const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
         // Check if exists
-        const exist = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [reportId]);
+        const exist = await pool.query(`SELECT * FROM ${tables.REPORTS_POWERBI} WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1`, [reportId]);
         if (exist.rows.length) {
             const id = exist.rows[0].id;
-            const ur = await pool.query('UPDATE dqai_reports_powerbi SET powerbi_link=$1, link_type=$2, mode=$3, created_by=$4 WHERE id=$5 RETURNING *', [powerbi_link, link_type || null, mode || null, createdBy, id]);
+            const ur = await pool.query(`UPDATE ${tables.REPORTS_POWERBI} SET powerbi_link=$1, link_type=$2, mode=$3, created_by=$4 WHERE id=$5 RETURNING *`, [powerbi_link, link_type || null, mode || null, createdBy, id]);
             return res.json(ur.rows[0]);
         }
-        const r = await pool.query('INSERT INTO dqai_reports_powerbi (activity_reports_id, powerbi_link, link_type, mode, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *', [reportId, powerbi_link, link_type || null, mode || null, createdBy]);
+        const r = await pool.query(`INSERT INTO ${tables.REPORTS_POWERBI} (activity_reports_id, powerbi_link, link_type, mode, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [reportId, powerbi_link, link_type || null, mode || null, createdBy]);
         res.json(r.rows[0]);
     } catch (e) {
         console.error('Failed to save report powerbi (PUT)', e);
@@ -3992,7 +4035,7 @@ app.put('/api/admin/reports/:id/powerbi', requireAdmin, async (req, res) => {
 app.delete('/api/admin/reports/:id/powerbi/:pbid', requireAdmin, async (req, res) => {
     try {
         const pbid = Number(req.params.pbid);
-        await pool.query('DELETE FROM dqai_reports_powerbi WHERE id = $1', [pbid]);
+        await pool.query(`DELETE FROM ${tables.REPORTS_POWERBI} WHERE id = $1`, [pbid]);
         res.json({ ok: true });
     } catch (e) {
         console.error('Failed to delete report powerbi', e);
@@ -4006,7 +4049,7 @@ app.get('/api/activities/:id/powerbi', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).json({ error: 'Invalid id' });
-        const r = await pool.query('SELECT powerbi_url FROM dqai_activities WHERE id = $1', [id]);
+        const r = await pool.query(`SELECT powerbi_url FROM ${tables.ACTIVITIES} WHERE id = $1`, [id]);
         if (r.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
         return res.json({ powerbi_link: r.rows[0].powerbi_url || null, link_type: r.rows[0].powerbi_link_type || null, mode: r.rows[0].powerbi_mode || null });
     } catch (e) {
@@ -4015,7 +4058,7 @@ app.get('/api/activities/:id/powerbi', async (req, res) => {
     }
 });
 
-// Admin: upsert Power BI link for an activity (stored in dqai_activities.powerbi_url)
+// Admin: upsert Power BI link for an activity (stored in ${tables.ACTIVITIES}.powerbi_url)
 app.post('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
@@ -4023,10 +4066,10 @@ app.post('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => 
         if (!id) return res.status(400).json({ error: 'Invalid id' });
         if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
         // Ensure columns exist (safe idempotent migration)
-        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
-        const u = await pool.query('UPDATE dqai_activities SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *', [powerbi_link, link_type || null, mode || null, id]);
+        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
+        const u = await pool.query(`UPDATE ${tables.ACTIVITIES} SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *`, [powerbi_link, link_type || null, mode || null, id]);
         if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
         res.json({ ok: true, activity: u.rows[0] });
     } catch (e) {
@@ -4043,10 +4086,10 @@ app.put('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => {
         if (!id) return res.status(400).json({ error: 'Invalid id' });
         if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
         // Ensure columns exist (safe idempotent migration)
-        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE dqai_activities ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
-        const u = await pool.query('UPDATE dqai_activities SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *', [powerbi_link, link_type || null, mode || null, id]);
+        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
+        const u = await pool.query(`UPDATE ${tables.ACTIVITIES} SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *`, [powerbi_link, link_type || null, mode || null, id]);
         if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
         res.json({ ok: true, activity: u.rows[0] });
     } catch (e) {
@@ -4060,7 +4103,7 @@ app.delete('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) =
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).json({ error: 'Invalid id' });
-        await pool.query('UPDATE dqai_activities SET powerbi_url = NULL WHERE id = $1', [id]);
+        await pool.query(`UPDATE ${tables.ACTIVITIES} SET powerbi_url = NULL WHERE id = $1`, [id]);
         res.json({ ok: true });
     } catch (e) {
         console.error('Failed to clear activity powerbi', e);
@@ -4071,7 +4114,7 @@ app.delete('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) =
 // Admin: Report Templates (Report Builder) CRUD
 app.get('/api/admin/report_templates', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_report_templates ORDER BY id DESC');
+        const r = await pool.query(`SELECT * FROM ${tables.REPORT_TEMPLATES} ORDER BY id DESC`);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list report templates', e); res.status(500).json({ error: 'Failed to list report templates' }); }
 });
@@ -4081,11 +4124,11 @@ app.post('/api/admin/report_templates', requireAdmin, async (req, res) => {
         const { id, name, activity_id, template_json, paper_size, orientation, header_image, footer_image, watermark_image, assets } = req.body || {};
         if (!name || !String(name).trim()) return res.status(400).json({ error: 'Missing name' });
         if (id) {
-            const r = await pool.query('UPDATE dqai_report_templates SET name=$1, activity_id=$2, template_json=$3, paper_size=$4, orientation=$5, header_image=$6, footer_image=$7, watermark_image=$8, assets=$9 WHERE id=$10 RETURNING *', [name, activity_id || null, template_json || null, paper_size || null, orientation || null, header_image || null, footer_image || null, watermark_image || null, assets ? JSON.stringify(assets) : null, id]);
+            const r = await pool.query(`UPDATE ${tables.REPORT_TEMPLATES} SET name=$1, activity_id=$2, template_json=$3, paper_size=$4, orientation=$5, header_image=$6, footer_image=$7, watermark_image=$8, assets=$9 WHERE id=$10 RETURNING *`, [name, activity_id || null, template_json || null, paper_size || null, orientation || null, header_image || null, footer_image || null, watermark_image || null, assets ? JSON.stringify(assets) : null, id]);
             return res.json(r.rows[0]);
         }
         const createdBy = (req.session && req.session.userId) ? req.session.userId : null;
-        const r = await pool.query('INSERT INTO dqai_report_templates (name, activity_id, template_json, paper_size, orientation, header_image, footer_image, watermark_image, assets, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *', [name, activity_id || null, template_json || null, paper_size || null, orientation || null, header_image || null, footer_image || null, watermark_image || null, assets ? JSON.stringify(assets) : null, createdBy]);
+        const r = await pool.query(`INSERT INTO ${tables.REPORT_TEMPLATES} (name, activity_id, template_json, paper_size, orientation, header_image, footer_image, watermark_image, assets, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [name, activity_id || null, template_json || null, paper_size || null, orientation || null, header_image || null, footer_image || null, watermark_image || null, assets ? JSON.stringify(assets) : null, createdBy]);
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to save report template', e); res.status(500).json({ error: 'Failed to save report template' }); }
 });
@@ -4095,10 +4138,10 @@ app.get('/api/report_templates', async (req, res) => {
     try {
         const { activityId } = req.query;
         if (activityId) {
-            const r = await pool.query('SELECT * FROM dqai_report_templates WHERE activity_id = $1 ORDER BY id DESC', [activityId]);
+            const r = await pool.query(`SELECT * FROM ${tables.REPORT_TEMPLATES} WHERE activity_id = $1 ORDER BY id DESC`, [activityId]);
             return res.json(r.rows);
         }
-        const r = await pool.query('SELECT * FROM dqai_report_templates ORDER BY id DESC');
+        const r = await pool.query(`SELECT * FROM ${tables.REPORT_TEMPLATES} ORDER BY id DESC`);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list public report templates', e); res.status(500).json({ error: 'Failed to list report templates' }); }
 });
@@ -4106,7 +4149,7 @@ app.get('/api/report_templates', async (req, res) => {
 app.delete('/api/admin/report_templates/:id', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
-        await pool.query('DELETE FROM dqai_report_templates WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.REPORT_TEMPLATES} WHERE id = $1`, [id]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete report template', e); res.status(500).json({ error: 'Failed to delete report template' }); }
 });
@@ -4115,7 +4158,7 @@ app.delete('/api/admin/report_templates/:id', requireAdmin, async (req, res) => 
 app.get('/api/report_templates/:id', async (req, res) => {
     try {
         const id = Number(req.params.id);
-        const r = await pool.query('SELECT * FROM dqai_report_templates WHERE id = $1', [id]);
+        const r = await pool.query(`SELECT * FROM ${tables.REPORT_TEMPLATES} WHERE id = $1`, [id]);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to fetch report template', e); res.status(500).json({ error: 'Failed to fetch report template' }); }
@@ -4123,57 +4166,57 @@ app.get('/api/report_templates/:id', async (req, res) => {
 
 // Roles & Permissions management endpoints
 app.get('/api/admin/roles', requireAdmin, async (req, res) => {
-    try { const r = await pool.query('SELECT * FROM dqai_roles ORDER BY id ASC'); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list roles' }); }
+    try { const r = await pool.query(`SELECT * FROM ${tables.ROLES} ORDER BY id ASC`); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list roles' }); }
 });
 app.post('/api/admin/roles', requireAdmin, async (req, res) => {
-    try { const { id, name, description } = req.body; if (id) { const r = await pool.query('UPDATE dqai_roles SET name=$1, description=$2 WHERE id=$3 RETURNING *', [name, description, id]); return res.json(r.rows[0]); } const r = await pool.query('INSERT INTO dqai_roles (name, description) VALUES ($1,$2) RETURNING *', [name, description]); res.json(r.rows[0]); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save role' }); }
+    try { const { id, name, description } = req.body; if (id) { const r = await pool.query(`UPDATE ${tables.ROLES} SET name=$1, description=$2 WHERE id=$3 RETURNING *`, [name, description, id]); return res.json(r.rows[0]); } const r = await pool.query(`INSERT INTO ${tables.ROLES} (name, description) VALUES ($1,$2) RETURNING *`, [name, description]); res.json(r.rows[0]); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save role' }); }
 });
 // Delete a role (admin only)
 app.delete('/api/admin/roles/:id', requireAdmin, async (req, res) => {
     try {
         const id = req.params.id;
-        await pool.query('DELETE FROM dqai_role_permissions WHERE role_id = $1', [id]);
-        await pool.query('DELETE FROM dqai_user_roles WHERE role_id = $1', [id]);
-        await pool.query('DELETE FROM dqai_roles WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.ROLE_PERMISSIONS} WHERE role_id = $1`, [id]);
+        await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE role_id = $1`, [id]);
+        await pool.query(`DELETE FROM ${tables.ROLES} WHERE id = $1`, [id]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete role', e); res.status(500).json({ error: 'Failed to delete role' }); }
 });
 
 app.get('/api/admin/permissions', requireAdmin, async (req, res) => {
-    try { const r = await pool.query('SELECT * FROM dqai_permissions ORDER BY id ASC'); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list permissions' }); }
+    try { const r = await pool.query(`SELECT * FROM ${tables.PERMISSIONS} ORDER BY id ASC`); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list permissions' }); }
 });
 app.post('/api/admin/permissions', requireAdmin, async (req, res) => {
-    try { const { id, name, description } = req.body; if (id) { const r = await pool.query('UPDATE dqai_permissions SET name=$1, description=$2 WHERE id=$3 RETURNING *', [name, description, id]); return res.json(r.rows[0]); } const r = await pool.query('INSERT INTO dqai_permissions (name, description) VALUES ($1,$2) RETURNING *', [name, description]); res.json(r.rows[0]); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save permission' }); }
+    try { const { id, name, description } = req.body; if (id) { const r = await pool.query(`UPDATE ${tables.PERMISSIONS} SET name=$1, description=$2 WHERE id=$3 RETURNING *`, [name, description, id]); return res.json(r.rows[0]); } const r = await pool.query(`INSERT INTO ${tables.PERMISSIONS} (name, description) VALUES ($1,$2) RETURNING *`, [name, description]); res.json(r.rows[0]); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save permission' }); }
 });
 // Delete a permission (admin only)
 app.delete('/api/admin/permissions/:id', requireAdmin, async (req, res) => {
     try {
         const id = req.params.id;
-        await pool.query('DELETE FROM dqai_role_permissions WHERE permission_id = $1', [id]);
-        await pool.query('DELETE FROM dqai_permissions WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.ROLE_PERMISSIONS} WHERE permission_id = $1`, [id]);
+        await pool.query(`DELETE FROM ${tables.PERMISSIONS} WHERE id = $1`, [id]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete permission', e); res.status(500).json({ error: 'Failed to delete permission' }); }
 });
 
 app.post('/api/admin/roles/assign', requireAdmin, async (req, res) => {
-    try { const { userId, roleId } = req.body; await pool.query('INSERT INTO dqai_user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign role' }); }
+    try { const { userId, roleId } = req.body; await pool.query(`INSERT INTO ${tables.USER_ROLES} (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign role' }); }
 });
 
 app.post('/api/admin/roles/unassign', requireAdmin, async (req, res) => {
-    try { const { userId, roleId } = req.body; await pool.query('DELETE FROM dqai_user_roles WHERE user_id=$1 AND role_id=$2', [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unassign role' }); }
+    try { const { userId, roleId } = req.body; await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id=$1 AND role_id=$2`, [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unassign role' }); }
 });
 
 app.get('/api/admin/user_roles', requireAdmin, async (req, res) => {
-    try { const userId = req.query.userId; if (!userId) return res.status(400).json({ error: 'Missing userId' }); const r = await pool.query('SELECT ur.role_id, r.name FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [userId]); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list user roles' }); }
+    try { const userId = req.query.userId; if (!userId) return res.status(400).json({ error: 'Missing userId' }); const r = await pool.query(`SELECT ur.role_id, r.name FROM ${tables.USER_ROLES} ur JOIN ${tables.ROLES} r ON ur.role_id = r.id WHERE ur.user_id = $1`, [userId]); res.json(r.rows); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list user roles' }); }
 });
 
 app.post('/api/admin/role_permissions', requireAdmin, async (req, res) => {
-    try { const { roleId, permissionId } = req.body; await pool.query('INSERT INTO dqai_role_permissions (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [roleId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign permission to role' }); }
+    try { const { roleId, permissionId } = req.body; await pool.query(`INSERT INTO ${tables.ROLE_PERMISSIONS} (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [roleId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign permission to role' }); }
 });
 
 // Remove a permission from a role
 app.post('/api/admin/role_permissions/remove', requireAdmin, async (req, res) => {
-    try { const { roleId, permissionId } = req.body; await pool.query('DELETE FROM dqai_role_permissions WHERE role_id=$1 AND permission_id=$2', [roleId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to remove permission from role' }); }
+    try { const { roleId, permissionId } = req.body; await pool.query(`DELETE FROM ${tables.ROLE_PERMISSIONS} WHERE role_id=$1 AND permission_id=$2`, [roleId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to remove permission from role' }); }
 });
 
 // List permissions assigned to a role
@@ -4181,7 +4224,7 @@ app.get('/api/admin/role_permissions', requireAdmin, async (req, res) => {
     try {
         const roleId = req.query.roleId;
         if (!roleId) return res.status(400).json({ error: 'Missing roleId' });
-        const r = await pool.query('SELECT p.* FROM dqai_role_permissions rp JOIN dqai_permissions p ON rp.permission_id = p.id WHERE rp.role_id = $1 ORDER BY p.id', [roleId]);
+        const r = await pool.query(`SELECT p.* FROM ${tables.ROLE_PERMISSIONS} rp JOIN ${tables.PERMISSIONS} p ON rp.permission_id = p.id WHERE rp.role_id = $1 ORDER BY p.id`, [roleId]);
         res.json(r.rows);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list role permissions' }); }
 });
@@ -4189,10 +4232,10 @@ app.get('/api/admin/role_permissions', requireAdmin, async (req, res) => {
 // Roles with their permissions (convenience endpoint)
 app.get('/api/admin/roles_with_perms', requireAdmin, async (req, res) => {
     try {
-        const rolesRes = await pool.query('SELECT * FROM dqai_roles ORDER BY id');
+        const rolesRes = await pool.query(`SELECT * FROM ${tables.ROLES} ORDER BY id`);
         const out = [];
         for (const r of rolesRes.rows) {
-            const permsRes = await pool.query('SELECT p.* FROM dqai_role_permissions rp JOIN dqai_permissions p ON rp.permission_id = p.id WHERE rp.role_id = $1 ORDER BY p.id', [r.id]);
+            const permsRes = await pool.query(`SELECT p.* FROM ${tables.ROLE_PERMISSIONS} rp JOIN ${tables.PERMISSIONS} p ON rp.permission_id = p.id WHERE rp.role_id = $1 ORDER BY p.id`, [r.id]);
             out.push({ ...r, permissions: permsRes.rows });
         }
         res.json(out);
@@ -4207,7 +4250,7 @@ app.post('/api/audit/bulk', async (req, res) => {
         if (!events.length) return res.status(400).json({ error: 'Missing events array' });
         const uid = (req.session && req.session.userId) ? req.session.userId : (payload.userId || null);
         // store the entire batch as one JSONB entry for minimalistic audit
-        await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [uid, JSON.stringify(events)]);
+        await pool.query(`INSERT INTO ${tables.AUDIT_BATCHES} (user_id, events) VALUES ($1,$2)`, [uid, JSON.stringify(events)]);
         return res.json({ ok: true });
     } catch (e) {
         console.error('Failed to accept audit bulk', e);
@@ -4218,7 +4261,7 @@ app.post('/api/audit/bulk', async (req, res) => {
 // Admin: list audit batches (detailed)
 app.get('/api/admin/audit_batches', requireAdmin, async (req, res) => {
     try {
-        const r = await pool.query('SELECT ab.*, u.email as user_email FROM dqai_audit_batches ab LEFT JOIN dqai_users u ON u.id = ab.user_id ORDER BY ab.created_at DESC');
+        const r = await pool.query(`SELECT ab.*, u.email as user_email FROM ${tables.AUDIT_BATCHES} ab LEFT JOIN ${tables.USERS} u ON u.id = ab.user_id ORDER BY ab.created_at DESC`);
         // project rows into a friendly shape for frontend
         const out = (r.rows || []).map(row => ({
             id: row.id,
@@ -4238,7 +4281,7 @@ app.get('/api/admin/audit_batches', requireAdmin, async (req, res) => {
 app.get('/api/audit_batches', async (req, res) => {
     try {
         const limit = Number(req.query.limit || 200);
-        const r = await pool.query('SELECT ab.*, u.email as user_email FROM dqai_audit_batches ab LEFT JOIN dqai_users u ON u.id = ab.user_id ORDER BY ab.created_at DESC LIMIT $1', [limit]);
+        const r = await pool.query(`SELECT ab.*, u.email as user_email FROM ${tables.AUDIT_BATCHES} ab LEFT JOIN ${tables.USERS} u ON u.id = ab.user_id ORDER BY ab.created_at DESC LIMIT $1`, [limit]);
         const out = (r.rows || []).map(row => ({
             id: row.id,
             user_id: row.user_id,
@@ -4257,8 +4300,8 @@ app.get('/api/audit_batches', async (req, res) => {
 async function syncQuestions(activityId, formDefOrQuestions) {
     if (!activityId) return;
     try {
-        await pool.query('DELETE FROM dqai_questions WHERE activity_id = $1', [activityId]);
-        const insertText = `INSERT INTO dqai_questions (id, activity_id, page_name, section_name, question_text, question_helper, correct_answer, answer_type, category, question_group, column_size, status, required, options, metadata, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`;
+        await pool.query(`DELETE FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [activityId]);
+        const insertText = `INSERT INTO ${tables.QUESTIONS} (id, activity_id, page_name, section_name, question_text, question_helper, correct_answer, answer_type, category, question_group, column_size, status, required, options, metadata, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`;
 
         // If an array is provided, treat it as a flat list of question objects
         if (Array.isArray(formDefOrQuestions)) {
@@ -4327,7 +4370,7 @@ app.post('/auth/login', async (req, res) => {
     try {
         if (email && password) {
             // Authenticate by email/password
-            const result = await pool.query('SELECT * FROM dqai_users WHERE email = $1', [email]);
+            const result = await pool.query(`SELECT * FROM ${tables.USERS} WHERE email = $1`, [email]);
             if (result.rows.length === 0) {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
@@ -4347,7 +4390,7 @@ app.post('/auth/login', async (req, res) => {
             if (!passwordMatches && user.password === password) {
                 try {
                     const newHash = await bcrypt.hash(password, 10);
-                    await pool.query('UPDATE dqai_users SET password = $1 WHERE id = $2', [newHash, user.id]);
+                    await pool.query(`UPDATE ${tables.USERS} SET password = $1 WHERE id = $2`, [newHash, user.id]);
                     passwordMatches = true;
                     console.log('Migrated user password to bcrypt hash for user id', user.id);
                 } catch (e) {
@@ -4374,7 +4417,7 @@ app.post('/auth/login', async (req, res) => {
             try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
             // Update last_login_at timestamp
             try { 
-                await pool.query('UPDATE dqai_users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+                await pool.query(`UPDATE ${tables.USERS} SET last_login_at = NOW() WHERE id = $1`, [user.id]);
             } catch (e) { console.warn('Failed to update last_login_at', e); }
             // Return sanitized user object (omit password)
             const safeUser = {
@@ -4389,7 +4432,7 @@ app.post('/auth/login', async (req, res) => {
             };
             // Record login in audit_batches for server-side traceability
             try {
-                await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [user.id, JSON.stringify([{ type: 'login', email: user.email, success: true, ts: new Date().toISOString(), ip: req.ip }])]);
+                await pool.query(`INSERT INTO ${tables.AUDIT_BATCHES} (user_id, events) VALUES ($1,$2)`, [user.id, JSON.stringify([{ type: 'login', email: user.email, success: true, ts: new Date().toISOString(), ip: req.ip }])]);
             } catch (e) { console.error('Failed to write audit login record', e); }
             return res.json(safeUser);
         }
@@ -4397,21 +4440,21 @@ app.post('/auth/login', async (req, res) => {
         // Fallback: role-based demo login (keeps old behavior)
         if (!role) return res.status(400).json({ error: 'Missing role' });
         const demoEmail = `${role.toLowerCase().replace(' ', '')}@example.com`;
-        let result = await pool.query('SELECT * FROM dqai_users WHERE email = $1', [demoEmail]);
+        let result = await pool.query(`SELECT * FROM ${tables.USERS} WHERE email = $1`, [demoEmail]);
 
         let user;
         if (result.rows.length > 0) {
             user = result.rows[0];
         } else {
             // ensure a demo business exists
-            let busRes = await pool.query("SELECT id FROM dqai_businesses WHERE name = 'Demo' LIMIT 1");
+            let busRes = await pool.query("SELECT id FROM ${tables.BUSINESSES} WHERE name = 'Demo' LIMIT 1");
             let busId = busRes.rows[0] ? busRes.rows[0].id : null;
             if (!busId) {
-                const br = await pool.query('INSERT INTO dqai_businesses (name, phone) VALUES ($1,$2) RETURNING id', ['Demo', null]);
+                const br = await pool.query(`INSERT INTO ${tables.BUSINESSES} (name, phone) VALUES ($1,$2) RETURNING id`, ['Demo', null]);
                 busId = br.rows[0].id;
             }
             const insertRes = await pool.query(
-                'INSERT INTO dqai_users (first_name, last_name, email, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+                `INSERT INTO ${tables.USERS} (first_name, last_name, email, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
                 ['Demo', role, demoEmail, role, 'Active', busId]
             );
             user = insertRes.rows[0];
@@ -4420,10 +4463,10 @@ app.post('/auth/login', async (req, res) => {
         try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
         // Update last_login_at timestamp
         try { 
-            await pool.query('UPDATE dqai_users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+            await pool.query(`UPDATE ${tables.USERS} SET last_login_at = NOW() WHERE id = $1`, [user.id]);
         } catch (e) { console.warn('Failed to update last_login_at', e); }
         try {
-            await pool.query('INSERT INTO dqai_audit_batches (user_id, events) VALUES ($1,$2)', [user.id || null, JSON.stringify([{ type: 'login', email: user.email || null, success: true, ts: new Date().toISOString(), demo: true, ip: req.ip }])]);
+            await pool.query(`INSERT INTO ${tables.AUDIT_BATCHES} (user_id, events) VALUES ($1,$2)`, [user.id || null, JSON.stringify([{ type: 'login', email: user.email || null, success: true, ts: new Date().toISOString(), demo: true, ip: req.ip }])]);
         } catch (e) { console.error('Failed to write audit login record', e); }
         res.json(user);
     } catch (err) {
@@ -4441,7 +4484,7 @@ app.post('/auth/register', async (req, res) => {
         const requested = 'public';
 
         // check existing
-        const existing = await pool.query('SELECT id FROM dqai_users WHERE email = $1', [email]);
+        const existing = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [email]);
         if (existing.rows.length > 0) return res.status(409).json({ error: 'Email already registered' });
 
         let hashed = null;
@@ -4459,7 +4502,7 @@ app.post('/auth/register', async (req, res) => {
         try {
             // Check if landing page config locks registration to a single organization
             try {
-                const lockRes = await pool.query('SELECT locked_organization_id FROM dqai_landing_page_config WHERE business_id = $1', [0]);
+                const lockRes = await pool.query(`SELECT locked_organization_id FROM ${tables.LANDING_PAGE_CONFIG} WHERE business_id = $1`, [0]);
                 if (lockRes.rows && lockRes.rows[0] && lockRes.rows[0].locked_organization_id) {
                     businessId = lockRes.rows[0].locked_organization_id;
                 }
@@ -4469,12 +4512,12 @@ app.post('/auth/register', async (req, res) => {
 
             // Only create a new business if there is no locked organization and an organizationName was provided
             if (!businessId && organizationName) {
-                const br = await pool.query('INSERT INTO dqai_businesses (name, phone) VALUES ($1, $2) RETURNING id', [organizationName, phoneNumber || null]);
+                const br = await pool.query(`INSERT INTO ${tables.BUSINESSES} (name, phone) VALUES ($1, $2) RETURNING id`, [organizationName, phoneNumber || null]);
                 businessId = br.rows[0] ? br.rows[0].id : null;
             }
         } catch (e) { console.error('Failed to create business during registration', e); }
 
-        const r = await pool.query('INSERT INTO dqai_users (first_name, last_name, email, password, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, role, status, business_id', [firstName || null, lastName || null, email, hashed || null, requested, initialStatus, businessId]);
+        const r = await pool.query(`INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, role, status, business_id`, [firstName || null, lastName || null, email, hashed || null, requested, initialStatus, businessId]);
         const u = r.rows[0];
 
         // If verification is required, create token and send email
@@ -4482,10 +4525,10 @@ app.post('/auth/register', async (req, res) => {
             try {
                 const token = crypto.randomBytes(32).toString('hex');
                 const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-                await pool.query('INSERT INTO dqai_email_verifications (user_id, token, expires_at) VALUES ($1,$2,$3)', [u.id, token, expires]);
+                await pool.query(`INSERT INTO ${tables.EMAIL_VERIFICATIONS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [u.id, token, expires]);
 
                 // load smtp
-                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
+                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
                 const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
@@ -4519,18 +4562,18 @@ app.get('/auth/verify-email', async (req, res) => {
     try {
         const token = req.query.token || req.query.t || null;
         if (!token) return res.status(400).send('Missing token');
-        const tres = await pool.query('SELECT * FROM dqai_email_verifications WHERE token = $1', [String(token)]);
+        const tres = await pool.query(`SELECT * FROM ${tables.EMAIL_VERIFICATIONS} WHERE token = $1`, [String(token)]);
         if (tres.rows.length === 0) return res.status(400).send('Invalid or expired token');
         const row = tres.rows[0];
         if (row.expires_at && new Date(row.expires_at) < new Date()) {
             // remove expired token
-            try { await pool.query('DELETE FROM dqai_email_verifications WHERE token = $1', [token]); } catch (e) { /* ignore */ }
+            try { await pool.query(`DELETE FROM ${tables.EMAIL_VERIFICATIONS} WHERE token = $1`, [token]); } catch (e) { /* ignore */ }
             return res.status(400).send('Token expired');
         }
         // activate user
-        await pool.query('UPDATE dqai_users SET status = $1 WHERE id = $2', ['Active', row.user_id]);
+        await pool.query(`UPDATE ${tables.USERS} SET status = $1 WHERE id = $2`, ['Active', row.user_id]);
         // remove token record
-        await pool.query('DELETE FROM dqai_email_verifications WHERE token = $1', [token]);
+        await pool.query(`DELETE FROM ${tables.EMAIL_VERIFICATIONS} WHERE token = $1`, [token]);
         // Redirect to frontend success page if FRONTEND_URL available
         const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
         return res.redirect(`${frontend.replace(/\/$/, '')}/login?verified=1`);
@@ -4545,7 +4588,7 @@ app.get('/api/current_user', async (req, res) => {
         return res.send(null);
     }
     try {
-        const result = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [req.session.userId]);
+        const result = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
         if (result.rows.length > 0) {
             // Snake_case to camelCase for frontend consistency
             const u = result.rows[0];
@@ -4581,10 +4624,10 @@ app.get('/api/programs', async (req, res) => {
     try {
         // Scope programs to the user's business unless super-admin
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         
-        let q = 'SELECT * FROM dqai_programs';
+        let q = `SELECT * FROM ${tables.PROGRAMS}`;
         const params = [];
         
         // Super-admin without business context sees all, otherwise filter by business_id
@@ -4604,7 +4647,7 @@ app.post('/api/programs', async (req, res) => {
     try {
         if (id) {
             const result = await pool.query(
-                'UPDATE dqai_programs SET name=$1, details=$2, type=$3, category=$4 WHERE id=$5 RETURNING *',
+                `UPDATE ${tables.PROGRAMS} SET name=$1, details=$2, type=$3, category=$4 WHERE id=$5 RETURNING *`,
                 [name, details, type, category, id]
             );
             res.json(result.rows[0]);
@@ -4616,7 +4659,7 @@ app.post('/api/programs', async (req, res) => {
                 else businessId = req.session.businessId || null;
             }
             const result = await pool.query(
-                'INSERT INTO dqai_programs (name, details, type, category, business_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+                `INSERT INTO ${tables.PROGRAMS} (name, details, type, category, business_id) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
                 [name, details, type, category, businessId]
             );
             res.json(result.rows[0]);
@@ -4632,44 +4675,44 @@ app.delete('/api/programs/:id', async (req, res) => {
         await client.query('BEGIN');
 
         // Find all activities for this program
-        const acts = (await client.query('SELECT id FROM dqai_activities WHERE program_id = $1', [programId])).rows.map(r => r.id);
+        const acts = (await client.query(`SELECT id FROM ${tables.ACTIVITIES} WHERE program_id = $1`, [programId])).rows.map(r => r.id);
 
         if (acts.length > 0) {
             // Delete uploaded docs attached to those activities
-            await client.query('DELETE FROM dqai_uploaded_docs WHERE activity_id = ANY($1::int[])', [acts]);
+            await client.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE activity_id = ANY($1::int[])`, [acts]);
 
             // Find reports for these activities
-            const reports = (await client.query('SELECT id FROM dqai_activity_reports WHERE activity_id = ANY($1::int[])', [acts])).rows.map(r => r.id);
+            const reports = (await client.query(`SELECT id FROM ${tables.ACTIVITY_REPORTS} WHERE activity_id = ANY($1::int[])`, [acts])).rows.map(r => r.id);
             if (reports.length > 0) {
                 // Delete uploaded docs tied to reports
-                await client.query('DELETE FROM dqai_uploaded_docs WHERE report_id = ANY($1::int[])', [reports]);
+                await client.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE report_id = ANY($1::int[])`, [reports]);
                 // Delete answers for those reports
-                await client.query('DELETE FROM dqai_answers WHERE report_id = ANY($1::int[])', [reports]);
+                await client.query(`DELETE FROM ${tables.ANSWERS} WHERE report_id = ANY($1::int[])`, [reports]);
                 // Delete the reports themselves
-                await client.query('DELETE FROM dqai_activity_reports WHERE id = ANY($1::int[])', [reports]);
+                await client.query(`DELETE FROM ${tables.ACTIVITY_REPORTS} WHERE id = ANY($1::int[])`, [reports]);
             }
 
             // Delete answers tied to questions belonging to these activities
-            await client.query('DELETE FROM dqai_answers WHERE question_id IN (SELECT id FROM dqai_questions WHERE activity_id = ANY($1::int[]))', [acts]);
+            await client.query(`DELETE FROM ${tables.ANSWERS} WHERE question_id IN (SELECT id FROM ${tables.QUESTIONS} WHERE activity_id = ANY($1::int[]))`, [acts]);
 
             // Delete questions for these activities
-            await client.query('DELETE FROM dqai_questions WHERE activity_id = ANY($1::int[])', [acts]);
+            await client.query(`DELETE FROM ${tables.QUESTIONS} WHERE activity_id = ANY($1::int[])`, [acts]);
 
             // Delete report templates for these activities
-            await client.query('DELETE FROM dqai_report_templates WHERE activity_id = ANY($1::int[])', [acts]);
+            await client.query(`DELETE FROM ${tables.REPORT_TEMPLATES} WHERE activity_id = ANY($1::int[])`, [acts]);
 
             // Delete any indicators associated with these activities
-            await client.query('DELETE FROM dqai_indicators WHERE activity_id = ANY($1::int[])', [acts]);
+            await client.query(`DELETE FROM ${tables.INDICATORS} WHERE activity_id = ANY($1::int[])`, [acts]);
 
             // Finally delete the activities
-            await client.query('DELETE FROM dqai_activities WHERE id = ANY($1::int[])', [acts]);
+            await client.query(`DELETE FROM ${tables.ACTIVITIES} WHERE id = ANY($1::int[])`, [acts]);
         }
 
         // Delete any indicators scoped to the program itself
-        await client.query('DELETE FROM dqai_indicators WHERE program_id = $1', [programId]);
+        await client.query(`DELETE FROM ${tables.INDICATORS} WHERE program_id = $1`, [programId]);
 
         // Delete the program record
-        await client.query('DELETE FROM dqai_programs WHERE id = $1', [programId]);
+        await client.query(`DELETE FROM ${tables.PROGRAMS} WHERE id = $1`, [programId]);
 
         await client.query('COMMIT');
         res.json({ ok: true });
@@ -4687,10 +4730,10 @@ app.get('/api/activities', async (req, res) => {
     try {
         // Scope activities to business
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         
-        let q = 'SELECT * FROM dqai_activities';
+        let q = `SELECT * FROM ${tables.ACTIVITIES}`;
         const params = [];
         
         // Super-admin without business context sees all, otherwise filter by business_id
@@ -4718,7 +4761,7 @@ app.get('/api/activities/:id', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).send('Invalid id');
-        const result = await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [id]);
+        const result = await pool.query(`SELECT * FROM ${tables.ACTIVITIES} WHERE id = $1`, [id]);
         if (result.rowCount === 0) return res.status(404).send('Activity not found');
         const row = result.rows[0];
         // enforce business scoping for non-super-admins
@@ -4741,7 +4784,7 @@ app.get('/api/activities/:id', async (req, res) => {
 // Public: list activities with program and standalone form path for sharing/embed
 app.get('/api/public/activity_links', async (req, res) => {
     try {
-        const r = await pool.query(`SELECT a.id, a.title, a.program_id, p.name as program_name FROM dqai_activities a LEFT JOIN dqai_programs p ON p.id = a.program_id ORDER BY a.created_at DESC`);
+        const r = await pool.query(`SELECT a.id, a.title, a.program_id, p.name as program_name FROM ${tables.ACTIVITIES} a LEFT JOIN ${tables.PROGRAMS} p ON p.id = a.program_id ORDER BY a.created_at DESC`);
         const rows = (r.rows || []).map(row => ({
             id: row.id,
             title: row.title,
@@ -4758,7 +4801,7 @@ app.post('/api/activities', async (req, res) => {
     try {
         if (id) {
             const result = await pool.query(
-                'UPDATE dqai_activities SET title=$1, subtitle=$2, program_id=$3, details=$4, start_date=$5, end_date=$6, response_type=$7, category=$8, status=$9, created_by=$10 WHERE id=$11 RETURNING *',
+                `UPDATE ${tables.ACTIVITIES} SET title=$1, subtitle=$2, program_id=$3, details=$4, start_date=$5, end_date=$6, response_type=$7, category=$8, status=$9, created_by=$10 WHERE id=$11 RETURNING *`,
                 [title, req.body.subtitle || null, programId, details, startDate, endDate, req.body.responseType || req.body.response_type || null, category, status, createdBy, id]
             );
             const r = result.rows[0];
@@ -4773,7 +4816,7 @@ app.post('/api/activities', async (req, res) => {
                 else businessId = req.session.businessId || null;
             }
             const result = await pool.query(
-                'INSERT INTO dqai_activities (title, subtitle, program_id, details, start_date, end_date, response_type, category, status, created_by, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
+                `INSERT INTO ${tables.ACTIVITIES} (title, subtitle, program_id, details, start_date, end_date, response_type, category, status, created_by, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
                 [title, req.body.subtitle || null, programId, details, startDate, endDate, req.body.responseType || req.body.response_type || null, category, status, createdBy, businessId]
             );
             const r = result.rows[0];
@@ -4791,8 +4834,8 @@ app.put('/api/activities/:id/form', async (req, res) => {
         // isRepeatable and groupName are stored) and sync questions from that structure.
         if (formDefinition) {
             await syncQuestions(req.params.id, formDefinition);
-            await pool.query('UPDATE dqai_activities SET form_definition = $1 WHERE id = $2', [formDefinition, req.params.id]);
-            const updated = (await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [req.params.id])).rows[0];
+            await pool.query(`UPDATE ${tables.ACTIVITIES} SET form_definition = $1 WHERE id = $2`, [formDefinition, req.params.id]);
+            const updated = (await pool.query(`SELECT * FROM ${tables.ACTIVITIES} WHERE id = $1`, [req.params.id])).rows[0];
             return res.json({ ...updated, formDefinition: updated.form_definition });
         }
 
@@ -4824,15 +4867,15 @@ app.put('/api/activities/:id/form', async (req, res) => {
             sections: Object.entries(sectionsObj).map(([sName, qs], sidx) => ({ id: `sec${sidx + 1}`, name: sName, questions: qs }))
         }));
         const compactFormDefinition = { id: `fd-${req.params.id}`, activityId: Number(req.params.id), pages };
-        await pool.query('UPDATE dqai_activities SET form_definition = $1 WHERE id = $2', [compactFormDefinition, req.params.id]);
-        const updated = (await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [req.params.id])).rows[0];
+        await pool.query(`UPDATE ${tables.ACTIVITIES} SET form_definition = $1 WHERE id = $2`, [compactFormDefinition, req.params.id]);
+        const updated = (await pool.query(`SELECT * FROM ${tables.ACTIVITIES} WHERE id = $1`, [req.params.id])).rows[0];
         res.json({ ...updated, formDefinition: updated.form_definition });
     } catch (e) { res.status(500).send(e.message); }
 });
 
 app.delete('/api/activities/:id', requireAdmin, async (req, res) => {
     try {
-        await pool.query('DELETE FROM dqai_activities WHERE id = $1', [req.params.id]);
+        await pool.query(`DELETE FROM ${tables.ACTIVITIES} WHERE id = $1`, [req.params.id]);
         res.sendStatus(200);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -4841,10 +4884,10 @@ app.delete('/api/activities/:id', requireAdmin, async (req, res) => {
 app.get('/api/facilities', async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query('SELECT role FROM dqai_users WHERE id = $1', [req.session.userId])).rows[0] : null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
         
-        let q = 'SELECT * FROM dqai_facilities';
+        let q = `SELECT * FROM ${tables.FACILITIES}`;
         const params = [];
         
         // Super-admin without business context sees all, otherwise filter by business_id
@@ -4865,7 +4908,7 @@ app.get('/api/public/facilities', async (req, res) => {
         // Prefer real facilities from DB; fall back to synthetic file if DB empty
         let synth = [];
         try {
-            const fres = await pool.query('SELECT id, name, state, lga, address, category, location, show_on_map FROM dqai_facilities ORDER BY name ASC');
+            const fres = await pool.query(`SELECT id, name, state, lga, address, category, location, show_on_map FROM ${tables.FACILITIES} ORDER BY name ASC`);
             if (fres.rows && fres.rows.length) {
                 synth = fres.rows.map(r => ({ id: r.id, name: r.name, state: r.state, lga: r.lga, address: r.address, category: r.category, location: r.location, show_on_map: r.show_on_map }));
             } else {
@@ -4894,7 +4937,7 @@ app.get('/api/public/facilities', async (req, res) => {
         let requesterRole = null;
         try {
             if (req.session && req.session.userId) {
-                const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [req.session.userId]);
                 if (r.rows && r.rows.length) requesterRole = (r.rows[0].role || null);
             }
         } catch (e) { requesterRole = null; }
@@ -4983,7 +5026,7 @@ app.post('/api/public/facility_ids_for_filters', async (req, res) => {
         if (conds.length === 0) return res.json([]);
 
         const where = 'WHERE ' + conds.join(' OR ');
-        const q = `SELECT DISTINCT ar.facility_id FROM dqai_activity_reports ar LEFT JOIN dqai_activities a ON a.id = ar.activity_id ${where}`;
+        const q = `SELECT DISTINCT ar.facility_id FROM ${tables.ACTIVITY_REPORTS} ar LEFT JOIN ${tables.ACTIVITIES} a ON a.id = ar.activity_id ${where}`;
         const r = await pool.query(q, params);
         const ids = (r.rows || []).map(rr => rr.facility_id).filter(Boolean);
         res.json({ facilityIds: ids });
@@ -4997,7 +5040,7 @@ app.get('/api/public/facility_map_answers', async (req, res) => {
         if (!facilityId) return res.status(400).json({ error: 'Missing facilityId' });
 
         // fetch recent reports for this facility
-        const r = await pool.query('SELECT * FROM dqai_activity_reports WHERE facility_id = $1 ORDER BY submission_date DESC LIMIT 20', [facilityId]);
+        const r = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE facility_id = $1 ORDER BY submission_date DESC LIMIT 20`, [facilityId]);
         const reports = r.rows || [];
 
         const out = [];
@@ -5005,7 +5048,7 @@ app.get('/api/public/facility_map_answers', async (req, res) => {
             const reportId = rep.id;
             const activityId = rep.activity_id;
             // fetch answers for this report and include reviewer fields when present
-            const ares = await pool.query('SELECT question_id, answer_value, reviewers_comment, quality_improvement_followup FROM dqai_answers WHERE report_id = $1', [reportId]);
+            const ares = await pool.query(`SELECT question_id, answer_value, reviewers_comment, quality_improvement_followup FROM ${tables.ANSWERS} WHERE report_id = $1`, [reportId]);
             const answers = {};
             for (const a of ares.rows) {
                 let val = a.answer_value;
@@ -5022,7 +5065,7 @@ app.get('/api/public/facility_map_answers', async (req, res) => {
             // fetch questions for the activity that have metadata.show_on_map = true
             let showQs = [];
             try {
-                const qres = await pool.query(`SELECT id, question_text, page_name, section_name, metadata FROM dqai_questions WHERE activity_id = $1`, [activityId]);
+                const qres = await pool.query(`SELECT id, question_text, page_name, section_name, metadata FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [activityId]);
                 for (const q of qres.rows) {
                     let md = q.metadata || null;
                     if (typeof md === 'string') {
@@ -5095,7 +5138,7 @@ app.post('/api/facilities', requireAdmin, async (req, res) => {
 
         if (id) {
             const result = await pool.query(
-                'UPDATE dqai_facilities SET name=$1, state=$2, lga=$3, address=$4, category=$5, location=$6, show_on_map=$7, custom_fields=$8 WHERE id=$9 RETURNING *',
+                `UPDATE ${tables.FACILITIES} SET name=$1, state=$2, lga=$3, address=$4, category=$5, location=$6, show_on_map=$7, custom_fields=$8 WHERE id=$9 RETURNING *`,
                 [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map), customFieldsJson, id]
             );
             res.json(result.rows[0]);
@@ -5106,7 +5149,7 @@ app.post('/api/facilities', requireAdmin, async (req, res) => {
                 else businessId = req.session.businessId || null;
             }
             const result = await pool.query(
-                'INSERT INTO dqai_facilities (name, state, lga, address, category, location, show_on_map, custom_fields, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+                `INSERT INTO ${tables.FACILITIES} (name, state, lga, address, category, location, show_on_map, custom_fields, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
                 [name, state, lga, address, category, location || null, (show_on_map === undefined ? true : show_on_map), customFieldsJson, businessId]
             );
             res.json(result.rows[0]);
@@ -5116,7 +5159,7 @@ app.post('/api/facilities', requireAdmin, async (req, res) => {
 
 app.delete('/api/facilities/:id', requireAdmin, async (req, res) => {
     try {
-        await pool.query('DELETE FROM dqai_facilities WHERE id = $1', [req.params.id]);
+        await pool.query(`DELETE FROM ${tables.FACILITIES} WHERE id = $1`, [req.params.id]);
         res.sendStatus(200);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -5125,7 +5168,7 @@ app.delete('/api/facilities/:id', requireAdmin, async (req, res) => {
 app.get('/api/users', async (req, res) => {
     try {
         // Scope users to business for non-super-admins
-        let q = 'SELECT * FROM dqai_users';
+        let q = `SELECT * FROM ${tables.USERS}`;
         const params = [];
         if (req.session && req.session.userId && !(await isSuperAdmin(req))) {
             q += ' WHERE business_id = $1';
@@ -5172,12 +5215,12 @@ app.post('/api/users', async (req, res) => {
         const actorIsAdmin = async () => {
             if (!actorId) return false;
             try {
-                const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1', [actorId]);
+                const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [actorId]);
                 if (r.rows.length > 0) {
                     const role = (r.rows[0].role || '').toString().toLowerCase();
                     if (role === 'admin' || role === 'super-admin' || role === 'super_admin') return true;
                 }
-                const rr = await pool.query('SELECT r.name FROM dqai_user_roles ur JOIN dqai_roles r ON ur.role_id = r.id WHERE ur.user_id = $1', [actorId]);
+                const rr = await pool.query(`SELECT r.name FROM ${tables.USER_ROLES} ur JOIN ${tables.ROLES} r ON ur.role_id = r.id WHERE ur.user_id = $1`, [actorId]);
                 for (const row of rr.rows) { if (row && row.name && row.name.toString().toLowerCase() === 'admin') return true; }
             } catch (e) { /* ignore */ }
             return false;
@@ -5191,7 +5234,7 @@ app.post('/api/users', async (req, res) => {
 
         if (id) {
             // fetch existing user for diff and existence check
-            const existingRes = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [id]);
+            const existingRes = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
             if (existingRes.rows.length === 0) return res.status(404).send('User not found');
             const existing = existingRes.rows[0];
 
@@ -5230,14 +5273,14 @@ app.post('/api/users', async (req, res) => {
                 return res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
             }
 
-            const sql = `UPDATE dqai_users SET ${updates.join(', ')} WHERE id=$${idx} RETURNING *`;
+            const sql = `UPDATE ${tables.USERS} SET ${updates.join(', ')} WHERE id=$${idx} RETURNING *`;
             values.push(id);
             const result = await pool.query(sql, values);
             const u = result.rows[0];
 
             // audit: record what changed (omit sensitive values like password contents)
             try {
-                await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_events (
+                await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.AUDIT_EVENTS} (
                     id SERIAL PRIMARY KEY,
                     actor_user_id INTEGER,
                     target_user_id INTEGER,
@@ -5254,13 +5297,13 @@ app.post('/api/users', async (req, res) => {
                 if (profileImage !== undefined && existing.profile_image !== profileImage) changes.profile_image = { before: existing.profile_image, after: profileImage };
                 if (role !== undefined && existing.role !== role) changes.role = { before: existing.role, after: role };
                 if (password) changes.password_changed = true;
-                await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, u.id, 'update', Object.keys(changes).length ? changes : { updated: true }]);
+                await pool.query(`INSERT INTO ${tables.AUDIT_EVENTS} (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)`, [actorId || null, u.id, 'update', Object.keys(changes).length ? changes : { updated: true }]);
             } catch (e) { console.error('Failed to write audit event for user update', e); }
 
             // send notification email if smtp configured
             try {
                 const businessId = req.session?.businessId || null;
-                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessId]);
+                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 if (smtp) {
                     try {
@@ -5289,13 +5332,13 @@ app.post('/api/users', async (req, res) => {
                 else businessIdForNewUser = req.session.businessId || null;
             }
             const result = await pool.query(
-                'INSERT INTO dqai_users (first_name, last_name, email, role, status, password, facility_id, profile_image, custom_fields, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+                `INSERT INTO ${tables.USERS} (first_name, last_name, email, role, status, password, facility_id, profile_image, custom_fields, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
                 [firstName, lastName, email, normalizedRole, status, hashedPassword || null, facilityId || null, profileImage || null, customFieldsJson, businessIdForNewUser]
             );
             const u = result.rows[0];
             // send welcome email if smtp configured
             try {
-                const sres = await pool.query("SELECT value FROM dqai_settings WHERE key = 'smtp' AND business_id = $1", [businessIdForNewUser]);
+                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessIdForNewUser]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 if (smtp) {
                     try {
@@ -5316,7 +5359,7 @@ app.post('/api/users', async (req, res) => {
             // audit: user created
             try {
                 const actorId = req.session && req.session.userId ? req.session.userId : null;
-                await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_events (
+                await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.AUDIT_EVENTS} (
                     id SERIAL PRIMARY KEY,
                     actor_user_id INTEGER,
                     target_user_id INTEGER,
@@ -5325,7 +5368,7 @@ app.post('/api/users', async (req, res) => {
                     created_at TIMESTAMP DEFAULT NOW()
                 )`);
                 const details = { created: true, role: u.role, email: u.email, provided_password: !!password };
-                await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, u.id, 'create', details]);
+                await pool.query(`INSERT INTO ${tables.AUDIT_EVENTS} (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)`, [actorId || null, u.id, 'create', details]);
             } catch (e) { console.error('Failed to write audit event for user create', e); }
 
             res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
@@ -5338,15 +5381,15 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     try {
         const id = req.params.id;
         // fetch user for audit
-        const ures = await pool.query('SELECT * FROM dqai_users WHERE id = $1', [id]);
+        const ures = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
         const target = ures.rows.length ? ures.rows[0] : null;
         // remove role assignments
-        await pool.query('DELETE FROM dqai_user_roles WHERE user_id = $1', [id]);
-        await pool.query('DELETE FROM dqai_users WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [id]);
+        await pool.query(`DELETE FROM ${tables.USERS} WHERE id = $1`, [id]);
         // audit deletion
         try {
             const actorId = req.session && req.session.userId ? req.session.userId : null;
-            await pool.query(`CREATE TABLE IF NOT EXISTS dqai_audit_events (
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.AUDIT_EVENTS} (
                 id SERIAL PRIMARY KEY,
                 actor_user_id INTEGER,
                 target_user_id INTEGER,
@@ -5355,7 +5398,7 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
                 created_at TIMESTAMP DEFAULT NOW()
             )`);
             const details = { deleted: true, email: target ? target.email : null, role: target ? target.role : null };
-            await pool.query('INSERT INTO dqai_audit_events (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)', [actorId || null, id, 'delete', details]);
+            await pool.query(`INSERT INTO ${tables.AUDIT_EVENTS} (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)`, [actorId || null, id, 'delete', details]);
         } catch (e) { console.error('Failed to write audit event for user delete', e); }
 
         res.json({ ok: true });
@@ -5370,7 +5413,7 @@ app.get('/api/reports', async (req, res) => {
         const whereParts = [];
         try {
             if (req.session && req.session.userId) {
-                const r = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [req.session.userId]);
                 if (r.rows.length > 0 && String(r.rows[0].role || '').toLowerCase() === 'validator') {
                     whereParts.push('assigned_validator = $' + (params.length + 1));
                     params.push(req.session.userId);
@@ -5384,7 +5427,7 @@ app.get('/api/reports', async (req, res) => {
         } catch (e) { /* ignore role-check errors */ }
 
         const whereClause = whereParts.length ? (' WHERE ' + whereParts.join(' AND ')) : '';
-        const q = `SELECT * FROM dqai_activity_reports${whereClause} ORDER BY submission_date DESC`;
+        const q = `SELECT * FROM ${tables.ACTIVITY_REPORTS}${whereClause} ORDER BY submission_date DESC`;
         const result = await pool.query(q, params);
         const mapped = result.rows.map(r => ({
             ...r,
@@ -5405,7 +5448,7 @@ app.get('/api/reports/:id', async (req, res) => {
     try {
         const reportId = Number(req.params.id);
         if (!reportId) return res.status(400).send('Invalid id');
-        const result = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+        const result = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
         if (result.rowCount === 0) return res.status(404).send('Report not found');
         const r = result.rows[0];
         // enforce business scoping for non-super-admins
@@ -5416,7 +5459,7 @@ app.get('/api/reports/:id', async (req, res) => {
         // If requester is a validator, ensure the report is assigned to them
         try {
             if (req.session && req.session.userId) {
-                const rr = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                const rr = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [req.session.userId]);
                 if (rr.rows.length > 0 && String(rr.rows[0].role || '').toLowerCase() === 'validator') {
                     if (Number(r.assigned_validator || 0) !== Number(req.session.userId)) return res.status(403).json({ error: 'Forbidden - not assigned to you' });
                 }
@@ -5441,14 +5484,14 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).json({ error: 'Invalid id' });
-        const rres = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [id]);
+        const rres = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [id]);
         if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
         const report = rres.rows[0];
         // fetch answers, questions and uploaded docs
         const [aRes, qRes, dRes] = await Promise.all([
-            pool.query('SELECT * FROM dqai_answers WHERE report_id = $1 ORDER BY id ASC', [id]),
-            pool.query('SELECT * FROM dqai_questions WHERE activity_id = $1', [report.activity_id]),
-            pool.query('SELECT * FROM dqai_uploaded_docs WHERE report_id = $1', [id])
+            pool.query(`SELECT * FROM ${tables.ANSWERS} WHERE report_id = $1 ORDER BY id ASC`, [id]),
+            pool.query(`SELECT * FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [report.activity_id]),
+            pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE report_id = $1`, [id])
         ]);
         const answers = aRes.rows || [];
         const questions = qRes.rows || [];
@@ -5474,14 +5517,14 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
         let facility = null;
         try {
             if (report.facility_id) {
-                const fres = await pool.query('SELECT * FROM dqai_facilities WHERE id = $1', [report.facility_id]);
+                const fres = await pool.query(`SELECT * FROM ${tables.FACILITIES} WHERE id = $1`, [report.facility_id]);
                 if (fres.rowCount > 0) facility = fres.rows[0];
             }
         } catch (e) { /* ignore */ }
         let reportedByUser = null;
         try {
             if (report.reported_by) {
-                const ures = await pool.query('SELECT id, first_name, last_name, email FROM dqai_users WHERE id = $1', [report.reported_by]);
+                const ures = await pool.query(`SELECT id, first_name, last_name, email FROM ${tables.USERS} WHERE id = $1`, [report.reported_by]);
                 if (ures.rowCount > 0) reportedByUser = ures.rows[0];
             }
         } catch (e) { /* ignore */ }
@@ -5516,12 +5559,12 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
         // Fetch any Power BI embed/link configured for this report or its activity so we can include it on the default summary page.
         let reportPowerbi = null;
         try {
-            const pbRes = await pool.query('SELECT * FROM dqai_reports_powerbi WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1', [id]);
+            const pbRes = await pool.query(`SELECT * FROM ${tables.REPORTS_POWERBI} WHERE activity_reports_id = $1 ORDER BY id DESC LIMIT 1`, [id]);
             if (pbRes.rowCount > 0) reportPowerbi = pbRes.rows[0];
         } catch (e) { /* ignore */ }
         let activityPowerbi = null;
         try {
-            const ap = await pool.query('SELECT powerbi_url, powerbi_link_type, powerbi_mode FROM dqai_activities WHERE id = $1', [report.activity_id]);
+            const ap = await pool.query(`SELECT powerbi_url, powerbi_link_type, powerbi_mode FROM ${tables.ACTIVITIES} WHERE id = $1`, [report.activity_id]);
             if (ap.rowCount > 0) activityPowerbi = ap.rows[0];
         } catch (e) { /* ignore */ }
 
@@ -5529,7 +5572,7 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
         html += `<html><head><meta charset="utf-8"><title>Report ${report.id}</title><style>body{font-family:Arial,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.report-filled{margin:6px 0}.powerbi-embed{margin:12px 0;padding:8px;border:1px solid #eee;background:#fafafa}</style></head><body>`;
         if (useTemplate && tplId) {
             try {
-                const tplRes = await pool.query('SELECT * FROM dqai_report_templates WHERE id = $1', [tplId]);
+                const tplRes = await pool.query(`SELECT * FROM ${tables.REPORT_TEMPLATES} WHERE id = $1`, [tplId]);
                 if (tplRes.rowCount > 0) {
                     const tpl = tplRes.rows[0];
                     let tplObj = {};
@@ -5546,7 +5589,7 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
                     // replace uploaded table wrappers marked with data-upload-id and render full table if data exists
                     tplHtml = tplHtml.replace(/<div[^>]*data-upload-id=["']?(\d+)["']?[^>]*>[\s\S]*?<\/div>/gi, (m, did) => {
                         try {
-                            const udRes = pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [Number(did)]);
+                            const udRes = pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [Number(did)]);
                             // udRes is a promise; but we are inside sync replace — handle by returning a placeholder and fill afterwards
                             return `__UPLOADED_TABLE_PLACEHOLDER_${did}__`;
                         } catch (e) { return `<div>Uploaded table ${did}</div>`; }
@@ -5560,7 +5603,7 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
                     for (const ph of upMatches) {
                         const mid = ph.replace(/__UPLOADED_TABLE_PLACEHOLDER_(\d+)__/, '$1');
                         try {
-                            const udRes2 = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [Number(mid)]);
+                            const udRes2 = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [Number(mid)]);
                             if (udRes2.rowCount === 0) {
                                 html = html.replace(ph, `<div>Uploaded table ${mid} not found</div>`);
                                 continue;
@@ -5605,7 +5648,7 @@ app.get('/api/reports/:id/pdf', async (req, res) => {
                 for (const ph of upMatches) {
                     const mid = ph.replace(/__UPLOADED_TABLE_PLACEHOLDER_(\d+)__/, '$1');
                     try {
-                        const udRes2 = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [Number(mid)]);
+                        const udRes2 = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [Number(mid)]);
                         if (udRes2.rowCount === 0) {
                             html = html.replace(ph, `<div>Uploaded table ${mid} not found</div>`);
                             continue;
@@ -5782,13 +5825,13 @@ app.get('/api/reports/:id/xlsx', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).json({ error: 'Invalid id' });
-        const rres = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [id]);
+        const rres = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [id]);
         if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
         const report = rres.rows[0];
         const [aRes, qRes, dRes] = await Promise.all([
-            pool.query('SELECT * FROM dqai_answers WHERE report_id = $1 ORDER BY id ASC', [id]),
-            pool.query('SELECT * FROM dqai_questions WHERE activity_id = $1', [report.activity_id]),
-            pool.query('SELECT * FROM dqai_uploaded_docs WHERE report_id = $1', [id])
+            pool.query(`SELECT * FROM ${tables.ANSWERS} WHERE report_id = $1 ORDER BY id ASC`, [id]),
+            pool.query(`SELECT * FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [report.activity_id]),
+            pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE report_id = $1`, [id])
         ]);
         const answers = aRes.rows || [];
         const questions = qRes.rows || [];
@@ -5842,7 +5885,7 @@ app.get('/api/reports/:id/image', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).json({ error: 'Invalid id' });
-        const rres = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [id]);
+        const rres = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [id]);
         if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
         const report = rres.rows[0];
         // reuse the PDF HTML assembly by calling the existing route; request HTML
@@ -5879,7 +5922,7 @@ app.put('/api/reports/:id', async (req, res) => {
         await client.query('BEGIN');
 
         // Ensure report exists
-        const existing = await client.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+        const existing = await client.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
         if (existing.rowCount === 0) {
             await client.query('ROLLBACK');
             return res.status(404).send('Report not found');
@@ -5920,7 +5963,7 @@ app.put('/api/reports/:id', async (req, res) => {
 
         if (setParts.length > 0) {
             params.push(reportId);
-            const sql = `UPDATE dqai_activity_reports SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
+            const sql = `UPDATE ${tables.ACTIVITY_REPORTS} SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
             const updated = await client.query(sql, params);
             if (updated.rowCount === 0) {
                 await client.query('ROLLBACK');
@@ -5945,7 +5988,7 @@ app.put('/api/reports/:id', async (req, res) => {
         // Replace answers if provided (delete existing and re-insert)
         if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
             try {
-                await client.query('DELETE FROM dqai_answers WHERE report_id = $1', [reportId]);
+                await client.query(`DELETE FROM ${tables.ANSWERS} WHERE report_id = $1`, [reportId]);
                 const answers = payload.answers || {};
                 if (answers && typeof answers === 'object') {
                     for (const [qId, val] of Object.entries(answers)) {
@@ -5967,7 +6010,7 @@ app.put('/api/reports/:id', async (req, res) => {
                                             }
                                             const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
                                             const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                            await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                            await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                         } catch (ie) { console.error('Failed to insert repeated answer during report update for question', subQId, ie); }
                                     }
                                 }
@@ -5982,7 +6025,7 @@ app.put('/api/reports/:id', async (req, res) => {
                                 }
                                 // non-repeated answers: store null group values
                                 const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                             }
                         } catch (ie) { console.error('Failed to insert answer during report update for question', qId, ie); }
                     }
@@ -6001,12 +6044,12 @@ app.put('/api/reports/:id', async (req, res) => {
             try {
                 // Delete existing uploaded_docs rows for this report (if column exists)
                 try {
-                    const colRes = await client.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+                    const colRes = await client.query("SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'");
                     if (colRes.rowCount > 0) {
-                        await client.query('DELETE FROM dqai_uploaded_docs WHERE report_id = $1', [reportId]);
+                        await client.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE report_id = $1`, [reportId]);
                     } else {
                         // fallback to JSONB field
-                        try { await client.query("DELETE FROM dqai_uploaded_docs WHERE (file_content->>'reportId') = $1", [String(reportId)]); } catch (e) { console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e); }
+                        try { await client.query("DELETE FROM ${tables.UPLOADED_DOCS} WHERE (file_content->>'reportId') = $1", [String(reportId)]); } catch (e) { console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e); }
                     }
                 } catch (e) { console.warn('uploaded_docs schema check failed during report update delete step', e); }
 
@@ -6016,7 +6059,7 @@ app.put('/api/reports/:id', async (req, res) => {
                         try {
                             const filename = file.name || file.filename || file.fileName || null;
                             const content = file.content || file.data || file;
-                            await client.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [payload.activityId || payload.activity_id || existing.rows[0].activity_id, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, reportId, JSON.stringify(content), filename]);
+                            await client.query(`INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [payload.activityId || payload.activity_id || existing.rows[0].activity_id, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, reportId, JSON.stringify(content), filename]);
                         } catch (ie) { console.error('Failed to insert uploaded file during report update', ie); }
                     }
                 }
@@ -6034,7 +6077,7 @@ app.put('/api/reports/:id', async (req, res) => {
                 const loc = (Object.prototype.hasOwnProperty.call(payload, 'location')) ? payload.location : null;
                 const showFlag = Object.prototype.hasOwnProperty.call(payload, 'show_on_map') ? payload.show_on_map : (Object.prototype.hasOwnProperty.call(payload, 'showOnMap') ? payload.showOnMap : null);
                 try {
-                    await client.query('UPDATE dqai_facilities SET location = $1, show_on_map = COALESCE($2, show_on_map) WHERE id = $3', [loc || null, showFlag === null ? null : showFlag, facilityToUpdate]);
+                    await client.query(`UPDATE ${tables.FACILITIES} SET location = $1, show_on_map = COALESCE($2, show_on_map) WHERE id = $3`, [loc || null, showFlag === null ? null : showFlag, facilityToUpdate]);
                 } catch (e) {
                     console.warn('Failed to update facility location/show_on_map during report update', e && e.message ? e.message : e);
                 }
@@ -6043,7 +6086,7 @@ app.put('/api/reports/:id', async (req, res) => {
 
         await client.query('COMMIT');
         // Return updated report
-        const final = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+        const final = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
         const r = final.rows[0];
         res.json({
             ...r,
@@ -6084,11 +6127,11 @@ app.post('/api/review_uploads', async (req, res) => {
         const buf = Buffer.from(base64, 'base64');
         fs.writeFileSync(filePath, buf);
         const publicUrl = `${req.protocol}://${req.get('host')}/uploads/reports/${encodeURIComponent(String(safeReportId))}/${encodeURIComponent(savedName)}`;
-        // Persist a record in dqai_uploaded_docs so uploads are discoverable and consistent
+        // Persist a record in ${tables.UPLOADED_DOCS} so uploads are discoverable and consistent
         try {
-            await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [null, null, null, req.session && req.session.userId ? req.session.userId : null, reportId || null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
+            await pool.query(`INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [null, null, null, req.session && req.session.userId ? req.session.userId : null, reportId || null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
         } catch (e) {
-            console.warn('Failed to insert review_uploads metadata into dqai_uploaded_docs', e && e.message ? e.message : e);
+            console.warn('Failed to insert review_uploads metadata into ${tables.UPLOADED_DOCS}', e && e.message ? e.message : e);
         }
         res.json({ url: publicUrl, path: filePath });
     } catch (e) {
@@ -6116,11 +6159,11 @@ app.post('/api/template_uploads', async (req, res) => {
         const buf = Buffer.from(base64, 'base64');
         fs.writeFileSync(filePath, buf);
         const publicUrl = `${req.protocol}://${req.get('host')}/uploads/templates/${encodeURIComponent(savedName)}`;
-        // Persist a record in dqai_uploaded_docs for discoverability
+        // Persist a record in ${tables.UPLOADED_DOCS} for discoverability
         try {
-            await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [null, null, null, req.session && req.session.userId ? req.session.userId : null, null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
+            await pool.query(`INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [null, null, null, req.session && req.session.userId ? req.session.userId : null, null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
         } catch (e) {
-            console.warn('Failed to insert template_uploads metadata into dqai_uploaded_docs', e && e.message ? e.message : e);
+            console.warn('Failed to insert template_uploads metadata into ${tables.UPLOADED_DOCS}', e && e.message ? e.message : e);
         }
         res.json({ url: publicUrl, path: filePath });
     } catch (e) {
@@ -6149,9 +6192,9 @@ app.post('/api/activity_uploads', async (req, res) => {
         fs.writeFileSync(filePath, buf);
         const publicUrl = `${req.protocol}://${req.get('host')}/uploads/activity/${encodeURIComponent(String(safeActivity))}/${encodeURIComponent(savedName)}`;
         try {
-            await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [activityId || null, null, null, req.session && req.session.userId ? req.session.userId : null, null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
+            await pool.query(`INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [activityId || null, null, null, req.session && req.session.userId ? req.session.userId : null, null, JSON.stringify({ url: publicUrl, mimeType: mimeType || null }), filename]);
         } catch (e) {
-            console.warn('Failed to insert activity_uploads metadata into dqai_uploaded_docs', e && e.message ? e.message : e);
+            console.warn('Failed to insert activity_uploads metadata into ${tables.UPLOADED_DOCS}', e && e.message ? e.message : e);
         }
         res.json({ url: publicUrl, path: filePath });
     } catch (e) {
@@ -6163,7 +6206,7 @@ app.post('/api/activity_uploads', async (req, res) => {
 // API Connectors: CRUD and trigger ingest
 app.get('/api/api_connectors', async (req, res) => {
     try {
-        const r = await pool.query('SELECT * FROM dqai_api_connectors ORDER BY id DESC');
+        const r = await pool.query(`SELECT * FROM ${tables.API_CONNECTORS} ORDER BY id DESC`);
         res.json(r.rows);
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
@@ -6172,10 +6215,10 @@ app.post('/api/api_connectors', async (req, res) => {
     try {
         const { id, name, base_url, method, auth_config, expected_format } = req.body || {};
         if (id) {
-            const up = await pool.query('UPDATE dqai_api_connectors SET name=$1, base_url=$2, method=$3, auth_config=$4, expected_format=$5 WHERE id=$6 RETURNING *', [name, base_url, method || 'GET', auth_config ? JSON.stringify(auth_config) : null, expected_format || null, id]);
+            const up = await pool.query(`UPDATE ${tables.API_CONNECTORS} SET name=$1, base_url=$2, method=$3, auth_config=$4, expected_format=$5 WHERE id=$6 RETURNING *`, [name, base_url, method || 'GET', auth_config ? JSON.stringify(auth_config) : null, expected_format || null, id]);
             return res.json(up.rows[0]);
         }
-        const ins = await pool.query('INSERT INTO dqai_api_connectors (name, base_url, method, auth_config, expected_format, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [name, base_url, method || 'GET', auth_config ? JSON.stringify(auth_config) : null, expected_format || null, req.session && req.session.userId ? req.session.userId : null]);
+        const ins = await pool.query(`INSERT INTO ${tables.API_CONNECTORS} (name, base_url, method, auth_config, expected_format, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [name, base_url, method || 'GET', auth_config ? JSON.stringify(auth_config) : null, expected_format || null, req.session && req.session.userId ? req.session.userId : null]);
         res.json(ins.rows[0]);
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
@@ -6184,7 +6227,7 @@ app.get('/api/api_connectors/:id', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).send('Invalid id');
-        const r = await pool.query('SELECT * FROM dqai_api_connectors WHERE id = $1', [id]);
+        const r = await pool.query(`SELECT * FROM ${tables.API_CONNECTORS} WHERE id = $1`, [id]);
         if (r.rowCount === 0) return res.status(404).send('Not found');
         res.json(r.rows[0]);
     } catch (e) { console.error(e); res.status(500).send(e.message); }
@@ -6194,7 +6237,7 @@ app.delete('/api/api_connectors/:id', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).send('Invalid id');
-        await pool.query('DELETE FROM dqai_api_connectors WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.API_CONNECTORS} WHERE id = $1`, [id]);
         res.json({ success: true });
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
@@ -6204,7 +6247,7 @@ app.post('/api/api_connectors/:id/trigger', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).send('Invalid id');
-        const cr = await pool.query('SELECT * FROM dqai_api_connectors WHERE id = $1', [id]);
+        const cr = await pool.query(`SELECT * FROM ${tables.API_CONNECTORS} WHERE id = $1`, [id]);
         if (cr.rowCount === 0) return res.status(404).send('Connector not found');
         const conn = cr.rows[0];
         const fetch = globalThis.fetch || require('node-fetch');
@@ -6272,19 +6315,19 @@ app.post('/api/api_connectors/:id/trigger', async (req, res) => {
         const meta = { status: r.status, statusText: r.statusText, url: conn.base_url };
         // Upsert behavior: update latest ingest for this connector if exists, otherwise insert
         try {
-            const exist = await pool.query('SELECT id FROM dqai_api_ingests WHERE connector_id = $1 ORDER BY received_at DESC LIMIT 1', [id]);
+            const exist = await pool.query(`SELECT id FROM ${tables.API_INGESTS} WHERE connector_id = $1 ORDER BY received_at DESC LIMIT 1`, [id]);
             if (exist.rowCount > 0) {
                 const ingestId = exist.rows[0].id;
-                await pool.query('UPDATE dqai_api_ingests SET raw_data = $1, metadata = $2, received_at = NOW() WHERE id = $3', [JSON.stringify(parsed), JSON.stringify(meta), ingestId]);
+                await pool.query(`UPDATE ${tables.API_INGESTS} SET raw_data = $1, metadata = $2, received_at = NOW() WHERE id = $3`, [JSON.stringify(parsed), JSON.stringify(meta), ingestId]);
                 return res.json({ ok: true, status: r.status, data: parsed, ingestId });
             } else {
-                const ins = await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3) RETURNING id', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
+                const ins = await pool.query(`INSERT INTO ${tables.API_INGESTS} (connector_id, raw_data, metadata) VALUES ($1,$2,$3) RETURNING id`, [id, JSON.stringify(parsed), JSON.stringify(meta)]);
                 return res.json({ ok: true, status: r.status, data: parsed, ingestId: ins.rows[0].id });
             }
         } catch (e) {
             console.error('Failed to upsert api_ingest', e);
             // fallback to insert to avoid losing data
-            await pool.query('INSERT INTO dqai_api_ingests (connector_id, raw_data, metadata) VALUES ($1,$2,$3)', [id, JSON.stringify(parsed), JSON.stringify(meta)]);
+            await pool.query(`INSERT INTO ${tables.API_INGESTS} (connector_id, raw_data, metadata) VALUES ($1,$2,$3)`, [id, JSON.stringify(parsed), JSON.stringify(meta)]);
             return res.json({ ok: true, status: r.status, data: parsed });
         }
     } catch (e) { console.error(e); res.status(500).send(e.message); }
@@ -6295,7 +6338,7 @@ app.delete('/api/api_ingests/:id', async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!id) return res.status(400).send('Invalid id');
-        await pool.query('DELETE FROM dqai_api_ingests WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.API_INGESTS} WHERE id = $1`, [id]);
         res.json({ success: true });
     } catch (e) { console.error('Failed to delete ingest', e); res.status(500).send(e.message); }
 });
@@ -6305,10 +6348,10 @@ app.get('/api/api_ingests', async (req, res) => {
     try {
         const { connectorId } = req.query;
         if (connectorId) {
-            const r = await pool.query('SELECT * FROM dqai_api_ingests WHERE connector_id = $1 ORDER BY received_at DESC', [connectorId]);
+            const r = await pool.query(`SELECT * FROM ${tables.API_INGESTS} WHERE connector_id = $1 ORDER BY received_at DESC`, [connectorId]);
             return res.json(r.rows);
         }
-        const r = await pool.query('SELECT * FROM dqai_api_ingests ORDER BY received_at DESC');
+        const r = await pool.query(`SELECT * FROM ${tables.API_INGESTS} ORDER BY received_at DESC`);
         res.json(r.rows);
     } catch (e) { console.error(e); res.status(500).send(e.message); }
 });
@@ -6325,7 +6368,7 @@ app.patch('/api/api_ingests/:id', async (req, res) => {
         if (typeof toStore === 'string') {
             try { toStore = JSON.parse(toStore); } catch (e) { /* keep as string (will be stored as JSON string) */ }
         }
-        const r = await pool.query('UPDATE dqai_api_ingests SET raw_data = $1, received_at = NOW() WHERE id = $2 RETURNING *', [toStore, id]);
+        const r = await pool.query(`UPDATE ${tables.API_INGESTS} SET raw_data = $1, received_at = NOW() WHERE id = $2 RETURNING *`, [toStore, id]);
         if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
         res.json(r.rows[0]);
     } catch (e) {
@@ -6339,15 +6382,15 @@ app.delete('/api/reports/:id', requireAdmin, async (req, res) => {
     const id = req.params.id;
     try {
         // Safely delete uploaded_docs rows if the DB has a report_id column.
-        // Some installations may not have migrated dqai_uploaded_docs.report_id; in that case
+        // Some installations may not have migrated ${tables.UPLOADED_DOCS}.report_id; in that case
         // attempt a best-effort deletion by checking file_content->>'reportId' JSON field.
         try {
-            const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+            const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'");
             if (colRes.rowCount > 0) {
-                await pool.query('DELETE FROM dqai_uploaded_docs WHERE report_id = $1', [id]);
+                await pool.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE report_id = $1`, [id]);
             } else {
                 try {
-                    await pool.query("DELETE FROM dqai_uploaded_docs WHERE (file_content->>'reportId') = $1", [String(id)]);
+                    await pool.query("DELETE FROM ${tables.UPLOADED_DOCS} WHERE (file_content->>'reportId') = $1", [String(id)]);
                 } catch (e) {
                     console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e);
                 }
@@ -6361,7 +6404,7 @@ app.delete('/api/reports/:id', requireAdmin, async (req, res) => {
         try { if (fs.existsSync(folder)) fs.rmSync(folder, { recursive: true, force: true }); } catch (e) { console.error('Failed to remove upload folder', e); }
 
         // delete the report (answers cascade if DB has FK)
-        const result = await pool.query('DELETE FROM dqai_activity_reports WHERE id = $1 RETURNING *', [id]);
+        const result = await pool.query(`DELETE FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1 RETURNING *`, [id]);
         if (result.rowCount === 0) return res.status(404).send('Report not found');
         res.json({ ok: true });
     } catch (e) {
@@ -6382,7 +6425,7 @@ app.get('/api/uploaded_docs', async (req, res) => {
         if (reportId) {
             // Some DBs may not have a physical report_id column. Detect and fallback to JSONB file_content->>'reportId'
             try {
-                const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
+                const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'");
                 if (colRes.rowCount > 0) {
                     clauses.push(`report_id = $${idx++}`);
                     params.push(reportId);
@@ -6400,7 +6443,7 @@ app.get('/api/uploaded_docs', async (req, res) => {
         if (facilityId) { clauses.push(`facility_id = $${idx++}`); params.push(facilityId); }
         if (userId) { clauses.push(`user_id = $${idx++}`); params.push(userId); }
         const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-        const sql = `SELECT * FROM dqai_uploaded_docs ${where} ORDER BY created_at DESC`;
+        const sql = `SELECT * FROM ${tables.UPLOADED_DOCS} ${where} ORDER BY created_at DESC`;
         const result = await pool.query(sql, params);
         res.json(result.rows);
     } catch (e) { res.status(500).send(e.message); }
@@ -6411,7 +6454,7 @@ app.get('/api/questions', async (req, res) => {
     const { activityId } = req.query;
     try {
         if (!activityId) return res.status(400).send('Missing activityId');
-        const result = await pool.query('SELECT * FROM dqai_questions WHERE activity_id = $1 ORDER BY created_at ASC', [activityId]);
+        const result = await pool.query(`SELECT * FROM ${tables.QUESTIONS} WHERE activity_id = $1 ORDER BY created_at ASC`, [activityId]);
         res.json(result.rows.map(q => ({
             id: q.id,
             activityId: q.activity_id,
@@ -6438,7 +6481,7 @@ app.get('/api/answer_groups', async (req, res) => {
     try {
         if (!activityId) return res.status(400).send('Missing activityId');
         const result = await pool.query(
-            'SELECT DISTINCT answer_group FROM dqai_answers WHERE activity_id = $1 AND answer_group IS NOT NULL AND answer_group != \'\' ORDER BY answer_group ASC',
+            `SELECT DISTINCT answer_group FROM ${tables.ANSWERS} WHERE activity_id = $1 AND answer_group IS NOT NULL AND answer_group != '' ORDER BY answer_group ASC`,
             [activityId]
         );
         const groups = result.rows.map(r => r.answer_group);
@@ -6457,7 +6500,7 @@ app.get('/api/answers', async (req, res) => {
         if (activityId) { clauses.push(`activity_id = $${idx++}`); params.push(activityId); }
         if (facilityId) { clauses.push(`facility_id = $${idx++}`); params.push(facilityId); }
         const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-        const sql = `SELECT * FROM dqai_answers ${where} ORDER BY created_at DESC`;
+        const sql = `SELECT * FROM ${tables.ANSWERS} ${where} ORDER BY created_at DESC`;
         const result = await pool.query(sql, params);
         res.json(result.rows);
     } catch (e) { res.status(500).send(e.message); }
@@ -6467,20 +6510,20 @@ app.get('/api/answers', async (req, res) => {
 app.get('/api/activity_dashboard/:activityId', async (req, res) => {
     const { activityId } = req.params;
     try {
-        const activityRes = await pool.query('SELECT * FROM dqai_activities WHERE id = $1', [activityId]);
+        const activityRes = await pool.query(`SELECT * FROM ${tables.ACTIVITIES} WHERE id = $1`, [activityId]);
         if (activityRes.rowCount === 0) return res.status(404).send('Activity not found');
         const activity = activityRes.rows[0];
 
-        const questionsRes = await pool.query('SELECT * FROM dqai_questions WHERE activity_id = $1 ORDER BY created_at ASC', [activityId]);
+        const questionsRes = await pool.query(`SELECT * FROM ${tables.QUESTIONS} WHERE activity_id = $1 ORDER BY created_at ASC`, [activityId]);
         const questions = questionsRes.rows;
 
-        const reportsRes = await pool.query('SELECT * FROM dqai_activity_reports WHERE activity_id = $1 ORDER BY submission_date DESC', [activityId]);
+        const reportsRes = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE activity_id = $1 ORDER BY submission_date DESC`, [activityId]);
         const reports = reportsRes.rows;
 
-        const answersRes = await pool.query('SELECT * FROM dqai_answers WHERE activity_id = $1 ORDER BY created_at DESC', [activityId]);
+        const answersRes = await pool.query(`SELECT * FROM ${tables.ANSWERS} WHERE activity_id = $1 ORDER BY created_at DESC`, [activityId]);
         const answers = answersRes.rows;
 
-        const docsRes = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE activity_id = $1 ORDER BY created_at DESC', [activityId]);
+        const docsRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE activity_id = $1 ORDER BY created_at DESC`, [activityId]);
         const uploadedDocs = docsRes.rows;
 
         // Simple aggregation: counts per question id
@@ -6514,7 +6557,7 @@ app.put('/api/questions/:id', async (req, res) => {
     }
     if (setParts.length === 0) return res.status(400).send('No updatable fields provided');
     params.push(id);
-    const sql = `UPDATE dqai_questions SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
+    const sql = `UPDATE ${tables.QUESTIONS} SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
     try {
         const result = await pool.query(sql, params);
         res.json(result.rows[0]);
@@ -6540,7 +6583,7 @@ app.put('/api/answers/:id', async (req, res) => {
     }
     if (setParts.length === 0) return res.status(400).send('No updatable fields provided');
     params.push(id);
-    const sql = `UPDATE dqai_answers SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
+    const sql = `UPDATE ${tables.ANSWERS} SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
     try {
         const result = await pool.query(sql, params);
         res.json(result.rows[0]);
@@ -6555,7 +6598,7 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
     const { rowIndex, colKey, newValue } = req.body;
     try {
-        const docRes = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [id]);
+        const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
         const doc = docRes.rows[0];
         const content = doc.file_content || [];
@@ -6564,7 +6607,7 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
         const row = content[rowIndex] || {};
         row[colKey] = newValue;
         content[rowIndex] = row;
-        await pool.query('UPDATE dqai_uploaded_docs SET file_content = $1 WHERE id = $2', [JSON.stringify(content), id]);
+        await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1 WHERE id = $2`, [JSON.stringify(content), id]);
         res.json({ success: true, file_content: content });
     } catch (err) {
         console.error('Failed to update uploaded_doc', err);
@@ -6576,9 +6619,9 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
 app.delete('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
     try {
-        const docRes = await pool.query('SELECT * FROM dqai_uploaded_docs WHERE id = $1', [id]);
+        const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
-        await pool.query('DELETE FROM dqai_uploaded_docs WHERE id = $1', [id]);
+        await pool.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         res.json({ success: true });
     } catch (e) {
         console.error('Failed to delete uploaded_doc', e);
@@ -6593,7 +6636,7 @@ app.post('/api/reports', async (req, res) => {
         let currentRole = 'public';
         try {
             if (req.session && req.session.userId) {
-                const ur = await pool.query('SELECT role FROM dqai_users WHERE id = $1 LIMIT 1', [req.session.userId]);
+                const ur = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [req.session.userId]);
                 if (ur.rows && ur.rows.length) currentRole = ur.rows[0].role || currentRole;
             }
         } catch (e) { console.error('Failed to determine current user role for reports endpoint', e); }
@@ -6625,14 +6668,14 @@ app.post('/api/reports', async (req, res) => {
         if (qIdSet.size > 0) {
             const qIds = Array.from(qIdSet);
             try {
-                const qres = await pool.query('SELECT id, page_name, section_name FROM dqai_questions WHERE id = ANY($1::text[])', [qIds]);
+                const qres = await pool.query(`SELECT id, page_name, section_name FROM ${tables.QUESTIONS} WHERE id = ANY($1::text[])`, [qIds]);
                 const missing = [];
                 // Determine whether this POST is an update (edit) or a create (new)
                 const incomingReportId = (maybeId || maybeReportId) ? Number(maybeId || maybeReportId) : null;
                 for (const q of qres.rows || []) {
                     const pageKey = q.page_name || '';
                     const sectionKey = (q.section_name === null || typeof q.section_name === 'undefined') ? null : q.section_name;
-                    const permRes = await pool.query(`SELECT can_create, can_edit FROM dqai_page_permissions WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
+                    const permRes = await pool.query(`SELECT can_create, can_edit FROM ${tables.PAGE_PERMISSIONS} WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
                     const perm = permRes.rows && permRes.rows[0] ? permRes.rows[0] : null;
                     if (incomingReportId) {
                         if (!perm || !perm.can_edit) missing.push({ page: pageKey, section: sectionKey, qid: q.id, need: 'edit' });
@@ -6651,7 +6694,7 @@ app.post('/api/reports', async (req, res) => {
             try {
                 const reportId = incomingReportId;
                 await client.query('BEGIN');
-                const existing = await client.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+                const existing = await client.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
                 if (existing.rowCount === 0) { await client.query('ROLLBACK'); client.release(); return res.status(404).send('Report not found'); }
 
                 // update top-level fields if provided
@@ -6685,14 +6728,14 @@ app.post('/api/reports', async (req, res) => {
                 }
                 if (setParts.length > 0) {
                     params.push(reportId);
-                    const sql = `UPDATE dqai_activity_reports SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
+                    const sql = `UPDATE ${tables.ACTIVITY_REPORTS} SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`;
                     const updated = await client.query(sql, params);
                     if (updated.rowCount === 0) { await client.query('ROLLBACK'); client.release(); return res.status(500).send('Failed to update report'); }
                 }
 
                 // replace answers if provided
                 if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
-                    await client.query('DELETE FROM dqai_answers WHERE report_id = $1', [reportId]);
+                    await client.query(`DELETE FROM ${tables.ANSWERS} WHERE report_id = $1`, [reportId]);
                     const answersObj = payload.answers || {};
                     if (answersObj && typeof answersObj === 'object') {
                         for (const [qId, val] of Object.entries(answersObj)) {
@@ -6715,7 +6758,7 @@ app.post('/api/reports', async (req, res) => {
                                                 // store only the primitive value in answer_value (TEXT), keep grouping metadata in separate columns
                                                 const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
                                                 const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                                await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                                await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                             } catch (ie) { console.error('Failed to insert repeated answer during report POST-as-update for question', subQId, ie); }
                                         }
                                     }
@@ -6728,7 +6771,7 @@ app.post('/api/reports', async (req, res) => {
                                         score = (typeof val.score !== 'undefined') ? val.score : null;
                                     }
                                     const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                    await client.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                    await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                 }
                             } catch (ie) { console.error('Failed to insert answer during report POST-as-update for question', qId, ie); }
                         }
@@ -6739,21 +6782,21 @@ app.post('/api/reports', async (req, res) => {
                 if (Object.prototype.hasOwnProperty.call(payload, 'uploadedFiles')) {
                     try {
                         try {
-                            const colRes = await client.query("SELECT 1 FROM information_schema.columns WHERE table_name='dqai_uploaded_docs' AND column_name='report_id'");
-                            if (colRes.rowCount > 0) { await client.query('DELETE FROM dqai_uploaded_docs WHERE report_id = $1', [reportId]); }
-                            else { try { await client.query("DELETE FROM dqai_uploaded_docs WHERE (file_content->>'reportId') = $1", [String(reportId)]); } catch (e) { console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e); } }
+                            const colRes = await client.query("SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'");
+                            if (colRes.rowCount > 0) { await client.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE report_id = $1`, [reportId]); }
+                            else { try { await client.query("DELETE FROM ${tables.UPLOADED_DOCS} WHERE (file_content->>'reportId') = $1", [String(reportId)]); } catch (e) { console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e); } }
                         } catch (e) { console.warn('uploaded_docs schema check failed during report update delete step', e); }
                         const files = payload.uploadedFiles || [];
                         if (Array.isArray(files) && files.length > 0) {
                             for (const file of files) {
-                                try { const filename = file.name || file.filename || file.fileName || null; const content = file.content || file.data || file; await client.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)', [payload.activityId || payload.activity_id || existing.rows[0].activity_id, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, reportId, JSON.stringify(content), filename]); } catch (ie) { console.error('Failed to insert uploaded file during report POST-as-update', ie); }
+                                try { const filename = file.name || file.filename || file.fileName || null; const content = file.content || file.data || file; await client.query(`INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [payload.activityId || payload.activity_id || existing.rows[0].activity_id, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, reportId, JSON.stringify(content), filename]); } catch (ie) { console.error('Failed to insert uploaded file during report POST-as-update', ie); }
                             }
                         }
                     } catch (e) { console.error('Failed to replace uploaded files during report POST-as-update', e); await client.query('ROLLBACK'); client.release(); return res.status(500).send('Failed to update uploaded files'); }
                 }
 
                 await client.query('COMMIT');
-                const final = await pool.query('SELECT * FROM dqai_activity_reports WHERE id = $1', [reportId]);
+                const final = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
                 const r = final.rows[0];
                 client.release();
                 return res.json({ ...r, activityId: r.activity_id, userId: r.user_id, facilityId: r.facility_id, submissionDate: r.submission_date, reviewersReport: r.reviewers_report, overallScore: r.overall_score, reportedBy: r.reported_by });
@@ -6766,7 +6809,7 @@ app.post('/api/reports', async (req, res) => {
         }
         // Validate entity linking per activity response type
         try {
-            const actRes = await pool.query('SELECT response_type FROM dqai_activities WHERE id = $1', [activityId]);
+            const actRes = await pool.query(`SELECT response_type FROM ${tables.ACTIVITIES} WHERE id = $1`, [activityId]);
             if (actRes.rowCount === 0) return res.status(400).send('Invalid activityId');
             const respType = (actRes.rows[0].response_type || '').toString().toLowerCase();
             if (respType === 'facility' && !facilityId) return res.status(400).send('facilityId is required for this activity');
@@ -6780,7 +6823,7 @@ app.post('/api/reports', async (req, res) => {
         let reportBusinessId = null;
         if (req.session && req.session.userId) reportBusinessId = req.session.businessId || null;
         const result = await pool.query(
-            'INSERT INTO dqai_activity_reports (activity_id, user_id, facility_id, status, answers, business_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            `INSERT INTO ${tables.ACTIVITY_REPORTS} (activity_id, user_id, facility_id, status, answers, business_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
             [activityId, userId, facilityId, finalStatus, answers || null, reportBusinessId]
         );
         const report = result.rows[0];
@@ -6792,7 +6835,7 @@ app.post('/api/reports', async (req, res) => {
                     try {
                         const filename = file.name || file.filename || file.fileName || null;
                         const content = file.content || file.data || file; // expect JSON-able representation
-                        await pool.query('INSERT INTO dqai_uploaded_docs (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [activityId, facilityId, userId || null, req.session.userId || null, report.id, JSON.stringify(content), filename, reportBusinessId]);
+                        await pool.query(`INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [activityId, facilityId, userId || null, req.session.userId || null, report.id, JSON.stringify(content), filename, reportBusinessId]);
                     } catch (e) {
                         console.error('Failed to persist uploaded file', e);
                     }
@@ -6824,7 +6867,7 @@ app.post('/api/reports', async (req, res) => {
                                         }
                                             const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
                                             const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
+                                            await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
                                     } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
                                 }
                             }
@@ -6841,7 +6884,7 @@ app.post('/api/reports', async (req, res) => {
                                 score = (typeof val.score !== 'undefined') ? val.score : null;
                             }
                             const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                            await pool.query('INSERT INTO dqai_answers (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
+                            await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
                         }
                     } catch (e) {
                         console.error('Failed to insert answer for question', qId, e);
@@ -6901,7 +6944,7 @@ app.get('/api/public/metadata', (req, res) => {
             let allowedQuestionIds = null;
             if (activityId) {
                 try {
-                    const qres = await pool.query('SELECT id FROM dqai_questions WHERE activity_id = $1', [activityId]);
+                    const qres = await pool.query(`SELECT id FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [activityId]);
                     allowedQuestionIds = qres.rows.map(r => String(r.id));
                 } catch (e) { allowedQuestionIds = null; }
             }
@@ -6919,7 +6962,7 @@ app.get('/api/public/metadata', (req, res) => {
                 let idx = 2;
                 let where = `WHERE question_id = $1`;
                 if (activityId) { where += ` AND activity_id = $${idx++}`; params.push(activityId); }
-                const sql = `SELECT answer_value, facility_id FROM dqai_answers ${where} ORDER BY created_at DESC LIMIT 10000`;
+                const sql = `SELECT answer_value, facility_id FROM ${tables.ANSWERS} ${where} ORDER BY created_at DESC LIMIT 10000`;
                 const ares = await pool.query(sql, params);
                 const rows = ares.rows || [];
 
@@ -6963,25 +7006,25 @@ app.get('/api/public/metadata', (req, res) => {
     app.get('/api/public/facility_summary', async (req, res) => {
         try {
             // total facilities
-            const totalRes = await pool.query('SELECT COUNT(*)::int as cnt FROM dqai_facilities');
+            const totalRes = await pool.query(`SELECT COUNT(*)::int as cnt FROM ${tables.FACILITIES}`);
             const total = totalRes.rows && totalRes.rows[0] ? Number(totalRes.rows[0].cnt || 0) : 0;
 
             // contributors: distinct users from activity_reports.reported_by and answers.recorded_by/user_id
             const contribRes = await pool.query(`
                 SELECT COUNT(DISTINCT uid) as cnt FROM (
-                    SELECT reported_by as uid FROM dqai_activity_reports WHERE reported_by IS NOT NULL
+                    SELECT reported_by as uid FROM ${tables.ACTIVITY_REPORTS} WHERE reported_by IS NOT NULL
                     UNION
-                    SELECT user_id as uid FROM dqai_activity_reports WHERE user_id IS NOT NULL
+                    SELECT user_id as uid FROM ${tables.ACTIVITY_REPORTS} WHERE user_id IS NOT NULL
                     UNION
-                    SELECT recorded_by as uid FROM dqai_answers WHERE recorded_by IS NOT NULL
+                    SELECT recorded_by as uid FROM ${tables.ANSWERS} WHERE recorded_by IS NOT NULL
                     UNION
-                    SELECT user_id as uid FROM dqai_answers WHERE user_id IS NOT NULL
+                    SELECT user_id as uid FROM ${tables.ANSWERS} WHERE user_id IS NOT NULL
                 ) t
             `);
             const contributors = contribRes.rows && contribRes.rows[0] ? Number(contribRes.rows[0].cnt || 0) : 0;
 
-            // tiers: derive from dqai_facilities.category and map to care_levels where possible
-            const tierRows = await pool.query('SELECT category, COUNT(*)::int as cnt FROM dqai_facilities GROUP BY category');
+            // tiers: derive from ${tables.FACILITIES}.category and map to care_levels where possible
+            const tierRows = await pool.query(`SELECT category, COUNT(*)::int as cnt FROM ${tables.FACILITIES} GROUP BY category`);
             const tiers = [];
             let otherCount = 0;
             try {
@@ -7005,8 +7048,8 @@ app.get('/api/public/metadata', (req, res) => {
             }
             if (otherCount > 0) tiers.push({ name: 'Other', count: otherCount, percent: total > 0 ? Math.round((otherCount / total) * 100) : 0 });
 
-            // functional status: based on latest dqai_answers for question_id = 'q_energy_resilience'
-            const bandsSql = `SELECT DISTINCT ON (facility_id) facility_id, answer_value FROM dqai_answers WHERE question_id = $1 AND answer_value IS NOT NULL ORDER BY facility_id, created_at DESC`;
+            // functional status: based on latest ${tables.ANSWERS} for question_id = 'q_energy_resilience'
+            const bandsSql = `SELECT DISTINCT ON (facility_id) facility_id, answer_value FROM ${tables.ANSWERS} WHERE question_id = $1 AND answer_value IS NOT NULL ORDER BY facility_id, created_at DESC`;
             const bres = await pool.query(bandsSql, ['q_energy_resilience']);
             const funcCounts = { fully: 0, partial: 0, none: 0 };
             for (const r of bres.rows) {

@@ -79,6 +79,10 @@ const SuperAdminConsole: React.FC = () => {
           <UserManagementTab />
         )}
 
+        {activeTab === 'plans' && (
+          <PlansTab />
+        )}
+
         {activeTab === 'landing-page' && (
           <LandingPageConfigTab />
         )}
@@ -611,6 +615,437 @@ const FeedbackTab: React.FC = () => {
               <button className="text-blue-600 hover:underline text-sm">View Details</button>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * Plans Tab - Manage subscription plans and assignments
+ */
+const PlansTab: React.FC = () => {
+  const [plans, setPlans] = React.useState<any[]>([]);
+  const [assignments, setAssignments] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [planTab, setPlanTab] = React.useState<'plans' | 'assignments'>('plans');
+  const [showNewPlanModal, setShowNewPlanModal] = React.useState(false);
+  const [showAssignmentModal, setShowAssignmentModal] = React.useState(false);
+  const [editingPlan, setEditingPlan] = React.useState<any>(null);
+  const [businesses, setBusinesses] = React.useState<any[]>([]);
+  
+  const [newPlan, setNewPlan] = React.useState({
+    name: '',
+    description: '',
+    max_programs_per_business: 10,
+    max_activities_per_program: 50,
+    max_users: null,
+    price_monthly: 0,
+    features: {}
+  });
+
+  const [newAssignment, setNewAssignment] = React.useState({
+    business_id: '',
+    plan_id: '',
+    expires_at: ''
+  });
+
+  React.useEffect(() => {
+    loadPlans();
+    loadAssignments();
+    loadBusinesses();
+  }, []);
+
+  const loadPlans = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/super-admin/plans');
+      if (!response.ok) throw new Error('Failed to load plans');
+      const data = await response.json();
+      setPlans(data);
+    } catch (error) {
+      console.error('Load plans error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadAssignments = async () => {
+    try {
+      const response = await fetch('/api/super-admin/plan-assignments');
+      if (!response.ok) throw new Error('Failed to load assignments');
+      const data = await response.json();
+      setAssignments(data);
+    } catch (error) {
+      console.error('Load assignments error:', error);
+    }
+  };
+
+  const loadBusinesses = async () => {
+    try {
+      const response = await fetch('/api/businesses');
+      if (!response.ok) throw new Error('Failed to load businesses');
+      const data = await response.json();
+      setBusinesses(data);
+    } catch (error) {
+      console.error('Load businesses error:', error);
+    }
+  };
+
+  const handleCreatePlan = async () => {
+    try {
+      const response = await fetch('/api/super-admin/plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPlan)
+      });
+      if (!response.ok) throw new Error('Failed to create plan');
+      await loadPlans();
+      setShowNewPlanModal(false);
+      setNewPlan({
+        name: '',
+        description: '',
+        max_programs_per_business: 10,
+        max_activities_per_program: 50,
+        max_users: null,
+        price_monthly: 0,
+        features: {}
+      });
+      alert('Plan created successfully!');
+    } catch (error) {
+      alert('Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
+  const handleCreateAssignment = async () => {
+    try {
+      const response = await fetch('/api/super-admin/plan-assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAssignment)
+      });
+      if (!response.ok) throw new Error('Failed to create assignment');
+      await loadAssignments();
+      setShowAssignmentModal(false);
+      setNewAssignment({ business_id: '', plan_id: '', expires_at: '' });
+      alert('Plan assigned successfully!');
+    } catch (error) {
+      alert('Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
+  const handleDeletePlan = async (planId: number) => {
+    if (!confirm('Are you sure you want to delete this plan?')) return;
+    try {
+      const response = await fetch(`/api/super-admin/plans/${planId}`, {
+        method: 'DELETE'
+      });
+      if (!response.ok) throw new Error('Failed to delete plan');
+      await loadPlans();
+      alert('Plan deleted successfully!');
+    } catch (error) {
+      alert('Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Tabs */}
+      <div className="flex space-x-4 border-b border-gray-200">
+        <button
+          onClick={() => setPlanTab('plans')}
+          className={`pb-4 px-1 font-medium ${
+            planTab === 'plans'
+              ? 'border-b-2 border-blue-600 text-blue-600'
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          📋 Plans ({plans.length})
+        </button>
+        <button
+          onClick={() => setPlanTab('assignments')}
+          className={`pb-4 px-1 font-medium ${
+            planTab === 'assignments'
+              ? 'border-b-2 border-blue-600 text-blue-600'
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          🔗 Assignments ({assignments.length})
+        </button>
+      </div>
+
+      {/* Plans Tab */}
+      {planTab === 'plans' && (
+        <div>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-semibold text-gray-800">Subscription Plans</h3>
+            <button
+              onClick={() => setShowNewPlanModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              + New Plan
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading plans...</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {plans.map(plan => (
+                <div key={plan.id} className="bg-white p-6 rounded-lg border border-gray-200 hover:shadow-lg transition-shadow">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h4 className="text-lg font-bold text-gray-800">{plan.name}</h4>
+                      <p className="text-gray-600 text-sm">{plan.description}</p>
+                    </div>
+                    <span className={`px-3 py-1 rounded text-xs font-semibold ${
+                      plan.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {plan.status}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 mb-4 text-sm">
+                    <p className="text-gray-700"><strong>Programs/Org:</strong> {plan.max_programs_per_business}</p>
+                    <p className="text-gray-700"><strong>Activities/Program:</strong> {plan.max_activities_per_program}</p>
+                    <p className="text-gray-700"><strong>Max Users:</strong> {plan.max_users || 'Unlimited'}</p>
+                    {plan.price_monthly && (
+                      <p className="text-gray-700"><strong>Price:</strong> ${plan.price_monthly}/month</p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingPlan(plan);
+                        setShowNewPlanModal(true);
+                      }}
+                      className="flex-1 px-3 py-2 text-sm bg-blue-100 text-blue-600 rounded hover:bg-blue-200"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeletePlan(plan.id)}
+                      className="flex-1 px-3 py-2 text-sm bg-red-100 text-red-600 rounded hover:bg-red-200"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Assignments Tab */}
+      {planTab === 'assignments' && (
+        <div>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-semibold text-gray-800">Plan Assignments</h3>
+            <button
+              onClick={() => setShowAssignmentModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              + Assign Plan
+            </button>
+          </div>
+
+          {assignments.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No assignments yet</div>
+          ) : (
+            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Business</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Plan</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Limits</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Expires</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assignments.map(assign => (
+                    <tr key={assign.id} className="border-b border-gray-200 hover:bg-gray-50">
+                      <td className="px-6 py-4 text-gray-800">{assign.business_name}</td>
+                      <td className="px-6 py-4 text-gray-800">{assign.plan_name}</td>
+                      <td className="px-6 py-4 text-gray-600 text-sm">
+                        {assign.max_programs_per_business} programs, {assign.max_activities_per_program} activities
+                      </td>
+                      <td className="px-6 py-4 text-gray-600">
+                        {assign.expires_at ? new Date(assign.expires_at).toLocaleDateString() : 'Never'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`px-3 py-1 rounded text-xs font-semibold ${
+                          assign.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {assign.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* New Plan Modal */}
+      {showNewPlanModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 space-y-4">
+            <h3 className="text-xl font-bold text-gray-800">{editingPlan ? 'Edit Plan' : 'Create New Plan'}</h3>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Plan Name</label>
+              <input
+                type="text"
+                value={newPlan.name}
+                onChange={e => setNewPlan({ ...newPlan, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., Professional"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={newPlan.description}
+                onChange={e => setNewPlan({ ...newPlan, description: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={2}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Programs</label>
+                <input
+                  type="number"
+                  value={newPlan.max_programs_per_business}
+                  onChange={e => setNewPlan({ ...newPlan, max_programs_per_business: Number(e.target.value) })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Activities</label>
+                <input
+                  type="number"
+                  value={newPlan.max_activities_per_program}
+                  onChange={e => setNewPlan({ ...newPlan, max_activities_per_program: Number(e.target.value) })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Users</label>
+                <input
+                  type="number"
+                  value={newPlan.max_users || ''}
+                  onChange={e => setNewPlan({ ...newPlan, max_users: e.target.value ? Number(e.target.value) : null })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  placeholder="Leave empty for unlimited"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Price/Month ($)</label>
+                <input
+                  type="number"
+                  value={newPlan.price_monthly}
+                  onChange={e => setNewPlan({ ...newPlan, price_monthly: Number(e.target.value) })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  step="0.01"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-4">
+              <button
+                onClick={() => {
+                  setShowNewPlanModal(false);
+                  setEditingPlan(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreatePlan}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                {editingPlan ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assignment Modal */}
+      {showAssignmentModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 space-y-4">
+            <h3 className="text-xl font-bold text-gray-800">Assign Plan to Business</h3>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Business</label>
+              <select
+                value={newAssignment.business_id}
+                onChange={e => setNewAssignment({ ...newAssignment, business_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select a business...</option>
+                {businesses.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Plan</label>
+              <select
+                value={newAssignment.plan_id}
+                onChange={e => setNewAssignment({ ...newAssignment, plan_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select a plan...</option>
+                {plans.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Expires (Optional)</label>
+              <input
+                type="date"
+                value={newAssignment.expires_at}
+                onChange={e => setNewAssignment({ ...newAssignment, expires_at: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-4">
+              <button
+                onClick={() => {
+                  setShowAssignmentModal(false);
+                  setNewAssignment({ business_id: '', plan_id: '', expires_at: '' });
+                }}
+                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateAssignment}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Assign
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

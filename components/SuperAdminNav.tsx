@@ -14,6 +14,7 @@ const SuperAdminNav: React.FC<SuperAdminNavProps> = ({ title, subtitle }) => {
     { id: 'overview', label: 'Overview', icon: '📊', path: '/super-admin' },
     { id: 'businesses', label: 'Businesses', icon: '🏢', path: '/super-admin/businesses' },
     { id: 'users', label: 'User Management', icon: '👥', path: '/super-admin/users' },
+    { id: 'plans', label: 'Plans', icon: '🎯', path: '/super-admin/plans' },
     { id: 'landing-page', label: 'Landing Page', icon: '🌐', path: '/super-admin/landing-page' },
     { id: 'feedback', label: 'Feedback', icon: '💬', path: '/super-admin/feedback' },
   ];
