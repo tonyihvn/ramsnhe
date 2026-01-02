@@ -40,7 +40,7 @@ const SuperAdminNav: React.FC<SuperAdminNavProps> = ({ title, subtitle }) => {
             {subtitle && <p className="text-blue-100 mt-2">{subtitle}</p>}
           </div>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/dashboard')}
             className="px-4 py-2 bg-white text-blue-600 font-semibold rounded-lg hover:bg-blue-50 transition-colors flex items-center gap-2"
           >
             ← Back to App

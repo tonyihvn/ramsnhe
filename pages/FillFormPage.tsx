@@ -354,6 +354,16 @@ const SearchableSelect: React.FC<{
 import DataTable from '../components/ui/DataTable';
 
 const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (updatedFile: UploadedFile) => void }) => {
+    // If this is a raw file (not parsed), just show file info
+    if ((file as any).isRawFile) {
+        return (
+            <div>
+                <h4 className="font-semibold text-lg mb-2">{file.fileName}</h4>
+                <p className="text-sm text-gray-600">File uploaded as-is (not parsed). File will be available for download in the Uploaded Files section.</p>
+            </div>
+        );
+    }
+    
     if (!file.data || file.data.length === 0) {
         return <p className="text-gray-500">No data to display for {file.fileName}.</p>;
     }
@@ -794,39 +804,57 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             const reader = new FileReader();
             // also read a dataURL of the original file so we can upload raw file if requested
             const readerDataUrl = new FileReader();
-            reader.onload = async (evt) => {
-                try {
-                    const buffer = evt.target?.result;
-                    const workbook = new ExcelJS.Workbook();
-                    await workbook.xlsx.load(buffer as ArrayBuffer);
-                    const worksheet = workbook.worksheets[0];
-                    const data: Record<string, any>[] = [];
-                    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-                        if (rowNumber === 1) return; // skip header
-                        const rowData: Record<string, any> = {};
-                        worksheet.getRow(1).eachCell((cell, colNumber) => {
-                            rowData[cell.value as string] = row.getCell(colNumber).value;
+            
+            if (uploadToFolder) {
+                // If uploading to folder (not parsing), just read as data URL
+                readerDataUrl.onload = (ev2) => {
+                    const dataUrl = ev2.target?.result as string;
+                    setUploadedFiles(prev => [...prev, {
+                        id: `file-${Date.now()}-${file.name}`,
+                        fileName: file.name,
+                        data: [], // no parsed data for raw files
+                        rawDataUrl: dataUrl,
+                        mimeType: file.type || undefined,
+                        isRawFile: true // flag to indicate this is a raw file, not parsed
+                    }]);
+                };
+                try { readerDataUrl.readAsDataURL(file); } catch (e) { /* ignore */ }
+            } else {
+                // Parse Excel files into tables
+                reader.onload = async (evt) => {
+                    try {
+                        const buffer = evt.target?.result;
+                        const workbook = new ExcelJS.Workbook();
+                        await workbook.xlsx.load(buffer as ArrayBuffer);
+                        const worksheet = workbook.worksheets[0];
+                        const data: Record<string, any>[] = [];
+                        worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+                            if (rowNumber === 1) return; // skip header
+                            const rowData: Record<string, any> = {};
+                            worksheet.getRow(1).eachCell((cell, colNumber) => {
+                                rowData[cell.value as string] = row.getCell(colNumber).value;
+                            });
+                            data.push(rowData);
                         });
-                        data.push(rowData);
-                    });
-                    // read dataURL of original file in parallel so we can optionally upload raw file later
-                    readerDataUrl.onload = (ev2) => {
-                        const dataUrl = ev2.target?.result as string;
-                        setUploadedFiles(prev => [...prev, {
-                            id: `file-${Date.now()}-${file.name}`,
-                            fileName: file.name,
-                            data: data,
-                            rawDataUrl: dataUrl,
-                            mimeType: file.type || undefined
-                        }]);
-                    };
-                    try { readerDataUrl.readAsDataURL(file); } catch (e) { /* ignore */ }
-                } catch (err) {
-                    console.error("Error parsing file", err);
-                    alert(`Could not parse ${file.name}. Please ensure it is a valid Excel file.`);
-                }
-            };
-            reader.readAsArrayBuffer(file);
+                        // read dataURL of original file in parallel so we can optionally upload raw file later
+                        readerDataUrl.onload = (ev2) => {
+                            const dataUrl = ev2.target?.result as string;
+                            setUploadedFiles(prev => [...prev, {
+                                id: `file-${Date.now()}-${file.name}`,
+                                fileName: file.name,
+                                data: data,
+                                rawDataUrl: dataUrl,
+                                mimeType: file.type || undefined
+                            }]);
+                        };
+                        try { readerDataUrl.readAsDataURL(file); } catch (e) { /* ignore */ }
+                    } catch (err) {
+                        console.error("Error parsing file", err);
+                        alert(`Could not parse ${file.name}. Please ensure it is a valid Excel file.`);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
         });
     };
 
@@ -1111,11 +1139,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 <div className="space-y-1 text-center">
                                     <div className="flex text-sm text-gray-600 justify-center">
                                         <label htmlFor="file-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary-500">
-                                            <span>Upload CSV or Excel</span>
-                                            <input id="file-upload" name="file-upload" type="file" className="sr-only" multiple accept=".csv, .xlsx, .xls" onChange={handleFileUpload} />
+                                            <span>{uploadToFolder ? 'Upload Files' : 'Upload CSV or Excel'}</span>
+                                            <input id="file-upload" name="file-upload" type="file" className="sr-only" multiple accept={uploadToFolder ? '*' : '.csv, .xlsx, .xls'} onChange={handleFileUpload} />
                                         </label>
                                     </div>
-                                    <p className="text-xs text-gray-500">Supports .xlsx, .xls, .csv</p>
+                                    <p className="text-xs text-gray-500">{uploadToFolder ? 'Supports all file formats' : 'Supports .xlsx, .xls, .csv'}</p>
                                 </div>
                             </div>
                         </div>

@@ -38,6 +38,8 @@ const LoginPage: React.FC = () => {
   const [regPassword, setRegPassword] = useState('');
   const [regOrg, setRegOrg] = useState('');
   const [regPhone, setRegPhone] = useState('');
+  const [allowNewRegistrations, setAllowNewRegistrations] = useState(true);
+  const [lockedOrgId, setLockedOrgId] = useState<number | null>(null);
   const [regLoading, setRegLoading] = useState(false);
   const [regMessage, setRegMessage] = useState<string | null>(null);
   const [regError, setRegError] = useState<string | null>(null);
@@ -108,6 +110,25 @@ const LoginPage: React.FC = () => {
     setRegLoading(false);
   };
 
+  // Fetch landing page config to check if registrations are allowed
+  React.useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch('/api/landing-page-config');
+        if (response.ok) {
+          const data = await response.json();
+          const config = data.config || data;
+          setAllowNewRegistrations(config.allowNewRegistrations !== false);
+          setLockedOrgId(config.lockedOrganizationId || config.locked_organization_id || null);
+        }
+      } catch (e) {
+        // Default to allowing registrations if fetch fails
+        setAllowNewRegistrations(true);
+      }
+    };
+    fetchConfig();
+  }, []);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: settings?.backgroundImage ? `url(${settings.backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
       <div className="max-w-md w-full space-y-8 bg-white bg-opacity-90 p-10 rounded-lg shadow-md" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.15)', backdropFilter: 'blur(4px)' }}>
@@ -142,35 +163,41 @@ const LoginPage: React.FC = () => {
           </div>
         </form>
         <div className="flex items-center justify-between mt-2">
-          <button className="text-sm text-primary-600 hover:underline" onClick={() => setRegOpen(true)}>Register</button>
+          {allowNewRegistrations && (
+            <button className="text-sm text-primary-600 hover:underline" onClick={() => setRegOpen(true)}>Register</button>
+          )}
           <a className="text-sm text-primary-600 hover:underline" href="#/request-reset">Forgot password?</a>
         </div>
 
         <Modal isOpen={regOpen} onClose={() => setRegOpen(false)} title="Register">
           <div className="space-y-3">
-            {regMessage ? <div className="p-2 text-green-700 bg-green-100 rounded">{regMessage}</div> : null}
-            {regError ? <div className="p-2 text-red-700 bg-red-100 rounded">{regError}</div> : null}
-            <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
-            <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
-            <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
-            <input className="p-2 border rounded w-full" placeholder="Organization name (optional)" value={regOrg} onChange={e => setRegOrg(e.target.value)} disabled={!!regMessage} />
-            <input className="p-2 border rounded w-full" placeholder="Phone number (optional)" value={regPhone} onChange={e => setRegPhone(e.target.value)} disabled={!!regMessage} />
-            <input className="p-2 border rounded w-full" placeholder="Password" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
+            {!allowNewRegistrations ? (
+              <div className="p-3 text-blue-700 bg-blue-100 rounded">
+                <p className="font-medium">New organization registration is currently disabled.</p>
+                <p className="text-sm mt-1">If you belong to an existing organization, please contact your organization administrator to add you as a user.</p>
+              </div>
+            ) : (
+              <>
+                {regMessage ? <div className="p-2 text-green-700 bg-green-100 rounded">{regMessage}</div> : null}
+                {regError ? <div className="p-2 text-red-700 bg-red-100 rounded">{regError}</div> : null}
+                <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
+                {!lockedOrgId ? (
+                  <input className="p-2 border rounded w-full" placeholder="Organization name (optional)" value={regOrg} onChange={e => setRegOrg(e.target.value)} disabled={!!regMessage} />
+                ) : (
+                  <div className="p-2 text-sm text-gray-700 bg-gray-50 rounded">Registration will be assigned to the configured organization.</div>
+                )}
+                <input className="p-2 border rounded w-full" placeholder="Phone number (optional)" value={regPhone} onChange={e => setRegPhone(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full" placeholder="Password" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
+              </>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setRegOpen(false)}>Cancel</Button>
               <Button onClick={doRegister} disabled={regLoading || !!regMessage}>{regLoading ? 'Registering...' : 'Register'}</Button>
             </div>
           </div>
         </Modal>
-
-        <div className="mt-4 text-center">
-          <div className="text-sm text-gray-600 mb-2">Or try a demo account</div>
-          <div className="flex gap-2 justify-center">
-            <Button onClick={async () => { await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'Admin' }) }); window.location.href = '#/dashboard'; }}>Demo Admin</Button>
-            <Button onClick={async () => { await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'Public' }) }); window.location.href = '#/dashboard'; }}>Demo User</Button>
-          </div>
-        </div>
-
 
       </div>
     </div>

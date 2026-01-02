@@ -306,8 +306,10 @@ const ReportBuilderPage: React.FC = () => {
       const answersByRowIndex: Record<string, Record<string, any>> = {};
       for (const ans of groupAnswers) {
         const qid = String(ans.question_id || ans.qid || '');
-        // answer_row_index is a top-level column
-        const rowIdx = ans.answer_row_index !== null && ans.answer_row_index !== undefined ? String(ans.answer_row_index) : 'null';
+        // Extract answer_row_index from JSONB answer_value (it's nested, not top-level)
+        let answerVal = ans.answer_value || {};
+        let answerObj = typeof answerVal === 'string' ? JSON.parse(answerVal) : answerVal;
+        const rowIdx = answerObj && answerObj.answer_row_index !== null && answerObj.answer_row_index !== undefined ? String(answerObj.answer_row_index) : 'null';
         
         if (!answersByRowIndex[rowIdx]) {
           answersByRowIndex[rowIdx] = {};
@@ -1170,30 +1172,10 @@ const ReportBuilderPage: React.FC = () => {
                     const questionsInGroup = questionsList.filter(q => (q.question_group || q.questionGroup) === group);
                     return (
                       <div key={group} draggable onDragStart={e => {
-                        // Generate table with actual data from answersList
-                        const groupAnswers = (answersList || []).filter(a => {
-                          const qid = String(a.question_id || a.qid || '');
-                          return questionsInGroup.some(q => String(q.id || q.qid) === qid);
-                        });
-
+                        // Show only headers on canvas - rows will be generated dynamically when report is loaded
                         let tableHtml = '';
-                        if (groupAnswers.length > 0 && questionsInGroup.length > 0) {
-                          // Group answers by answer_row_index (top-level column)
-                          const answersByRowIndex: Record<string, Record<string, any>> = {};
-                          for (const ans of groupAnswers) {
-                            const qid = String(ans.question_id || ans.qid || '');
-                            // answer_row_index is a top-level column
-                            const rowIdx = ans.answer_row_index !== null && ans.answer_row_index !== undefined ? String(ans.answer_row_index) : 'null';
-                            if (!answersByRowIndex[rowIdx]) answersByRowIndex[rowIdx] = {};
-                            answersByRowIndex[rowIdx][qid] = ans;
-                          }
-
-                          const rowIndices = Object.keys(answersByRowIndex).sort((a, b) => {
-                            if (a === 'null') return 1;
-                            if (b === 'null') return -1;
-                            return Number(a) - Number(b);
-                          });
-
+                        if (questionsInGroup.length > 0) {
+                          // Build table with headers only, no data rows
                           tableHtml = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-qgroup-data"><thead><tr style="background:#c8e6c9;">`;
                           for (const q of questionsInGroup) {
                             const qid = String(q.id || q.qid);
@@ -1201,52 +1183,9 @@ const ReportBuilderPage: React.FC = () => {
                             tableHtml += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;cursor:pointer;" data-col-qid="${qid}" contenteditable="true" title="Click to edit header">${qLabel}</th>`;
                           }
                           tableHtml += `</tr></thead><tbody>`;
-                          for (const rowIdx of rowIndices) {
-                            const rowAnswers = answersByRowIndex[rowIdx];
-                            tableHtml += `<tr>`;
-                            for (const q of questionsInGroup) {
-                              const qid = String(q.id || q.qid);
-                              const ans = rowAnswers[qid];
-                              let displayValue = '-';
-                              if (ans) {
-                                try {
-                                  // answer_value is TEXT, parse it if it's JSON string
-                                  let ansObj = ans.answer_value;
-                                  if (typeof ansObj === 'string') {
-                                    try {
-                                      ansObj = JSON.parse(ansObj);
-                                    } catch (e) {
-                                      // If it's not valid JSON, just use the string directly
-                                      displayValue = ansObj;
-                                      ansObj = null;
-                                    }
-                                  }
-                                  if (ansObj) {
-                                    // Try to get actual answer value from standard fields
-                                    displayValue = ansObj.answer || ansObj.value || ansObj.text || JSON.stringify(ansObj);
-                                  }
-                                } catch (e) {
-                                  displayValue = String(ans.answer_value || '-');
-                                }
-                              }
-                              tableHtml += `<td style="border:1px solid #ddd;padding:8px;" data-col-qid="${qid}">${displayValue}</td>`;
-                            }
-                            tableHtml += `</tr>`;
-                          }
+                          // Add a single placeholder row to show table structure
+                          tableHtml += `<tr><td colspan="${questionsInGroup.length}" style="border:1px solid #ddd;padding:8px;color:#999;font-style:italic;text-align:center;">[Data rows will appear when report is loaded]</td></tr>`;
                           tableHtml += `</tbody></table>`;
-                        } else if (questionsInGroup.length > 0) {
-                          // Show headers even if no data yet, so user can preview structure
-                          tableHtml = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-qgroup-data"><thead><tr style="background:#c8e6c9;">`;
-                          for (const q of questionsInGroup) {
-                            const qid = String(q.id || q.qid);
-                            const qLabel = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Q${q.id}`);
-                            tableHtml += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;cursor:pointer;" data-col-qid="${qid}" contenteditable="true" title="Click to edit header">${qLabel}</th>`;
-                          }
-                          tableHtml += `</tr></thead><tbody><tr>`;
-                          for (const q of questionsInGroup) {
-                            tableHtml += `<td style="border:1px solid #ddd;padding:8px;color:#999;font-style:italic;">[No data]</td>`;
-                          }
-                          tableHtml += `</tr></tbody></table>`;
                         } else {
                           tableHtml = `<div style="padding:12px;color:#999;font-size:12px;text-align:center;border:2px dashed #ccc;margin-top:8px;">[Group has no questions]</div>`;
                         }

@@ -477,7 +477,7 @@ const ActivityDashboardPage: React.FC = () => {
       </Card>
 
       <Card>
-        <h2 className="text-lg font-semibold mb-2">Uploaded Excel Files</h2>
+        <h2 className="text-lg font-semibold mb-2">Uploaded Files</h2>
         {uploadedDocs.length === 0 && <div className="text-sm text-gray-500">No uploaded files.</div>}
         {uploadedDocs.map((d: any) => (
           <div key={d.id} className="mb-4">

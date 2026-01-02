@@ -23,6 +23,7 @@ import IndicatorsPage from './pages/IndicatorsPage';
 import RolePermissionsPage from './pages/RolePermissionsPage';
 import LoginPage from './pages/LoginPage';
 import LandingPage from './pages/LandingPage';
+import CustomPage from './pages/CustomPage';
 import SettingsPage from './pages/SettingsPage';
 import RequestPasswordPage from './pages/RequestPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
@@ -38,7 +39,6 @@ import SuperAdminBusinesses from './pages/SuperAdminBusinesses';
 import SuperAdminFeedback from './pages/SuperAdminFeedback';
 import PaymentApprovalPage from './pages/PaymentApprovalPage';
 import AccountApprovalPage from './pages/AccountApprovalPage';
-import LandingPageDesignerPage from './pages/LandingPageDesignerPage';
 import { DataProvider, useMockData } from './hooks/useMockData';
 import { ThemeProvider } from './hooks/useTheme';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -126,7 +126,9 @@ const AppRoutes = () => {
       <Route path="/super-admin/feedback" element={<SuperAdminRoute><SuperAdminFeedback /></SuperAdminRoute>} />
       <Route path="/super-admin/payment-approvals" element={<SuperAdminRoute><Layout><PaymentApprovalPage /></Layout></SuperAdminRoute>} />
       <Route path="/super-admin/account-approvals" element={<SuperAdminRoute><Layout><AccountApprovalPage /></Layout></SuperAdminRoute>} />
-      <Route path="/super-admin/landing-page-designer" element={<SuperAdminRoute><Layout><LandingPageDesignerPage /></Layout></SuperAdminRoute>} />
+
+      {/* Dedicated custom page route for guest-accessible pages */}
+      <Route path="/page/:slug" element={<CustomPage />} />
 
       <Route path="/" element={<LandingPage />} />
 
@@ -137,6 +139,22 @@ const AppRoutes = () => {
 
 const App: React.FC = () => {
   // Materialize removed: no longer needed
+  useEffect(() => {
+    const loadTitle = async () => {
+      try {
+        const resp = await fetch('/api/landing-page-config');
+        if (!resp.ok) return;
+        const j = await resp.json();
+        const cfg = j.config || j;
+        const name = cfg?.appName || cfg?.app_name || (cfg?.logoText) || 'OneApp';
+        if (name) document.title = name;
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadTitle();
+  }, []);
+
   return (
     <DataProvider>
       <ErrorBoundary>

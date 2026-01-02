@@ -237,6 +237,37 @@ const buildsRoot = path.join(process.cwd(), 'public', 'builds');
 if (!fs.existsSync(buildsRoot)) fs.mkdirSync(buildsRoot, { recursive: true });
 app.use('/builds', express.static(buildsRoot));
 
+// Image upload endpoint
+app.post('/api/upload-image', async (req, res) => {
+    try {
+        const { file, filename } = req.body;
+        
+        if (!file || !filename) {
+            return res.status(400).json({ error: 'Missing file or filename' });
+        }
+
+        // Remove data:image/... prefix if present
+        let base64Data = file;
+        if (file.includes(',')) {
+            base64Data = file.split(',')[1];
+        }
+
+        // Sanitize filename
+        const safeName = `${Date.now()}_${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const filepath = path.join(uploadsRoot, safeName);
+
+        // Decode and save file
+        const buffer = Buffer.from(base64Data, 'base64');
+        fs.writeFileSync(filepath, buffer);
+
+        // Return public URL
+        const url = `/uploads/${safeName}`;
+        res.json({ url, filename: safeName });
+    } catch (error) {
+        console.error('Image upload error:', error);
+        res.status(500).json({ error: 'Failed to upload image: ' + error.message });
+    }
+});
 
 
 // LLM SQL generation endpoint (provider dispatch + fallback)
@@ -1844,6 +1875,10 @@ async function initDb() {
         try {
             await pool.query(`ALTER TABLE dqai_settings ADD PRIMARY KEY (key, business_id)`);
         } catch (e) { /* ignore if already exists */ }
+        // Ensure a unique index exists so ON CONFLICT (key, business_id) works even if primary key couldn't be set
+        try {
+            await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_dqai_settings_key_business ON dqai_settings (key, business_id)`);
+        } catch (e) { /* ignore */ }
         await pool.query(`CREATE TABLE IF NOT EXISTS dqai_llm_providers (
             id SERIAL PRIMARY KEY,
             provider_id TEXT,
@@ -2030,6 +2065,35 @@ async function initDb() {
         try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title TEXT`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS footer_links JSONB`); } catch (e) { /* ignore */ }
+        // Add font styling columns for all sections
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_title_font_size TEXT DEFAULT '48px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_subtitle_font_size TEXT DEFAULT '20px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_subtitle_font_size TEXT DEFAULT '18px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS features_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS carousel_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_title_font_size TEXT DEFAULT '36px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_title_font_weight TEXT DEFAULT '700'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_subtitle_font_size TEXT DEFAULT '18px'`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS cta_subtitle_font_weight TEXT DEFAULT '400'`); } catch (e) { /* ignore */ }
+        // New columns for extended landing page features
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS app_name TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS nav_background_color TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS nav_text_color TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS pricing_items JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS pricing_visible BOOLEAN DEFAULT true`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS pricing_currency TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS custom_pages JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS hero_featured_images JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD COLUMN IF NOT EXISTS locked_organization_id INTEGER`); } catch (e) { /* ignore */ }
+        // Remove foreign key constraint on business_id (not needed for universal config)
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config DROP CONSTRAINT IF EXISTS dqai_landing_page_config_business_id_fkey`); } catch (e) { /* ignore */ }
+        // Ensure unique constraint on business_id exists (for ON CONFLICT clause)
+        try { await pool.query(`ALTER TABLE dqai_landing_page_config ADD CONSTRAINT unique_business_id UNIQUE(business_id)`); } catch (e) { /* ignore - may already exist */ }
 
         // Create dqai_form_schemas table for custom form field definitions
         try {
@@ -4393,7 +4457,18 @@ app.post('/auth/register', async (req, res) => {
         // create business/organization record if organization details provided
         let businessId = null;
         try {
-            if (organizationName) {
+            // Check if landing page config locks registration to a single organization
+            try {
+                const lockRes = await pool.query('SELECT locked_organization_id FROM dqai_landing_page_config WHERE business_id = $1', [0]);
+                if (lockRes.rows && lockRes.rows[0] && lockRes.rows[0].locked_organization_id) {
+                    businessId = lockRes.rows[0].locked_organization_id;
+                }
+            } catch (innerE) {
+                console.warn('Failed to check locked organization for registration', innerE && innerE.message ? innerE.message : innerE);
+            }
+
+            // Only create a new business if there is no locked organization and an organizationName was provided
+            if (!businessId && organizationName) {
                 const br = await pool.query('INSERT INTO dqai_businesses (name, phone) VALUES ($1, $2) RETURNING id', [organizationName, phoneNumber || null]);
                 businessId = br.rows[0] ? br.rows[0].id : null;
             }

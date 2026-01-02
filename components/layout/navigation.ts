@@ -23,7 +23,6 @@ export const navigationStatic: NavMenuItem[] = [
   { key: 'super_admin_landing', page_key: '/super-admin/landing-page', defaultName: 'Landing Page Config', href: '/super-admin/landing-page', icon: DocumentTextIcon, superAdminOnly: true, group: 'Super Admin' },
   { key: 'super_admin_payment_approvals', page_key: '/super-admin/payment-approvals', defaultName: 'Payment Approvals', href: '/super-admin/payment-approvals', icon: CheckIcon, superAdminOnly: true, group: 'Super Admin' },
   { key: 'super_admin_account_approvals', page_key: '/super-admin/account-approvals', defaultName: 'Account Approvals', href: '/super-admin/account-approvals', icon: ClipboardIcon, superAdminOnly: true, group: 'Super Admin' },
-  { key: 'super_admin_landing_designer', page_key: '/super-admin/landing-page-designer', defaultName: 'Landing Page Designer', href: '/super-admin/landing-page-designer', icon: DocumentTextIcon, superAdminOnly: true, group: 'Super Admin' },
   
   // Data & Analytics
   { key: 'dashboard', page_key: '/dashboard', defaultName: 'Dashboard', href: '/dashboard', icon: ChartPieIcon, group: 'Data & Analytics' },

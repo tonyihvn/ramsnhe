@@ -313,12 +313,34 @@ async function createDefaultLandingPageConfig(pool) {
                     favicon_url TEXT,
                     footer_text TEXT,
                     company_name TEXT,
+                    allow_new_registrations BOOLEAN DEFAULT TRUE,
                     created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW()
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(business_id)
                 )
             `);
         } catch (e) {
             // Table might already exist, ignore
+        }
+        
+        // If table already exists without the unique constraint, add it now
+        try {
+            await pool.query(`
+                ALTER TABLE dqai_landing_page_config
+                ADD CONSTRAINT unique_business_id UNIQUE(business_id)
+            `);
+        } catch (e) {
+            // Constraint might already exist, ignore
+        }
+
+        // Add allow_new_registrations column if it doesn't exist
+        try {
+            await pool.query(`
+                ALTER TABLE dqai_landing_page_config
+                ADD COLUMN allow_new_registrations BOOLEAN DEFAULT TRUE
+            `);
+        } catch (e) {
+            // Column might already exist, ignore
         }
 
         // Get default business ID

@@ -319,7 +319,7 @@ const ReportViewPage: React.FC = () => {
         `${powerbiHtml}` +
         `<div style="margin-top:16px;margin-bottom:6px"><strong>Submitted Answers</strong></div>` +
         (answersHtmlParts.length === 0 ? '<div><em>No answers submitted</em></div>' : `<table><tbody>${answersHtmlParts.join('')}</tbody></table>`) +
-        `<div style="margin-top:16px;margin-bottom:6px"><strong>Uploaded Excel Files</strong></div>` +
+        `<div style="margin-top:16px;margin-bottom:6px"><strong>Uploaded Files</strong></div>` +
         (renderUploadedTables() || '<div><em>No uploaded files</em></div>') +
         `</body></html>`;
 
@@ -727,7 +727,7 @@ const ReportViewPage: React.FC = () => {
 
       <Card>
         <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold mb-2">Uploaded Excel Files</h2>
+          <h2 className="text-lg font-semibold mb-2">Uploaded Files</h2>
           <input className="border p-2 rounded" placeholder="Search files/columns" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         {uploadedDocs.length === 0 && <div className="text-sm text-gray-500">No uploaded files.</div>}

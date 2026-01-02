@@ -3,33 +3,57 @@ import { Link } from 'react-router-dom';
 import Button from '../components/ui/Button';
 
 interface LandingConfig {
+  appName?: string;
   heroTitle?: string;
+  heroTitleFontSize?: string;
+  heroTitleFontWeight?: string;
   heroSubtitle?: string;
+  heroSubtitleFontSize?: string;
+  heroSubtitleFontWeight?: string;
   heroImageUrl?: string;
   heroButtonText?: string;
   heroButtonLink?: string;
   heroVisible?: boolean;
   featuresTitle?: string;
+  featuresTitleFontSize?: string;
+  featuresTitleFontWeight?: string;
+  featuresSubtitle?: string;
+  featuresSubtitleFontSize?: string;
+  featuresSubtitleFontWeight?: string;
   featuresData?: any[];
   featuresVisible?: boolean;
   carouselTitle?: string;
+  carouselTitleFontSize?: string;
+  carouselTitleFontWeight?: string;
   carouselItems?: any[];
   carouselVisible?: boolean;
+  pricingItems?: any[];
+  pricingVisible?: boolean;
   ctaTitle?: string;
+  ctaTitleFontSize?: string;
+  ctaTitleFontWeight?: string;
   ctaSubtitle?: string;
+  ctaSubtitleFontSize?: string;
+  ctaSubtitleFontWeight?: string;
   ctaButtonText?: string;
   ctaButtonLink?: string;
   ctaVisible?: boolean;
   demoLink?: string;
   demoLabel?: string;
   logoUrl?: string;
+  faviconUrl?: string;
   primaryColor?: string;
   secondaryColor?: string;
+  navBackgroundColor?: string;
+  navTextColor?: string;
+  footerLinks?: any[];
+  customPages?: any[];
 }
 
 const LandingPage: React.FC = () => {
   const [config, setConfig] = useState<LandingConfig | null>(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
   const [feedbackFormOpen, setFeedbackFormOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -37,13 +61,21 @@ const LandingPage: React.FC = () => {
     loadConfig();
   }, []);
 
+  useEffect(() => {
+    if ((config?.heroFeaturedImages || []).length > 1) {
+      const id = setInterval(() => setHeroImageIndex(i => i + 1), 4500);
+      return () => clearInterval(id);
+    }
+    return;
+  }, [config?.heroFeaturedImages]);
+
   const loadConfig = async () => {
     try {
-      // Try to load from first business (or a default)
-      const response = await fetch('/api/landing-page-config/1');
+      // Load universal landing page config
+      const response = await fetch('/api/landing-page-config');
       if (response.ok) {
         const data = await response.json();
-        setConfig(data.config);
+        setConfig(data.config || data);
       } else {
         setConfig({});
       }
@@ -69,31 +101,69 @@ const LandingPage: React.FC = () => {
   const heroTitle = config?.heroTitle || 'Welcome to OneApp';
   const heroSubtitle = config?.heroSubtitle || 'Transform your data into insights';
   const primaryColor = config?.primaryColor || '#2563eb';
+  const secondaryColor = config?.secondaryColor || '#1e40af';
+  const navBackgroundColor = config?.navBackgroundColor || '#ffffff';
+  const navTextColor = config?.navTextColor || '#374151';
+  const appName = config?.appName || 'OneApp';
   const carouselItems = config?.carouselItems || [];
+  const heroFeaturedImages = config?.heroFeaturedImages || [];
+  const customPages = config?.customPages || [];
+  
+  // Font styling defaults
+  const heroTitleFontSize = config?.heroTitleFontSize || '48px';
+  const heroTitleFontWeight = config?.heroTitleFontWeight || '700';
+  const heroSubtitleFontSize = config?.heroSubtitleFontSize || '20px';
+  const heroSubtitleFontWeight = config?.heroSubtitleFontWeight || '400';
+  const featuresTitleFontSize = config?.featuresTitleFontSize || '36px';
+  const featuresTitleFontWeight = config?.featuresTitleFontWeight || '700';
+  const featuresSubtitleFontSize = config?.featuresSubtitleFontSize || '18px';
+  const featuresSubtitleFontWeight = config?.featuresSubtitleFontWeight || '400';
+  const carouselTitleFontSize = config?.carouselTitleFontSize || '36px';
+  const carouselTitleFontWeight = config?.carouselTitleFontWeight || '700';
+  const ctaTitleFontSize = config?.ctaTitleFontSize || '36px';
+  const ctaTitleFontWeight = config?.ctaTitleFontWeight || '700';
+  const ctaSubtitleFontSize = config?.ctaSubtitleFontSize || '18px';
+  const ctaSubtitleFontWeight = config?.ctaSubtitleFontWeight || '400';
 
   return (
     <div className="min-h-screen bg-white">
       {/* Navigation */}
-      <nav className="bg-white shadow-sm sticky top-0 z-40">
+      <nav className="sticky top-0 shadow-sm" style={{ backgroundColor: navBackgroundColor, zIndex: 1000, position: 'sticky' as any, backdropFilter: 'none' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
-              {config?.logoUrl ? (
-                <img src={config.logoUrl} alt="Logo" className="h-10" />
-              ) : (
-                <span className="text-2xl font-bold" style={{ color: primaryColor }}>
-                  OneApp
-                </span>
-              )}
+              <div className="flex items-center">
+                <Link to="/" className="flex items-center">
+                  {config?.logoUrl ? (
+                    <img src={config.logoUrl} alt="Logo" className="h-10" />
+                  ) : (
+                    <span className="text-2xl font-bold" style={{ color: primaryColor }}>
+                      {appName}
+                    </span>
+                  )}
+                </Link>
+              </div>
             </div>
-            <div className="flex gap-4">
-              <Link to="/login" className="px-4 py-2 text-gray-700 hover:text-gray-900">
+            <div className="flex gap-4 items-center ml-auto">
+              <div className="hidden md:flex gap-6 items-center">
+                {customPages.filter((p: any) => p.displayOnNav).map((page: any, idx: number) => (
+                  <Link
+                    key={idx}
+                    to={`/page/${page.slug}`}
+                    className="font-medium hover:opacity-70 transition"
+                    style={{ color: navTextColor }}
+                  >
+                    {page.title}
+                  </Link>
+                ))}
+              </div>
+              <Link to="/login" className="px-4 py-2 font-medium hover:opacity-70 transition" style={{ color: navTextColor }}>
                 Sign In
               </Link>
               {config?.demoLink && (
                 <a
                   href={config.demoLink}
-                  className="px-4 py-2 rounded text-white"
+                  className="px-4 py-2 rounded text-white font-medium hover:opacity-90 transition"
                   style={{ backgroundColor: primaryColor }}
                 >
                   {config.demoLabel || 'Try Demo'}
@@ -109,25 +179,48 @@ const LandingPage: React.FC = () => {
         <section
           className="relative py-20 px-4 overflow-hidden"
           style={{
-            background: `linear-gradient(135deg, ${primaryColor} 0%, ${config?.secondaryColor || '#1e40af'} 100%)`
+            backgroundImage: heroFeaturedImages.length > 0
+              ? `url('${heroFeaturedImages[heroImageIndex % heroFeaturedImages.length]}')`
+              : (config?.heroImageUrl ? `linear-gradient(135deg, rgba(${parseInt(primaryColor.slice(1,3), 16)}, ${parseInt(primaryColor.slice(3,5), 16)}, ${parseInt(primaryColor.slice(5,7), 16)}, 0.8), rgba(${parseInt(secondaryColor.slice(1,3), 16)}, ${parseInt(secondaryColor.slice(3,5), 16)}, ${parseInt(secondaryColor.slice(5,7), 16)}, 0.8)), url('${config.heroImageUrl}')` : `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`),
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed'
           }}
         >
           <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
             <div className="text-white">
-              <h1 className="text-5xl font-bold mb-4">{heroTitle}</h1>
-              <p className="text-xl mb-8 text-blue-100">{heroSubtitle}</p>
+              <h1 
+                className="mb-4 font-bold leading-tight"
+                style={{ 
+                  fontSize: heroTitleFontSize,
+                  fontWeight: heroTitleFontWeight as any
+                }}
+              >
+                {heroTitle}
+              </h1>
+              <p 
+                className="mb-8 text-blue-100"
+                style={{ 
+                  fontSize: heroSubtitleFontSize,
+                  fontWeight: heroSubtitleFontWeight as any
+                }}
+              >
+                {heroSubtitle}
+              </p>
               <div className="flex gap-4">
-                <Link to="/login">
-                  <button className="bg-white text-blue-600 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 transition">
-                    {config?.heroButtonText || 'Get Started'}
-                  </button>
-                </Link>
+                {config?.allowNewRegistrations !== false && (
+                  <Link to="/login">
+                    <button className="bg-white text-blue-600 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 transition">
+                      {config?.heroButtonText || 'Get Started'}
+                    </button>
+                  </Link>
+                )}
                 {config?.demoLink && (
                   <a
                     href={config.demoLink}
                     className="border-2 border-white text-white px-8 py-3 rounded-lg font-bold hover:bg-white hover:text-blue-600 transition"
                   >
-                    Try Demo
+                    {config?.demoLabel || 'Try Demo'}
                   </a>
                 )}
               </div>
@@ -145,9 +238,25 @@ const LandingPage: React.FC = () => {
       {config?.featuresVisible !== false && (
         <section className="py-20 px-4 bg-gray-50">
           <div className="max-w-7xl mx-auto">
-            <h2 className="text-4xl font-bold text-center mb-4">{config?.featuresTitle || 'Our Features'}</h2>
+            <h2 
+              className="text-center mb-4 font-bold"
+              style={{ 
+                fontSize: featuresTitleFontSize,
+                fontWeight: featuresTitleFontWeight as any
+              }}
+            >
+              {config?.featuresTitle || 'Our Features'}
+            </h2>
             {config?.featuresSubtitle && (
-              <p className="text-center text-gray-600 mb-12 text-lg">{config.featuresSubtitle}</p>
+              <p 
+                className="text-center text-gray-600 mb-12"
+                style={{ 
+                  fontSize: featuresSubtitleFontSize,
+                  fontWeight: featuresSubtitleFontWeight as any
+                }}
+              >
+                {config.featuresSubtitle}
+              </p>
             )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {(config?.featuresData || []).length > 0 ? (
@@ -174,20 +283,28 @@ const LandingPage: React.FC = () => {
       {config?.carouselVisible !== false && carouselItems.length > 0 && (
         <section className="py-20 px-4 bg-white">
           <div className="max-w-4xl mx-auto">
-            <h2 className="text-4xl font-bold text-center mb-12">{config?.carouselTitle || 'What Our Users Say'}</h2>
+            <h2 
+              className="text-center mb-12 font-bold"
+              style={{ 
+                fontSize: carouselTitleFontSize,
+                fontWeight: carouselTitleFontWeight as any
+              }}
+            >
+              {config?.carouselTitle || 'What Our Users Say'}
+            </h2>
             
             <div className="relative bg-gray-50 rounded-lg p-12 shadow-lg">
               {/* Carousel Items */}
               {carouselItems.map((item: any, idx: number) => (
                 <div key={idx} className={`transition-opacity duration-500 ${idx === carouselIndex ? 'opacity-100' : 'opacity-0 hidden'}`}>
-                  {item.image && (
+                  {item.imageUrl && (
                     <div className="mb-6 flex justify-center">
-                      <img src={item.image} alt="Testimonial" className="w-32 h-32 rounded-full object-cover" />
+                      <img src={item.imageUrl} alt="Testimonial" className="w-32 h-32 rounded-full object-cover" />
                     </div>
                   )}
-                  <p className="text-center text-xl italic text-gray-700 mb-4">"{item.text}"</p>
+                  <p className="text-center text-xl italic text-gray-700 mb-4">"{item.feedback}"</p>
                   <p className="text-center font-bold" style={{ color: primaryColor }}>
-                    {item.author}
+                    {item.name} {item.role && `- ${item.role}`}
                   </p>
                 </div>
               ))}
@@ -209,17 +326,82 @@ const LandingPage: React.FC = () => {
         </section>
       )}
 
-      {/* CTA Section */}
+      {/* Pricing Section */}
+      {config?.pricingVisible !== false && (config?.pricingItems || []).length > 0 && (
+        <section className="py-20 px-4 bg-gray-50">
+          <div className="max-w-6xl mx-auto">
+            <h2 className="text-center text-4xl font-bold mb-12">{config?.pricingTitle || 'Simple Pricing'}</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {config.pricingItems.map((plan: any, idx: number) => (
+                <div
+                  key={idx}
+                  className={`bg-white rounded-lg p-8 shadow-lg transition transform hover:scale-105 ${
+                    plan.popular ? 'ring-2' : ''
+                  }`}
+                  style={plan.popular ? { ringColor: primaryColor } : {}}
+                >
+                  {plan.popular && (
+                    <div
+                      className="px-4 py-1 rounded-full text-white text-sm font-bold mb-4 w-fit"
+                      style={{ backgroundColor: primaryColor }}
+                    >
+                      Popular
+                    </div>
+                  )}
+                  <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
+                  <div className="mb-4">
+                    <span className="text-4xl font-bold" style={{ color: primaryColor }}>
+                      {config?.pricingCurrency || 'USD'} {plan.price}
+                    </span>
+                    {plan.description && <p className="text-gray-600 text-sm">{plan.description}</p>}
+                  </div>
+                  <ul className="space-y-3 mb-8">
+                    {(plan.features || '').split('\n').map((feature: string, fi: number) => (
+                      <li key={fi} className="flex items-start gap-2">
+                        <span style={{ color: primaryColor }}>✓</span>
+                        <span>{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    onClick={() => window.location.href = '/login'}
+                    className="w-full py-3 rounded-lg font-bold transition"
+                    style={{ backgroundColor: primaryColor, color: 'white' }}
+                  >
+                    Get Started
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Custom pages no longer render inline; they are dedicated pages at /#/page/:slug */}
       {config?.ctaVisible !== false && (
         <section
           className="py-20 px-4"
           style={{
-            background: `linear-gradient(135deg, ${primaryColor} 0%, ${config?.secondaryColor || '#1e40af'} 100%)`
+            background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
           }}
         >
           <div className="max-w-4xl mx-auto text-center text-white">
-            <h2 className="text-4xl font-bold mb-4">{config?.ctaTitle || 'Ready to get started?'}</h2>
-            <p className="text-xl mb-8 text-blue-100">
+            <h2 
+              className="mb-4 font-bold"
+              style={{ 
+                fontSize: ctaTitleFontSize,
+                fontWeight: ctaTitleFontWeight as any
+              }}
+            >
+              {config?.ctaTitle || 'Ready to get started?'}
+            </h2>
+            <p 
+              className="mb-8 text-blue-100"
+              style={{ 
+                fontSize: ctaSubtitleFontSize,
+                fontWeight: ctaSubtitleFontWeight as any
+              }}
+            >
               {config?.ctaSubtitle || 'Join thousands of organizations using OneApp'}
             </p>
             <Link to="/login">
@@ -260,9 +442,9 @@ const LandingPage: React.FC = () => {
             {config?.logoUrl ? (
               <img src={config.logoUrl} alt="Logo" className="h-8 mb-4" />
             ) : (
-              <span className="text-xl font-bold">OneApp</span>
+              <span className="text-xl font-bold">{appName}</span>
             )}
-            <p className="text-gray-400 mt-4">Transform your data into insights</p>
+            <p className="text-gray-400 mt-4">{config?.heroSubtitle || 'Transform your data into insights'}</p>
           </div>
           {config?.footerLinks && config.footerLinks.map((link: any, idx: number) => (
             <div key={idx}>
@@ -276,7 +458,7 @@ const LandingPage: React.FC = () => {
           ))}
         </div>
         <div className="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400">
-          <p>&copy; 2024 OneApp. All rights reserved.</p>
+          <p>&copy; 2024 {appName}. All rights reserved.</p>
         </div>
       </footer>
     </div>
