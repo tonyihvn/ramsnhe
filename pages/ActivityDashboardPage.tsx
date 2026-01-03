@@ -4,6 +4,8 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
 import { confirm, error as swalError, success as swalSuccess } from '../components/ui/swal';
+import { useActivityPermissions } from '../hooks/useActivityPermissions';
+import { useMockData } from '../hooks/useMockData';
 import { Bar, Pie, Line, Scatter } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -24,8 +26,11 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElemen
 const ActivityDashboardPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
+  const { currentUser } = useMockData();
+  const { checkPermission, permissions } = useActivityPermissions(activityId);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [facilitiesMap, setFacilitiesMap] = useState<Record<string, string>>({});
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -98,10 +103,40 @@ const ActivityDashboardPage: React.FC = () => {
     })();
   }, [activityId]);
 
+  // Debug logging for permissions
+  useEffect(() => {
+    const userRole = String(currentUser?.role || '').toLowerCase().trim();
+    const isAdmin = userRole === 'admin' || userRole === 'super-admin' || userRole === 'super_admin';
+    console.log('ActivityDashboardPage Debug:', {
+      currentUser,
+      userRole,
+      isAdmin,
+      permissions,
+      checkPermissionResult: checkPermission('can_view'),
+    });
+  }, [permissions, currentUser]);
+
   if (loading) return <div>Loading...</div>;
   if (!data) return <div>No data available for this activity.</div>;
 
   const { activity, questions, reports, answersByQuestion, uploadedDocs } = data;
+
+  // Check if user has permission to view this activity
+  const userRole = String(currentUser?.role || '').toLowerCase().trim();
+  const isAdmin = userRole === 'admin' || userRole === 'super-admin' || userRole === 'super_admin';
+  const hasViewAccess = isAdmin || checkPermission('can_view');
+
+  if (!isAdmin && !hasViewAccess) {
+    return (
+      <Card className="bg-red-50 border border-red-200">
+        <div className="p-6 text-center">
+          <h2 className="text-lg font-semibold text-red-800 mb-2">Access Denied</h2>
+          <p className="text-red-700 mb-4">You do not have permission to view this activity dashboard.</p>
+          <Button onClick={() => navigate('/activities')} variant="secondary">Back to Activities</Button>
+        </div>
+      </Card>
+    );
+  }
 
   // Utility to strip HTML tags
   function stripHtml(html) {
@@ -133,7 +168,7 @@ const ActivityDashboardPage: React.FC = () => {
           <div className="inline-flex items-center space-x-2">
             <Button onClick={() => navigate('/activities')} variant="secondary">Back</Button>
             <Button onClick={() => navigate(`/activities/fill/${activity.id}`)} variant="primary">New +</Button>
-            <Button onClick={() => navigate(`/reports/builder?activityId=${activity.id}`)} variant="secondary">Build Report</Button>
+            {isAdmin && <Button onClick={() => navigate(`/reports/builder?activityId=${activity.id}`)} variant="secondary">Build Report</Button>}
             <Button onClick={handleDownloadPdf}>Download PDF</Button>
             <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/submitted-answers`)}>View Saved Data</Button>
             <Button variant="secondary" onClick={() => navigate(`/activities/${activity.id}/excel-tables`)}>View Excel Tables</Button>

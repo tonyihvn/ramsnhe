@@ -7,6 +7,7 @@ export interface NavMenuItem {
   href: string;
   icon: any;
   superAdminOnly?: boolean;
+  visibleToAll?: boolean; // If true, visible to all roles without permission check
   openInNewWindow?: boolean;
   group?: string; // Group name for sidebar grouping
 }
@@ -26,13 +27,13 @@ export const navigationStatic: NavMenuItem[] = [
   
   // Data & Analytics
   { key: 'dashboard', page_key: '/dashboard', defaultName: 'Dashboard', href: '/dashboard', icon: ChartPieIcon, group: 'Data & Analytics' },
-  { key: 'map_dashboard', page_key: '/map-dashboard', defaultName: 'Map Dashboard', href: '/map-dashboard', icon: MapIcon, group: 'Data & Analytics' },
+  { key: 'map_dashboard', page_key: '/map-dashboard', defaultName: 'Map Dashboard', href: '/map-dashboard', icon: MapIcon, group: 'Data & Analytics', visibleToAll: true },
   { key: 'indicators', page_key: '/indicators', defaultName: 'Indicators', href: '/indicators', icon: ChartPieIcon, group: 'Data & Analytics' },
   { key: 'reports', page_key: '/reports', defaultName: 'Reports', href: '/reports', icon: DocumentTextIcon, group: 'Data & Analytics' },
   
-  // Content Management
-  { key: 'programs', page_key: '/programs', defaultName: 'Programs', href: '/programs', icon: FolderIcon, group: 'Content' },
-  { key: 'activities', page_key: '/activities', defaultName: 'Activities', href: '/activities', icon: ClipboardDocumentListIcon, group: 'Content' },
+  // Content Management (visible to all roles)
+  { key: 'programs', page_key: '/programs', defaultName: 'Programs', href: '/programs', icon: FolderIcon, group: 'Content', visibleToAll: true },
+  { key: 'activities', page_key: '/activities', defaultName: 'Activities', href: '/activities', icon: ClipboardDocumentListIcon, group: 'Content', visibleToAll: true },
   { key: 'datasets', page_key: '/datasets', defaultName: 'Datasets', href: '/datasets', icon: FolderIcon, group: 'Content' },
   
   // Organization

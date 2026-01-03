@@ -10,6 +10,102 @@ import RichTextEditor from '../components/ui/RichTextEditor';
 import { PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { Activity } from '../types';
 
+// Activity action buttons with permission checking
+const ActivityActionButtonsComponent: React.FC<{
+  activity: Activity;
+  currentUser: any;
+  canEdit: boolean;
+  canViewDashboard: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onViewData: () => void;
+  onBuildForm: () => void;
+  onBuildReport: () => void;
+  onCopyLink: () => void;
+  onQRCode: () => void;
+  onEmbed: () => void;
+  isMobile?: boolean;
+}> = ({ activity, currentUser, canEdit, canViewDashboard, onEdit, onDelete, onViewData, onBuildForm, onBuildReport, onCopyLink, onQRCode, onEmbed, isMobile = false }) => {
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
+  
+  if (isMobile) {
+    return (
+      <>
+        {canEdit && (
+          <>
+            <div className="text-sm"><button className="w-full text-left p-2" onClick={() => { const hasForm = Boolean(activity.formDefinition && Array.isArray(activity.formDefinition.pages) && activity.formDefinition.pages.some(p => p.sections && p.sections.some(s => (s.questions || []).length > 0))); if (!hasForm) onBuildForm(); else onBuildForm(); }}>Build/Edit Form</button></div>
+            {isAdmin && <div className="text-sm"><button className="w-full text-left p-2" onClick={onBuildReport}>Build Report</button></div>}
+            <div className="text-sm"><button className="w-full text-left p-2" onClick={onEdit}>Edit Activity</button></div>
+            <div className="text-sm"><button className="w-full text-left p-2 text-red-600" onClick={onDelete}>Delete</button></div>
+            <div className="border-t my-1"></div>
+          </>
+        )}
+        {canViewDashboard && (
+          <div className="text-sm"><button className="w-full text-left p-2" onClick={onViewData}>View Data</button></div>
+        )}
+        <div className="text-sm"><button className="w-full text-left p-2" onClick={onCopyLink}>Copy Link</button></div>
+        <div className="text-sm"><button className="w-full text-left p-2" onClick={onQRCode}>QR Code</button></div>
+        <div className="text-sm"><button className="w-full text-left p-2" onClick={onEmbed}>Embed</button></div>
+      </>
+    );
+  }
+  return (
+    <>
+      {canEdit && (
+        <>
+          {(() => {
+            const hasForm = Boolean(activity.formDefinition && Array.isArray(activity.formDefinition.pages) && activity.formDefinition.pages.some(p => p.sections && p.sections.some(s => (s.questions || []).length > 0)));
+            return hasForm ? (
+              <Button size="sm" variant="secondary" onClick={onBuildForm} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Edit Form</Button>
+            ) : (
+              <Button size="sm" variant="primary" onClick={onBuildForm} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Build Form</Button>
+            );
+          })()}
+          {isAdmin && <Button size="sm" variant="secondary" onClick={onBuildReport} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Build Report</Button>}
+          <Button size="sm" variant="secondary" onClick={onEdit} leftIcon={<PencilIcon className="h-4 w-4" />}>Edit</Button>
+          <Button size="sm" variant="danger" onClick={onDelete} leftIcon={<TrashIcon className="h-4 w-4" />}>Delete</Button>
+        </>
+      )}
+      {canViewDashboard && (
+        <Button size="sm" variant="secondary" onClick={onViewData} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>View Data</Button>
+      )}
+      <div className="inline-flex items-center space-x-2">
+        <Button size="sm" variant="secondary" onClick={onCopyLink}>Copy Link</Button>
+        <Button size="sm" variant="secondary" onClick={onQRCode}>QR Code</Button>
+        <Button size="sm" variant="secondary" onClick={onEmbed}>Embed</Button>
+      </div>
+    </>
+  );
+};
+
+// Wrapper component to handle permissions
+const ActivityActionButtonsWrapper: React.FC<{
+  activity: Activity;
+  currentUser: any;
+  canEdit: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onViewData: () => void;
+  onBuildForm: () => void;
+  onBuildReport: () => void;
+  onCopyLink: () => void;
+  onQRCode: () => void;
+  onEmbed: () => void;
+  isMobile?: boolean;
+}> = (props) => {
+  const isAdmin = props.currentUser?.role === 'Admin' || props.currentUser?.role === 'Super Admin';
+  // For the list view, always show View Data for admins
+  // Permission checking happens when viewing the dashboard
+  const canViewDashboard = isAdmin || props.canEdit;
+  
+  return (
+    <ActivityActionButtonsComponent
+      {...props}
+      canViewDashboard={canViewDashboard}
+    />
+  );
+};
+
 const ActivitiesPage: React.FC = () => {
   const { activities, programs, saveActivity, deleteActivity, currentUser } = useMockData();
   const { settings } = useTheme();
@@ -113,27 +209,33 @@ const ActivitiesPage: React.FC = () => {
                       })()}
                     </div>
                     <div className="hidden sm:flex sm:flex-wrap sm:gap-2">
-                      {canEdit && (
-                        <>
-                          {(() => {
-                            const hasForm = Boolean(activity.formDefinition && Array.isArray(activity.formDefinition.pages) && activity.formDefinition.pages.some(p => p.sections && p.sections.some(s => (s.questions || []).length > 0)));
-                            return hasForm ? (
-                              <Button size="sm" variant="secondary" onClick={() => navigate(`/activities/build/${activity.id}`)} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Edit Form</Button>
-                            ) : (
-                              <Button size="sm" variant="primary" onClick={() => navigate(`/activities/build/${activity.id}`)} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Build Form</Button>
-                            );
-                          })()}
-                          <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/builder?activityId=${activity.id}`)} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Build Report</Button>
-                          <Button size="sm" variant="secondary" onClick={() => navigate(`/activities/dashboard/${activity.id}`)} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>View Data</Button>
-                          <Button size="sm" variant="secondary" onClick={() => openModal(activity)} leftIcon={<PencilIcon className="h-4 w-4" />}>Edit</Button>
-                          <Button size="sm" variant="danger" onClick={async () => { const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' }); if (ok) deleteActivity(activity.id); }} leftIcon={<TrashIcon className="h-4 w-4" />}>Delete</Button>
-                          <div className="inline-flex items-center space-x-2">
-                            <Button size="sm" variant="secondary" onClick={() => { const full = `${window.location.origin}/#/standalone/fill/${activity.id}`; navigator.clipboard.writeText(full).then(() => swalToast('Link copied to clipboard', 'success')); }}>Copy Link</Button>
-                            <Button size="sm" variant="secondary" onClick={() => { const full = `${window.location.origin}/#/standalone/fill/${activity.id}`; setShareUrl(full); setQrModalOpen(true); }}>QR Code</Button>
-                            <Button size="sm" variant="secondary" onClick={() => { const full = `${window.location.origin}/#/standalone/fill/${activity.id}`; setShareUrl(full); setEmbedModalOpen(true); }}>Embed</Button>
-                          </div>
-                        </>
-                      )}
+                      <ActivityActionButtonsWrapper
+                        activity={activity}
+                        currentUser={currentUser}
+                        canEdit={canEdit}
+                        onEdit={() => openModal(activity)}
+                        onDelete={async () => {
+                          const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' });
+                          if (ok) deleteActivity(activity.id);
+                        }}
+                        onViewData={() => navigate(`/activities/dashboard/${activity.id}`)}
+                        onBuildForm={() => navigate(`/activities/build/${activity.id}`)}
+                        onBuildReport={() => navigate(`/reports/builder?activityId=${activity.id}`)}
+                        onCopyLink={() => {
+                          const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                          navigator.clipboard.writeText(full).then(() => swalToast('Link copied to clipboard', 'success'));
+                        }}
+                        onQRCode={() => {
+                          const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                          setShareUrl(full);
+                          setQrModalOpen(true);
+                        }}
+                        onEmbed={() => {
+                          const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                          setShareUrl(full);
+                          setEmbedModalOpen(true);
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -142,19 +244,53 @@ const ActivitiesPage: React.FC = () => {
                     <button onClick={() => setOpenActionsId(openActionsId === activity.id ? null : activity.id)} className="px-2 py-1 border rounded">⋯</button>
                     {openActionsId === activity.id && (
                       <div className="absolute right-0 mt-2 w-48 bg-white border rounded shadow p-2" style={{ zIndex: 9999 }}>
-                        {canEdit && (
-                          <>
-                            <div className="text-sm"><button className="w-full text-left p-2" onClick={() => navigate(`/activities/build/${activity.id}`)}>Build/Edit Form</button></div>
-                            <div className="text-sm"><button className="w-full text-left p-2" onClick={() => navigate(`/reports/builder?activityId=${activity.id}`)}>Build Report</button></div>
-                            <div className="text-sm"><button className="w-full text-left p-2" onClick={() => navigate(`/activities/dashboard/${activity.id}`)}>View Data</button></div>
-                            <div className="text-sm"><button className="w-full text-left p-2" onClick={() => { openModal(activity); setOpenActionsId(null); }}>Edit Activity</button></div>
-                            <div className="text-sm"><button className="w-full text-left p-2 text-red-600" onClick={async () => { const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' }); if (ok) deleteActivity(activity.id); setOpenActionsId(null); }}>Delete</button></div>
-                            <div className="border-t my-1"></div>
-                          </>
-                        )}
-                        <div className="text-sm"><button className="w-full text-left p-2" onClick={() => { const full = `${window.location.origin}/#/standalone/fill/${activity.id}`; navigator.clipboard.writeText(full); setOpenActionsId(null); swalToast('Link copied to clipboard', 'success'); }}>Copy Link</button></div>
-                        <div className="text-sm"><button className="w-full text-left p-2" onClick={() => { const full = `${window.location.origin}/#/standalone/fill/${activity.id}`; setShareUrl(full); setQrModalOpen(true); setOpenActionsId(null); }}>QR Code</button></div>
-                        <div className="text-sm"><button className="w-full text-left p-2" onClick={() => { const full = `${window.location.origin}/#/standalone/fill/${activity.id}`; setShareUrl(full); setEmbedModalOpen(true); setOpenActionsId(null); }}>Embed</button></div>
+                        <ActivityActionButtonsWrapper
+                          activity={activity}
+                          currentUser={currentUser}
+                          canEdit={canEdit}
+                          isMobile={true}
+                          onEdit={() => {
+                            openModal(activity);
+                            setOpenActionsId(null);
+                          }}
+                          onDelete={async () => {
+                            const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' });
+                            if (ok) {
+                              deleteActivity(activity.id);
+                              setOpenActionsId(null);
+                            }
+                          }}
+                          onViewData={() => {
+                            navigate(`/activities/dashboard/${activity.id}`);
+                            setOpenActionsId(null);
+                          }}
+                          onBuildForm={() => {
+                            navigate(`/activities/build/${activity.id}`);
+                            setOpenActionsId(null);
+                          }}
+                          onBuildReport={() => {
+                            navigate(`/reports/builder?activityId=${activity.id}`);
+                            setOpenActionsId(null);
+                          }}
+                          onCopyLink={() => {
+                            const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                            navigator.clipboard.writeText(full);
+                            setOpenActionsId(null);
+                            swalToast('Link copied to clipboard', 'success');
+                          }}
+                          onQRCode={() => {
+                            const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                            setShareUrl(full);
+                            setQrModalOpen(true);
+                            setOpenActionsId(null);
+                          }}
+                          onEmbed={() => {
+                            const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                            setShareUrl(full);
+                            setEmbedModalOpen(true);
+                            setOpenActionsId(null);
+                          }}
+                        />
                       </div>
                     )}
                   </div>

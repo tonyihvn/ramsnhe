@@ -363,6 +363,309 @@ const DBMSTab: React.FC = () => {
     );
 };
 
+// Activity Permissions Manager Component
+interface ActivityRolePermission {
+    activity_id: string;
+    role_id: number;
+    role_name: string;
+    page_key: string;
+    section_key?: string;
+    can_view: boolean;
+    can_create: boolean;
+    can_edit: boolean;
+    can_delete: boolean;
+}
+
+const ActivityPermissionsManager: React.FC = () => {
+    const [activities, setActivities] = useState<any[]>([]);
+    const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
+    const [permissions, setPermissions] = useState<ActivityRolePermission[]>([]);
+    const [allRoles, setAllRoles] = useState<{ id: number; name: string }[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [currentPermission, setCurrentPermission] = useState<Partial<ActivityRolePermission> | null>(null);
+
+    // Load activities on mount
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch('/api/activities', { credentials: 'include' });
+                if (res.ok) {
+                    const data = await res.json();
+                    setActivities(Array.isArray(data) ? data : []);
+                }
+            } catch (e) { console.error('Failed to load activities:', e); }
+        })();
+    }, []);
+
+    // Load roles on mount
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch('/api/admin/roles', { credentials: 'include' });
+                if (res.ok) {
+                    const data = await res.json();
+                    setAllRoles(Array.isArray(data) ? data : []);
+                }
+            } catch (e) { console.error('Failed to load roles:', e); }
+        })();
+    }, []);
+
+    // Load permissions for selected activity
+    useEffect(() => {
+        if (!selectedActivityId) {
+            setPermissions([]);
+            return;
+        }
+        const loadPermissions = async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/activities/${selectedActivityId}/role_permissions/admin`, { credentials: 'include' });
+                if (res.ok) {
+                    const data = await res.json();
+                    setPermissions(Array.isArray(data) ? data : []);
+                } else {
+                    console.error('Failed to load permissions:', res.statusText);
+                    setPermissions([]);
+                }
+            } catch (e) {
+                console.error('Failed to load permissions:', e);
+                setPermissions([]);
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadPermissions();
+    }, [selectedActivityId]);
+
+    const handleAddPermission = () => {
+        setCurrentPermission({
+            activity_id: selectedActivityId || '',
+            role_id: 0,
+            role_name: '',
+            page_key: selectedActivityId ? `/activities/${selectedActivityId}` : '',
+            section_key: null,
+            can_view: false,
+            can_create: false,
+            can_edit: false,
+            can_delete: false,
+        });
+        setIsModalOpen(true);
+    };
+
+    const handleSavePermission = async () => {
+        if (!currentPermission || !currentPermission.role_id) {
+            alert('Please select a role');
+            return;
+        }
+        setSaving(true);
+        try {
+            const res = await fetch(`/api/activities/${selectedActivityId}/role_permissions/admin`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    roleId: currentPermission.role_id,
+                    pageKey: '',
+                    sectionKey: '',
+                    canView: currentPermission.can_view,
+                    canCreate: currentPermission.can_create,
+                    canEdit: currentPermission.can_edit,
+                    canDelete: currentPermission.can_delete,
+                }),
+            });
+            if (res.ok) {
+                setIsModalOpen(false);
+                // Reload permissions
+                const reloadRes = await fetch(`/api/activities/${selectedActivityId}/role_permissions/admin`, { credentials: 'include' });
+                if (reloadRes.ok) {
+                    setPermissions(await reloadRes.json());
+                }
+                alert('Permission saved successfully');
+            } else {
+                alert('Failed to save permission: ' + await res.text());
+            }
+        } catch (e) {
+            console.error('Failed to save permission:', e);
+            alert('Error: ' + String(e));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDeletePermission = async (roleId: number) => {
+        if (!confirm('Delete this permission?')) return;
+        try {
+            const res = await fetch(`/api/activities/${selectedActivityId}/role_permissions/${roleId}`, {
+                method: 'DELETE',
+                credentials: 'include',
+            });
+            if (res.ok) {
+                setPermissions(prev => prev.filter(p => p.role_id !== roleId));
+                alert('Permission deleted');
+            } else {
+                alert('Failed to delete permission');
+            }
+        } catch (e) {
+            console.error('Failed to delete permission:', e);
+            alert('Error deleting permission');
+        }
+    };
+
+    return (
+        <div>
+            <h4 className="font-medium text-base mb-3">Activity Permissions</h4>
+            <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Select Activity</label>
+                <select
+                    value={selectedActivityId || ''}
+                    onChange={e => setSelectedActivityId(e.target.value || null)}
+                    className="block w-full p-2 border rounded text-sm"
+                >
+                    <option value="">-- Select an activity --</option>
+                    {activities.map(a => (
+                        <option key={a.id} value={a.id}>{a.title || a.name || `Activity ${a.id}`}</option>
+                    ))}
+                </select>
+            </div>
+
+            {selectedActivityId && (
+                <div>
+                    {loading ? (
+                        <div className="text-sm text-gray-500">Loading permissions...</div>
+                    ) : permissions.length > 0 ? (
+                        <div className="border rounded overflow-x-auto mb-4">
+                            <table className="w-full text-sm">
+                                <thead className="bg-gray-50 border-b">
+                                    <tr>
+                                        <th className="p-2 text-left">Role</th>
+                                        <th className="p-2 text-left">Page</th>
+                                        <th className="p-2 text-center">View</th>
+                                        <th className="p-2 text-center">Create</th>
+                                        <th className="p-2 text-center">Edit</th>
+                                        <th className="p-2 text-center">Delete</th>
+                                        <th className="p-2 text-center">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {permissions.map(p => (
+                                        <tr key={`${p.role_id}-${p.page_key}-${p.section_key}`} className="hover:bg-gray-50">
+                                            <td className="p-2">{p.role_name}</td>
+                                            <td className="p-2 text-xs text-gray-600">{p.page_key}</td>
+                                            <td className="p-2 text-center">{p.can_view ? '✓' : '—'}</td>
+                                            <td className="p-2 text-center">{p.can_create ? '✓' : '—'}</td>
+                                            <td className="p-2 text-center">{p.can_edit ? '✓' : '—'}</td>
+                                            <td className="p-2 text-center">{p.can_delete ? '✓' : '—'}</td>
+                                            <td className="p-2 text-center">
+                                                <button
+                                                    onClick={() => handleDeletePermission(p.role_id)}
+                                                    className="text-red-600 hover:text-red-800 text-xs"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="text-sm text-gray-500 mb-4">No permissions configured for this activity yet.</div>
+                    )}
+
+                    <Button onClick={handleAddPermission} className="mb-4">Add Permission</Button>
+                </div>
+            )}
+
+            {isModalOpen && currentPermission && (
+                <Modal
+                    isOpen={isModalOpen}
+                    onClose={() => setIsModalOpen(false)}
+                    title="Add Activity Permission"
+                    footer={
+                        <>
+                            <Button onClick={handleSavePermission} disabled={saving} className="ml-3">{saving ? 'Saving...' : 'Save'}</Button>
+                            <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                        </>
+                    }
+                >
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                            <select
+                                value={currentPermission.role_id || ''}
+                                onChange={e => {
+                                    const rid = parseInt(e.target.value, 10);
+                                    const rname = allRoles.find(r => r.id === rid)?.name || '';
+                                    setCurrentPermission({ ...currentPermission, role_id: rid, role_name: rname });
+                                }}
+                                className="block w-full p-2 border rounded"
+                            >
+                                <option value="">-- Select a role --</option>
+                                {allRoles.map(r => (
+                                    <option key={r.id} value={r.id}>{r.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="block text-sm font-medium text-gray-700">Permissions</label>
+                            <label className="flex items-start">
+                                <input
+                                    type="checkbox"
+                                    checked={currentPermission.can_view || false}
+                                    onChange={e => setCurrentPermission({ ...currentPermission, can_view: e.target.checked })}
+                                    className="mr-2 mt-1"
+                                />
+                                <div>
+                                    <span className="block">View Activity Dashboard</span>
+                                    <span className="text-xs text-gray-500">Access to /activities/dashboard/:activityId</span>
+                                </div>
+                            </label>
+                            <label className="flex items-start">
+                                <input
+                                    type="checkbox"
+                                    checked={currentPermission.can_create || false}
+                                    onChange={e => setCurrentPermission({ ...currentPermission, can_create: e.target.checked })}
+                                    className="mr-2 mt-1"
+                                />
+                                <div>
+                                    <span className="block">Submit Form Responses</span>
+                                    <span className="text-xs text-gray-500">Can fill and submit forms</span>
+                                </div>
+                            </label>
+                            <label className="flex items-start">
+                                <input
+                                    type="checkbox"
+                                    checked={currentPermission.can_edit || false}
+                                    onChange={e => setCurrentPermission({ ...currentPermission, can_edit: e.target.checked })}
+                                    className="mr-2 mt-1"
+                                />
+                                <div>
+                                    <span className="block">Edit Form Responses</span>
+                                    <span className="text-xs text-gray-500">Can modify submitted responses</span>
+                                </div>
+                            </label>
+                            <label className="flex items-start">
+                                <input
+                                    type="checkbox"
+                                    checked={currentPermission.can_delete || false}
+                                    onChange={e => setCurrentPermission({ ...currentPermission, can_delete: e.target.checked })}
+                                    className="mr-2 mt-1"
+                                />
+                                <div>
+                                    <span className="block">Delete Form Responses</span>
+                                    <span className="text-xs text-gray-500">Can remove submitted responses</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+        </div>
+    );
+};
+
 // Roles & Permissions helper components
 const RolesList: React.FC = () => {
     const [list, setList] = useState<any[]>([]);
@@ -836,7 +1139,7 @@ const SettingsPage: React.FC = () => {
                                 }}>Test Connection</Button>
                                 <Button variant="secondary" onClick={async () => {
                                     try {
-                                        const payload = { ...(dbForm || {}), ...(dbEnv || {}) };
+                                        const payload = { ...(dbEnv || {}), ...(dbForm || {}) };
                                         // Try admin write first
                                         let res = await fetch('/api/admin/env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
                                         if (res.status === 401) {
@@ -1116,24 +1419,30 @@ const SettingsPage: React.FC = () => {
 
             {tab === 'permissions' && (
                 <Card>
-                    <h3 className="text-lg font-medium mb-2">Roles & Permissions</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <h4 className="font-medium">Roles</h4>
-                            <div className="mt-2 space-y-2">
-                                <RolesList />
+                    <h3 className="text-lg font-medium mb-4">Roles & Permissions</h3>
+                    <div className="mb-6">
+                        <ActivityPermissionsManager />
+                    </div>
+                    <div className="border-t pt-6">
+                        <h4 className="text-md font-medium mb-4">Role & Permission Management</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <h4 className="font-medium">Roles</h4>
+                                <div className="mt-2 space-y-2">
+                                    <RolesList />
+                                </div>
                             </div>
-                        </div>
-                        <div>
-                            <h4 className="font-medium">Permissions</h4>
-                            <div className="mt-2 space-y-2">
-                                <PermissionsList />
+                            <div>
+                                <h4 className="font-medium">Permissions</h4>
+                                <div className="mt-2 space-y-2">
+                                    <PermissionsList />
+                                </div>
                             </div>
-                        </div>
-                        <div>
-                            <h4 className="font-medium">Users</h4>
-                            <div className="mt-2 space-y-2">
-                                <UsersList />
+                            <div>
+                                <h4 className="font-medium">Users</h4>
+                                <div className="mt-2 space-y-2">
+                                    <UsersList />
+                                </div>
                             </div>
                         </div>
                     </div>

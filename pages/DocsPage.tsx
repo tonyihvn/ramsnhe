@@ -1,303 +1,306 @@
-import React, { useState } from 'react';
-import Modal from '../components/ui/Modal';
-import Button from '../components/ui/Button';
-import MarkdownIt from 'markdown-it';
+import React from 'react';
 
 const DocsPage: React.FC = () => {
-    const [indicatorsOpen, setIndicatorsOpen] = useState(false);
-    const [indicatorsHtml, setIndicatorsHtml] = useState<string>('');
-    const [indicatorsLoading, setIndicatorsLoading] = useState(false);
-
-    const sanitizeHtml = (raw: any) => {
-        if (!raw) return '';
-        let out = String(raw || '');
-        out = out.replace(/<script[\s\S]*?<\/script>/gi, '');
-        out = out.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
-        out = out.replace(/<video[\s\S]*?<\/video>/gi, '');
-        out = out.replace(/<object[\s\S]*?<\/object>/gi, '');
-        out = out.replace(/<embed[\s\S]*?<\/embed>/gi, '');
-        out = out.replace(/on[a-zA-Z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-        out = out.replace(/src=("|')(data:[^"']{5000,})("|')/gi, '');
-        return out;
-    };
-
-    const loadIndicatorsDoc = async () => {
-        try {
-            setIndicatorsLoading(true);
-            // Try to fetch the markdown file from the repo path
-            const res = await fetch('/docs/INDICATORS.md');
-            if (!res.ok) {
-                const txt = await res.text().catch(() => '');
-                setIndicatorsHtml(`<pre>Failed to load docs/INDICATORS.md: ${res.status} ${res.statusText}\n${txt}</pre>`);
-                setIndicatorsOpen(true);
-                setIndicatorsLoading(false);
-                return;
-            }
-            const mdText = await res.text();
-            const md = new MarkdownIt({ html: true });
-            const rendered = md.render(mdText || '');
-            setIndicatorsHtml(sanitizeHtml(rendered));
-            setIndicatorsOpen(true);
-        } catch (e: any) {
-            setIndicatorsHtml(`<pre>Failed to load docs/INDICATORS.md: ${String(e?.message || e)}</pre>`);
-            setIndicatorsOpen(true);
-        } finally {
-            setIndicatorsLoading(false);
-        }
-    };
-
-    // Listen for custom event triggered by the link
-    React.useEffect(() => {
-        const handler = () => { loadIndicatorsDoc(); };
-        window.addEventListener('openIndicatorsDoc', handler as EventListener);
-        return () => window.removeEventListener('openIndicatorsDoc', handler as EventListener);
-    }, []);
-
     return (
         <div className="flex h-full">
-                <aside className="w-64 border-r bg-white p-4 overflow-y-auto sticky top-0 h-screen">
-                <h2 className="text-lg font-semibold mb-4">Docs</h2>
+            <aside className="w-64 border-r bg-white p-4 overflow-y-auto sticky top-0 h-screen">
+                <h2 className="text-lg font-semibold mb-4">User Guide</h2>
                 <nav className="space-y-2 text-sm">
-                    {['getting-started', 'installation', 'run-dev', 'frontend', 'backend', 'api-reference', 'indicators', 'llm-rag', 'activities', 'excel-import', 'security', 'troubleshooting', 'faq', 'contact'].map(id => (
-                        <a key={id} href={`#/docs#${id}`} className="block text-gray-700 hover:text-primary-600" onClick={(e) => { e.preventDefault(); const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}>{id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</a>
+                    {[
+                        'getting-started',
+                        'creating-forms',
+                        'form-builder',
+                        'excel-import',
+                        'filling-forms',
+                        'creating-reports',
+                        'data-api',
+                        'api-examples',
+                        'sharing-activities',
+                        'managing-data',
+                        'tips-tricks'
+                    ].map(id => (
+                        <a
+                            key={id}
+                            href={`#/docs#${id}`}
+                            className="block text-gray-700 hover:text-primary-600"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                const el = document.getElementById(id);
+                                if (el) el.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                        >
+                            {id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                        </a>
                     ))}
                 </nav>
             </aside>
 
             <main className="flex-1 p-8 overflow-y-auto">
                 <header className="mb-6">
-                    <h1 className="text-3xl font-bold">Intelliform — Documentation</h1>
-                    <p className="text-sm text-gray-600 mt-1">Complete developer and user guide for installing, running, integrating, and extending Intelliform.</p>
+                    <h1 className="text-3xl font-bold">User Guide — How to Use the App</h1>
+                    <p className="text-sm text-gray-600 mt-1">Complete guide to creating forms, collecting data, generating reports, and accessing your data through APIs.</p>
                 </header>
 
                 <section id="getting-started" className="mb-8">
                     <h2 className="text-2xl font-semibold">Getting Started</h2>
-                    <p className="mt-2">This guide helps you run Intelliform locally for development and understand the main concepts: Activities, Forms, RAG schemas, and the LLM SQL assistant.</p>
-                </section>
-
-                <section id="installation" className="mb-8">
-                    <h3 className="text-xl font-semibold">Installation</h3>
-                    <p className="mt-2">Clone the repository and install dependencies for both frontend and backend.</p>
-                    <pre className="mt-3 p-4 bg-gray-100 rounded text-sm overflow-auto">{`git clone <repo-url>
-cd intelliform
-npm install
-`}</pre>
-                    <p className="mt-2">Environment: create a `.env` file for the server with DB and SMTP settings. Example keys:</p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`DATABASE_URL=postgres://user:pass@localhost:5432/intelliform
-PORT=3000
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=you@example.com
-SMTP_PASS=secret
-`}</pre>
-                </section>
-
-                <section id="run-dev" className="mb-8">
-                    <h3 className="text-xl font-semibold">Running (Dev)</h3>
-                    <p className="mt-2">Start frontend and server in separate terminals:</p>
-                    <pre className="mt-3 p-4 bg-gray-100 rounded text-sm overflow-auto">{`# frontend (Vite)
-npm run dev
-
-# server (Express)
-npm run start:server
-`}</pre>
-                    <p className="mt-2">If your server runs on a different port, adjust API calls accordingly. In development the frontend may proxy requests to the server.</p>
-                </section>
-
-                <section id="frontend" className="mb-8">
-                    <h3 className="text-xl font-semibold">Frontend</h3>
-                    <p className="mt-2">Built with React + Vite and TypeScript. Key pages:</p>
-                    <ul className="list-disc list-inside mt-2">
-                        <li><strong>`pages/BuildFormPage.tsx`</strong> — form builder and bulk import.</li>
-                        <li><strong>`pages/FillFormPage.tsx`</strong> — standalone form renderer for collecting responses.</li>
-                        <li><strong>`pages/ActivitiesPage.tsx`</strong> — list, create, and manage activities (sharing, QR, embed planned).</li>
-                        <li><strong>`pages/SettingsPage.tsx`</strong> — RAG manager and provider settings.</li>
+                    <p className="mt-2">Welcome to the app! This guide will help you:</p>
+                    <ul className="list-disc list-inside mt-3 space-y-1">
+                        <li>Create and manage data collection forms</li>
+                        <li>Collect responses from users</li>
+                        <li>Generate reports and analyze data</li>
+                        <li>Access and share your data programmatically</li>
                     </ul>
+                    <p className="mt-3 text-gray-600">The app provides both a visual form builder and support for bulk imports from Excel to help you quickly set up your data collection workflows.</p>
                 </section>
 
-                <section id="backend" className="mb-8">
-                    <h3 className="text-xl font-semibold">Backend</h3>
-                    <p className="mt-2">Node.js + Express with Postgres. The server exposes APIs under `/api/*`. The database uses `dqai_`-prefixed tables for RAG and bookkeeping.</p>
-                    <p className="mt-2">Important files:</p>
-                    <ul className="list-disc list-inside mt-2">
-                        <li><strong>`server/index.js`</strong> — initializes DB, RAG persistence, provider dispatch, Chromadb bookkeeping, and exposes LLM & SQL endpoints.</li>
+                <section id="creating-forms" className="mb-8">
+                    <h3 className="text-xl font-semibold">Creating Forms</h3>
+                    <p className="mt-2">Forms are used to collect data from your team and field workers. You have two ways to create forms:</p>
+                    <ul className="list-disc list-inside mt-3 space-y-2">
+                        <li><strong>Form Builder</strong> — A visual interface to design forms step-by-step with different question types</li>
+                        <li><strong>Excel Import</strong> — Upload a spreadsheet to create many questions at once</li>
                     </ul>
+                    <p className="mt-3 text-gray-600">Each form belongs to a program (like "Health", "Education", "Safety") and can be used in multiple activities for data collection.</p>
                 </section>
 
-                <section id="api-reference" className="mb-8">
-                    <h3 className="text-xl font-semibold">API Reference</h3>
-                    <p className="mt-2">The following examples use <code>http://localhost:3000</code> as the server base URL — replace the host/port as needed.</p>
+                <section id="form-builder" className="mb-8">
+                    <h3 className="text-xl font-semibold">Using the Form Builder</h3>
+                    <p className="mt-2">The Form Builder allows you to create questions visually without any coding:</p>
 
-                    <h4 className="mt-4 font-semibold">GET /api/public/activity_links</h4>
-                    <p className="mt-2">Returns a list of activities with a client-side path for the standalone form.</p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`curl --request GET 'http://localhost:3000/api/public/activity_links'
-
-Response:
-[
-    {
-        "id": 123,
-        "title": "Site Inspection",
-        "program_name": "Safety",
-        "path": "#/standalone/fill/123"
-    }
-]
-`}</pre>
-
-                    <h4 className="mt-4 font-semibold">POST /api/llm/generate_sql</h4>
-                    <p className="mt-2">Ask the LLM to generate a read-only SQL query given a natural language prompt. The response includes an explanation ('think first') and a constrained SQL string. Example:</p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`curl --request POST 'http://localhost:3000/api/llm/generate_sql' \
-    --header 'Content-Type: application/json' \
-    --data-raw '{"prompt":"List all activities for program Safety with their start and end dates","provider":"local-ollama"}'
-
-Response:
-{
-    "text": "I will use the dqai_activities and dqai_programs tables...\n\nAction to Be Taken:\nSELECT a.id, a.title, a.start_date FROM dqai_activities a JOIN dqai_programs p ON p.id=a.program_id WHERE p.name='Safety' LIMIT 100;",
-    "sql": "SELECT ...",
-    "ragTables": ["dqai_activities","dqai_programs"],
-    "providerUsed": "local-ollama"
-}
-`}</pre>
-
-                    <h4 className="mt-4 font-semibold">POST /api/execute_sql</h4>
-                    <p className="mt-2">Executes a read-only SQL query (SELECT only). The server enforces read-only and a single statement. Example:</p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`curl --request POST 'http://localhost:3000/api/execute_sql' \
-    --header 'Content-Type: application/json' \
-    --data-raw '{"sql":"SELECT id, title FROM dqai_activities LIMIT 10"}'
-
-Response:
-{
-    "rows": [ { "id": 1, "title": "Site Inspection" }, ... ]
-}
-`}</pre>
-
-                    <h4 className="mt-4 font-semibold">RAG Admin Endpoints</h4>
-                    <p className="mt-2">Manage RAG schemas (persisted contexts used for SQL generation and RAG searches):</p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`GET /api/admin/rag_schemas
-POST /api/admin/rag_schemas  { table_name, schema: {...}, sample_rows: [...] }
-DELETE /api/admin/rag_schemas/:id
-`}</pre>
-                </section>
-
-                <section id="indicators" className="mb-8">
-                    <h3 className="text-xl font-semibold">Indicators</h3>
-                    <p className="mt-2">Indicators are computed metrics built from form answers or other DB fields. Indicators support two main formula styles:</p>
+                    <h4 className="mt-4 font-semibold text-lg">Step 1: Create a New Form</h4>
+                    <p className="mt-2">Navigate to <strong>Build Form</strong> and click "New Form". Enter:</p>
                     <ul className="list-disc list-inside mt-2">
-                        <li><strong>SQL</strong> — a SELECT query that returns a numeric `value` (or named columns for numerator/denominator). Prefix SQL formulas with <code>sql:</code> when saving in the admin UI to ensure the server treats the string as SQL.</li>
-                        <li><strong>Expression</strong> — JavaScript-like code executed on the server; expressions may call an internal `executeSql` helper to run queries and compute derived values.</li>
+                        <li><strong>Form Name</strong> — A clear title like "Site Inspection Checklist" or "Health Assessment"</li>
+                        <li><strong>Program</strong> — Select which program this form belongs to (Health, Education, Safety, etc.)</li>
+                        <li><strong>Description</strong> — Optional notes about what this form is for</li>
                     </ul>
-                    <p className="mt-2">Use the placeholder <code>{'{selected_facility_id}'}</code> in SQL (and similar placeholders in expressions) so the indicator is evaluated in context (map popup, facility dashboard, test-runner).</p>
 
-                    <h4 className="mt-4 font-semibold">SQL example</h4>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm whitespace-pre-wrap break-words">{`sql:SELECT SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE 0 END) ) as value FROM dqai_answers WHERE question_id = 'q1764684635235' AND facility_id = {selected_facility_id}`}</pre>
-
-                    <h4 className="mt-4 font-semibold">Numerator / Denominator (SQL)</h4>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm whitespace-pre-wrap break-words">{`sql:SELECT
-    SUM(CASE WHEN answer_value::text::numeric >= 1 THEN 1 ELSE 0 END) AS num,
-    COUNT(*) AS denom
-FROM dqai_answers
-WHERE question_id = 'q1764684635235' AND facility_id = {selected_facility_id};
-
--- You can compute percentage in an expression or in SQL by wrapping this as a subquery and dividing.`}</pre>
-
-                    <h4 className="mt-4 font-semibold">Expression example</h4>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm whitespace-pre-wrap break-words">{`// This expression runs on the server and can use executeSql(...) to fetch rows
-const r = await executeSql("SELECT SUM(...) AS num, COUNT(*) AS denom FROM dqai_answers WHERE facility_id = {selected_facility_id}");
-const num = Number(r.rows[0].num || 0);
-const denom = Number(r.rows[0].denom || 0);
-return denom === 0 ? 0 : (num / denom) * 100;`}</pre>
-
-                    <p className="mt-2">When building indicators for activities, set the indicator's <strong>Activity</strong> in the admin UI to make it available in activity popups and to filter facilities in the Test Runner. Use the <strong>Unit Of Measurement</strong> field to describe how values should be displayed (%, people, tests, mL, etc.).</p>
-                                        <p className="text-xs text-gray-500">See full examples and migration notes in <code>docs/INDICATORS.md</code></p>
-                                        <div className="mt-2">
-                                            <button className="text-sm text-primary-600 hover:underline" onClick={async (e) => {
-                                                e.preventDefault();
-                                            }}
-                                                onMouseDown={(e) => e.preventDefault()}
-                                            >
-                                                {/* placeholder to keep layout for modal trigger below */}
-                                            </button>
-                                            <div className="text-sm mt-1">
-                                                <a href="#" className="text-primary-600 hover:underline" onClick={(ev) => { ev.preventDefault(); window.dispatchEvent(new CustomEvent('openIndicatorsDoc')); }}>Open Indicators docs (docs/INDICATORS.md)</a>
-                                            </div>
-                                        </div>
-                </section>
-
-                                {/* Indicators docs modal: listens for custom event to open */}
-                                <Modal isOpen={!!indicatorsOpen} onClose={() => setIndicatorsOpen(false)} title="Indicators — Documentation (docs/INDICATORS.md)" size="2xl" footer={(
-                                    <div className="flex justify-end">
-                                        <Button variant="secondary" onClick={() => setIndicatorsOpen(false)}>Close</Button>
-                                    </div>
-                                )}>
-                                    <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
-                                        {indicatorsLoading ? (
-                                            <div className="text-sm text-gray-500">Loading...</div>
-                                        ) : (
-                                            <div className="prose max-w-full" dangerouslySetInnerHTML={{ __html: indicatorsHtml || '<div class="text-sm text-gray-500">No content</div>' }} />
-                                        )}
-                                    </div>
-                                </Modal>
-
-                <section id="llm-rag" className="mb-8">
-                    <h3 className="text-xl font-semibold">RAG & LLM SQL Flow</h3>
-                    <p className="mt-2">High-level behavior:</p>
+                    <h4 className="mt-4 font-semibold text-lg">Step 2: Add Questions</h4>
+                    <p className="mt-2">Click "Add Question" and configure:</p>
                     <ul className="list-disc list-inside mt-2">
-                        <li>The server persists RAG schemas into <code>dqai_rag_schemas</code> with table/column info and sample rows (truncated).</li>
-                        <li>When generating SQL, the LLM is given the available tables and columns and asked to "think first" — returning an explanation and a constrained SQL statement only using known fields/tables.</li>
-                        <li>By default the SQL is read-only; execution is performed via <code>/api/execute_sql</code> that enforces SELECT-only semantics.</li>
-                        <li>Chroma indexing is optional; sample rows may be pushed to Chromadb and tracked in <code>dqai_rag_chroma_ids</code>.</li>
+                        <li><strong>Question Label</strong> — The text that users see (e.g., "Is the facility accessible?")</li>
+                        <li><strong>Question Type</strong> — Choose from available question types</li>
                     </ul>
-                </section>
+                    <ul className="list-disc list-inside mt-2 ml-6">
+                        <li><strong>Text</strong> — Short text input</li>
+                        <li><strong>Long Text</strong> — Multi-line paragraph</li>
+                        <li><strong>Dropdown</strong> — Select from predefined options</li>
+                        <li><strong>Checkbox</strong> — Multiple selections allowed</li>
+                        <li><strong>Radio</strong> — Single selection</li>
+                        <li><strong>Number</strong> — Numeric input</li>
+                        <li><strong>Date</strong> — Date picker</li>
+                        <li><strong>File Upload</strong> — Attach photos or documents</li>
+                    </ul>
 
-                <section id="activities" className="mb-8">
-                    <h3 className="text-xl font-semibold">Activities — Sharing, QR, Embed</h3>
-                    <p className="mt-2">Each activity has a standalone client-side route: </p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`https://your-host.example.com/#/standalone/fill/<activityId>`}</pre>
-                    <p className="mt-2">Embed as an iframe (example):</p>
-                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`<iframe src="https://your-host.example.com/#/standalone/fill/<activityId>" width="800" height="900"></iframe>`}</pre>
-                    <p className="mt-2">Suggested UI controls in Activities list:</p>
-                    <ul className="list-disc list-inside mt-2">
-                        <li>Copy link (clipboard) — full origin + path</li>
-                        <li>Generate QR — encode the full URL</li>
-                        <li>Embed modal — provide iframe snippet to copy</li>
-                    </ul>
+                    <h4 className="mt-4 font-semibold text-lg">Step 3: Add Options</h4>
+                    <p className="mt-2">For questions with predefined choices, add options users can select from. You can assign scores to options for metrics.</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Step 4: Organize into Groups</h4>
+                    <p className="mt-2">Group related questions together for better UX (e.g., "Infrastructure", "Staffing", "Supplies").</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Step 5: Preview and Save</h4>
+                    <p className="mt-2">Preview your form and save it. You can edit anytime.</p>
                 </section>
 
                 <section id="excel-import" className="mb-8">
-                    <h3 className="text-xl font-semibold">Excel Bulk Import (questions template)</h3>
-                    <p className="mt-2">The import expects a `.xlsx` workbook with two sheets: <code>questions</code> and <code>options</code>. Columns include:</p>
+                    <h3 className="text-xl font-semibold">Bulk Import Forms from Excel</h3>
+                    <p className="mt-2">Create many questions at once by uploading an Excel file, useful for migrating from other systems.</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Excel File Format</h4>
+                    <p className="mt-2">Your file should have at least one worksheet named <code>questions</code> with these columns:</p>
                     <ul className="list-disc list-inside mt-2">
-                        <li><code>label</code>, <code>type</code>, <code>options_key</code>, <code>score</code>, <code>reviewers_comment</code>, <code>group_name</code>, and others.</li>
+                        <li><strong>label</strong> — Question text (required)</li>
+                        <li><strong>type</strong> — <code>text</code>, <code>number</code>, <code>date</code>, <code>dropdown</code>, <code>checkbox</code>, <code>radio</code>, <code>file_upload</code>, <code>long_text</code></li>
+                        <li><strong>group_name</strong> — Section name</li>
+                        <li><strong>options_key</strong> — Reference to predefined options</li>
+                        <li><strong>score</strong> — Optional score/weight</li>
+                        <li><strong>required</strong> — Whether mandatory (yes/no)</li>
                     </ul>
-                    <p className="mt-2">The frontend generates a sample template via ExcelJS (see Build Form page).</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">How to Import</h4>
+                    <ol className="list-decimal list-inside mt-2 space-y-2">
+                        <li>Download optional template from Build Form page</li>
+                        <li>Fill in your questions data</li>
+                        <li>Click "Import from Excel" and select your file</li>
+                        <li>Review preview and confirm creation</li>
+                    </ol>
+
+                    <h4 className="mt-4 font-semibold text-lg">Example Structure</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`questions sheet:
+| label                  | type     | group_name | required |
+|------------------------|----------|-----------|----------|
+| Facility Name          | text     | Basic     | yes      |
+| Inspection Date        | date     | Basic     | yes      |
+| Cleanliness Rating     | dropdown | Assessment| yes      |
+
+options sheet:
+| options_key      | option_value | option_score |
+|------------------|--------------|--------------|
+| rating_scale     | Poor         | 1            |
+| rating_scale     | Fair         | 2            |
+| rating_scale     | Good         | 3            |`}
+                    </pre>
                 </section>
 
-                <section id="security" className="mb-8">
-                    <h3 className="text-xl font-semibold">Security & Best Practices</h3>
+                <section id="filling-forms" className="mb-8">
+                    <h3 className="text-xl font-semibold">Filling Out Forms</h3>
+                    <p className="mt-2">Field workers and team members fill forms through the app:</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">How to Fill</h4>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li>Go to <strong>Activities</strong> to find forms</li>
+                        <li>Answer all required questions (marked *)</li>
+                        <li>Save progress and return later if needed</li>
+                        <li>Click "Submit" when complete</li>
+                    </ul>
+
+                    <h4 className="mt-4 font-semibold text-lg">Features</h4>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li><strong>File Upload</strong> — Attach photos or documents</li>
+                        <li><strong>Grouped Questions</strong> — Easy navigation</li>
+                        <li><strong>Validation</strong> — Catches errors before submission</li>
+                        <li><strong>Timestamps</strong> — Auto date/time stamp responses</li>
+                    </ul>
+
+                    <h4 className="mt-4 font-semibold text-lg">Sharing</h4>
                     <ul className="list-disc list-inside mt-2">
-                        <li>SQL execution endpoint is read-only and validates single-statement SELECT queries only.</li>
-                        <li>Do not expose provider credentials in client-side code.</li>
-                        <li>Use HTTPS in production and secure SMTP credentials upstream.</li>
+                        <li><strong>Copy Link</strong> — Email or message the URL</li>
+                        <li><strong>QR Code</strong> — Easy mobile access</li>
+                        <li><strong>Embed</strong> — Embed on websites</li>
                     </ul>
                 </section>
 
-                <section id="troubleshooting" className="mb-8">
-                    <h3 className="text-xl font-semibold">Troubleshooting</h3>
-                    <p className="mt-2">Common issues and fixes:</p>
-                    <ul className="list-disc list-inside mt-2">
-                        <li><strong>Dropdowns not showing:</strong> Remove Materialize CSS/JS (conflicts with Tailwind). This app already removed those includes.</li>
-                        <li><strong>Excel template download broken:</strong> Use the client-side ExcelJS generator (already implemented).</li>
-                        <li><strong>JSONB insert errors:</strong> Ensure objects are stringified before database bind parameters.</li>
+                <section id="creating-reports" className="mb-8">
+                    <h3 className="text-xl font-semibold">Creating Reports</h3>
+                    <p className="mt-2">Analyze and visualize your collected data with reports:</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Report Types</h4>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li><strong>Summary Reports</strong> — Response counts and statistics</li>
+                        <li><strong>Data Tables</strong> — Detailed response view</li>
+                        <li><strong>Charts & Graphs</strong> — Visual data representation</li>
+                        <li><strong>Maps</strong> — Geographic data visualization</li>
+                    </ul>
+
+                    <h4 className="mt-4 font-semibold text-lg">Building a Report</h4>
+                    <ol className="list-decimal list-inside mt-2 space-y-2">
+                        <li>Go to <strong>Reports</strong> and create new report</li>
+                        <li>Select which form/activity to analyze</li>
+                        <li>Choose visualization type (table, chart, map)</li>
+                        <li>Apply filters (date, facility, program)</li>
+                        <li>Customize and export as PDF or Excel</li>
+                    </ol>
+
+                    <h4 className="mt-4 font-semibold text-lg">Report Features</h4>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li><strong>Filters</strong> — By date, facility, program, answers</li>
+                        <li><strong>Grouping</strong> — By facility, program, date</li>
+                        <li><strong>Aggregations</strong> — Totals, averages, percentages</li>
+                        <li><strong>Export</strong> — PDF or Excel download</li>
+                        <li><strong>Scheduling</strong> — Auto-run on schedule</li>
                     </ul>
                 </section>
 
-                <section id="faq" className="mb-8">
-                    <h3 className="text-xl font-semibold">FAQ</h3>
-                    <p className="mt-2"><strong>Q:</strong> How do I change the LLM provider?<br /><strong>A:</strong> Use the Settings page to add or reorder providers. The server will attempt local Ollama first if configured.</p>
+                <section id="data-api" className="mb-8">
+                    <h3 className="text-xl font-semibold">Data API Reference</h3>
+                    <p className="mt-2">Access your data programmatically for integrations, custom reports, or third-party apps.</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Authentication</h4>
+                    <p className="mt-2">Include your API token in request headers:</p>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`Authorization: Bearer YOUR_API_TOKEN
+Content-Type: application/json`}
+                    </pre>
+
+                    <h4 className="mt-4 font-semibold text-lg">Common API Endpoints</h4>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li><code>GET /api/activities</code> — List all activities</li>
+                        <li><code>GET /api/activities/:id</code> — Get activity details</li>
+                        <li><code>GET /api/responses</code> — Get form responses</li>
+                        <li><code>GET /api/responses/:id</code> — Get specific response</li>
+                        <li><code>POST /api/responses</code> — Submit form response</li>
+                    </ul>
+
+                    <h4 className="mt-4 font-semibold text-lg">Example Request</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`curl -H "Authorization: Bearer TOKEN" \\
+  https://your-app.com/api/activities`}
+                    </pre>
                 </section>
 
-                <section id="contact" className="mb-8">
-                    <h3 className="text-xl font-semibold">Contact & Contribution</h3>
-                    <p className="mt-2">For contributions, open pull requests against the repository. For runtime issues, check server logs and restart the server after config changes.</p>
+                <section id="api-examples" className="mb-8">
+                    <h3 className="text-xl font-semibold">API Examples</h3>
+                    <p className="mt-2">Common use cases and code examples:</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Fetch All Activities</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`const resp = await fetch('/api/activities', {
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+});
+const activities = await resp.json();`}
+                    </pre>
+
+                    <h4 className="mt-4 font-semibold text-lg">Submit Form Response</h4>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`await fetch('/api/responses', {
+  method: 'POST',
+  headers: { 
+    'Authorization': 'Bearer YOUR_TOKEN',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    activity_id: 123,
+    answers: { question_1: 'answer_value' }
+  })
+});`}
+                    </pre>
+                </section>
+
+                <section id="sharing-activities" className="mb-8">
+                    <h3 className="text-xl font-semibold">Sharing & Distribution</h3>
+                    <p className="mt-2">Share forms with users in multiple ways:</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Direct Link</h4>
+                    <p className="mt-2">Copy the activity link and share via email or messaging:</p>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`https://your-app.com/#/standalone/fill/ACTIVITY_ID`}
+                    </pre>
+
+                    <h4 className="mt-4 font-semibold text-lg">QR Codes</h4>
+                    <p className="mt-2">Generate QR codes for easy mobile scanning and instant form access.</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Embedded Forms</h4>
+                    <p className="mt-2">Embed forms on your website:</p>
+                    <pre className="mt-2 p-4 bg-gray-100 rounded text-sm overflow-auto">{`<iframe src="https://your-app.com/#/standalone/fill/ACTIVITY_ID"
+  width="800" height="900"></iframe>`}
+                    </pre>
+                </section>
+
+                <section id="managing-data" className="mb-8">
+                    <h3 className="text-xl font-semibold">Managing Your Data</h3>
+                    <p className="mt-2">Best practices for data management:</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Data Storage</h4>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li>All responses are securely stored</li>
+                        <li>Attachments are preserved and searchable</li>
+                        <li>Timestamps track when responses were submitted</li>
+                    </ul>
+
+                    <h4 className="mt-4 font-semibold text-lg">Data Export</h4>
+                    <p className="mt-2">Export data from reports in PDF or Excel format for offline analysis or sharing with stakeholders.</p>
+
+                    <h4 className="mt-4 font-semibold text-lg">Data Privacy</h4>
+                    <p className="mt-2">Use field-level access controls to limit who can see certain data. Configure role-based permissions in Settings.</p>
+                </section>
+
+                <section id="tips-tricks" className="mb-8">
+                    <h3 className="text-xl font-semibold">Tips & Tricks</h3>
+                    <ul className="list-disc list-inside mt-2 space-y-2">
+                        <li><strong>Organize by Programs</strong> — Group related forms into programs for easier management</li>
+                        <li><strong>Use Question Groups</strong> — Organize long forms into logical sections</li>
+                        <li><strong>Scoring & Metrics</strong> — Assign scores to options to enable automatic calculations</li>
+                        <li><strong>Regular Reports</strong> — Set up scheduled reports to track progress automatically</li>
+                        <li><strong>Mobile First</strong> — Test forms on mobile devices as most users will use phones</li>
+                        <li><strong>Clear Instructions</strong> — Add descriptions to complex questions for better responses</li>
+                        <li><strong>Required vs Optional</strong> — Mark only essential questions as required</li>
+                        <li><strong>File Upload Limits</strong> — Keep file sizes reasonable for faster uploads in the field</li>
+                    </ul>
                 </section>
             </main>
         </div>

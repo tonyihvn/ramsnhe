@@ -24,7 +24,11 @@ const StatCard = ({ title, value, icon, to }: { title: string; value: number; ic
 
 
 const DashboardPage: React.FC = () => {
-  const { programs, activities, facilities, users } = useMockData();
+  const { programs, activities, facilities, users, currentUser } = useMockData();
+  
+  // Check if user is admin or super admin
+  const userRole = String(currentUser?.role || '').toLowerCase().trim();
+  const isAdminUser = userRole === 'admin' || userRole === 'super-admin' || userRole === 'super_admin';
 
   const activityStatusData = activities.reduce((acc, activity) => {
     const status = activity.status;
@@ -49,7 +53,7 @@ const DashboardPage: React.FC = () => {
         <StatCard title="Total Programs" value={programs.length} icon={<FolderIcon className="h-6 w-6" />} to="/programs" />
         <StatCard title="Total Activities" value={activities.length} icon={<ClipboardDocumentListIcon className="h-6 w-6" />} to="/activities" />
         <StatCard title="Total Facilities" value={facilities.length} icon={<BuildingOfficeIcon className="h-6 w-6" />} to="/facilities" />
-        <StatCard title="Total Users" value={users.length} icon={<UserGroupIcon className="h-6 w-6" />} to="/users" />
+        {isAdminUser && <StatCard title="Total Users" value={users.length} icon={<UserGroupIcon className="h-6 w-6" />} to="/users" />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

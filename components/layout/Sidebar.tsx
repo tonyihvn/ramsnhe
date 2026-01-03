@@ -45,12 +45,22 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
 
   // load datasets for sidebar submenu
   useEffect(() => {
+    // Only fetch if user is logged in
+    if (!currentUser?.id) {
+      setDatasetsList([]);
+      return;
+    }
+    
     let canceled = false;
     (async () => {
       try {
         // Add cache-busting to force fresh data when user changes
         const cacheBust = `?t=${Date.now()}`;
-        const r = await fetch(`/api/admin/datasets${cacheBust}`, { credentials: 'include' });
+        // Try public endpoint first, fallback to admin endpoint
+        let r = await fetch(`/api/datasets${cacheBust}`, { credentials: 'include' });
+        if (!r.ok) {
+          r = await fetch(`/api/admin/datasets${cacheBust}`, { credentials: 'include' });
+        }
         if (!r.ok) return;
         const j = await r.json();
         if (!canceled) setDatasetsList(Array.isArray(j) ? j.filter((d:any)=>d.show_in_menu) : []);
@@ -64,12 +74,17 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
     return '/' + k.split('/').map(seg => seg.startsWith(':') ? '' : seg).filter(Boolean).join('/');
   };
 
-  const hasPermissionFlag = (flag: 'can_view' | 'can_create' | 'can_edit' | 'can_delete', pageKey: string, sectionKey?: string) => {
+  const hasPermissionFlag = (flag: 'can_view' | 'can_create' | 'can_edit' | 'can_delete', pageKey: string, sectionKey?: string, visibleToAll?: boolean) => {
     try {
       const userRole = String(currentUser?.role || '').toLowerCase().trim();
       
       // Super admin and admin users see all menus
       if (userRole === 'admin' || userRole === 'super-admin' || userRole === 'super_admin') {
+        return true;
+      }
+      
+      // If item is marked as visibleToAll, show it
+      if (visibleToAll) {
         return true;
       }
       
@@ -126,7 +141,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
                   const userRole = String(currentUser?.role || '').toLowerCase().trim();
                   const isSuperAdmin = userRole === 'super-admin' || userRole === 'super_admin';
                   if (item.superAdminOnly && !isSuperAdmin) return false;
-                  return hasPermissionFlag('can_view', item.page_key || item.href);
+                  return hasPermissionFlag('can_view', item.page_key || item.href, undefined, item.visibleToAll);
                 })
                 .map((item) => {
                 const isActive = location.pathname.startsWith(item.href);
@@ -194,7 +209,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
                   const userRole = String(currentUser?.role || '').toLowerCase().trim();
                   const isSuperAdmin = userRole === 'super-admin' || userRole === 'super_admin';
                   if (item.superAdminOnly && !isSuperAdmin) return false;
-                  return hasPermissionFlag('can_view', item.page_key || item.href);
+                  return hasPermissionFlag('can_view', item.page_key || item.href, undefined, item.visibleToAll);
                 });
 
                 // Group items by their group property

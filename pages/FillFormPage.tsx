@@ -147,8 +147,8 @@ const SearchableSelect: React.FC<{
             {open && (
                 <div className="absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-auto bg-white border rounded shadow-lg">
                     {(filtered.length === 0) && <div className="p-2 text-xs text-gray-500">No matching options</div>}
-                    {filtered.map((opt, idx) => (
-                        <div key={idx} className="p-2 hover:bg-gray-100 cursor-pointer text-sm" onClick={() => {
+                    {filtered.map((opt) => (
+                        <div key={`${opt.value}-${opt.label}`} className="p-2 hover:bg-gray-100 cursor-pointer text-sm" onClick={() => {
                             if (opt && opt.score !== undefined) onChange({ value: opt.value, score: Number(opt.score) });
                             else onChange(opt.value);
                             setInput(opt.label);
@@ -216,9 +216,9 @@ const SearchableSelect: React.FC<{
                 const radioFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
                 return (
                     <div>
-                        {radioFilteredOptions?.map((opt, idx) => (
+                        {radioFilteredOptions?.map((opt) => (
                             <MInput
-                                key={idx}
+                                key={`${question.id}-radio-${opt.value}`}
                                 type="radio"
                                 name={question.id}
                                 label={opt.label}
@@ -241,8 +241,8 @@ const SearchableSelect: React.FC<{
                 };
                 return (
                     <div>
-                        {checkboxFilteredOptions?.map((opt, idx) => (
-                            <MInput key={idx} type="checkbox" name={`${question.id}-${idx}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
+                        {checkboxFilteredOptions?.map((opt) => (
+                            <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
                         ))}
                     </div>
                 );
@@ -400,15 +400,17 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const activity = getActivity(activityId || '');
     const formDef: FormDefinition | undefined = activity?.formDefinition;
 
-    // Redirect to login if not authenticated
-    if (!currentUser && !standaloneMode) return <Navigate to="/login" replace />;
-
+    // Initialize all hooks BEFORE any conditional returns (required by React Rules of Hooks)
     const [answers, setAnswers] = useState<Record<string, any>>({});
     const [formSubmitted, setFormSubmitted] = useState(false);
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
     const [uploadToFolder, setUploadToFolder] = useState<boolean>(false);
     const [activePageIndex, setActivePageIndex] = useState(0);
     const [editingReport, setEditingReport] = useState<ActivityReport | undefined>(undefined);
+    const [repeatRows, setRepeatRows] = useState<Record<string, any[]>>({});
+    const [selectedFacilityId, setSelectedFacilityId] = useState<number | undefined>(currentUser?.facilityId || undefined);
+    const [selectedUserId, setSelectedUserId] = useState<number | undefined>(currentUser?.id || undefined);
+    const [pagePerms, setPagePerms] = useState<any[] | null>(null);
 
     const location = useLocation();
     const search = new URLSearchParams(location.search);
@@ -417,9 +419,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const handleAnswerChange = (questionId: string, value: any) => {
         setAnswers(prev => ({ ...prev, [questionId]: value }));
     };
-
-    // Repeatable sections state: map of groupName -> array of row objects (questionId -> value)
-    const [repeatRows, setRepeatRows] = useState<Record<string, any[]>>({});
 
     // Helper to derive a stable group key for a section.
     // Use explicit section.groupName when provided and non-empty; otherwise fall back to a stable id-based key.
@@ -507,6 +506,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         }
     };
 
+    // Redirect to login if not authenticated
+    if (!currentUser && !standaloneMode) return <Navigate to="/login" replace />;
+
     // Recompute computed fields only when formDef changes or answers for non-computed fields change
     React.useEffect(() => {
         if (!formDef) return;
@@ -575,10 +577,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         window.scrollTo(0, 0);
     };
 
-    const [selectedFacilityId, setSelectedFacilityId] = useState<number | undefined>(currentUser?.facilityId || undefined);
-    const [selectedUserId, setSelectedUserId] = useState<number | undefined>(currentUser?.id || undefined);
-    const [pagePerms, setPagePerms] = useState<any[] | null>(null);
-
     // Fetch page permissions for current user's role (if available)
     useEffect(() => {
         let cancelled = false;
@@ -588,44 +586,71 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 const roleName = String(currentUser.role || '').trim();
                 if (!roleName) return;
                 const resp = await fetch(`/api/page_permissions?role=${encodeURIComponent(roleName)}`);
-                if (!resp.ok) return;
+                if (!resp.ok) {
+                    console.warn(`Failed to load page permissions for role ${roleName}:`, resp.status);
+                    return;
+                }
                 const j = await resp.json();
+                console.log('Loaded page permissions for role', roleName, ':', j);
                 if (!cancelled) setPagePerms(j);
-            } catch (e) { /* ignore */ }
+            } catch (e) { 
+                console.error('Error loading page permissions:', e);
+            }
         })();
         return () => { cancelled = true; };
     }, [currentUser && currentUser.role]);
 
     const normalizePageKey = (k: string) => {
         if (!k) return k;
-        // remove parameter segments like :activityId so permissions can be stored generically
-        return '/' + k.split('/').map(seg => seg.startsWith(':') ? '' : seg).filter(Boolean).join('/');
+        // No normalization needed - we store literal page keys
+        return k;
     };
 
     const hasPermissionFlag = (flag: 'can_view'|'can_create'|'can_edit'|'can_delete', pageKey: string, sectionKey?: string) => {
         try {
-            // Admins and super admins always see everything in the UI (builder/admin workflows rely on full visibility)
+            // Admins and super admins always see everything in the UI
             const role = currentUser && String(currentUser.role || '').toLowerCase();
             if (role === 'admin' || role === 'super-admin' || role === 'super_admin') return true;
-            if (!pagePerms) return true; // default allow when no permissions set
-            const norm = normalizePageKey(pageKey || '');
-            // exact match first (page+section)
+            
+            // If no permissions are configured, allow all access (default behavior)
+            if (!pagePerms || pagePerms.length === 0) {
+                console.log('[PERM] No PAGE_PERMISSIONS configured, allowing all access');
+                return true;
+            }
+            
+            // Normalize the input section key to null if undefined
+            const checkSectionKey = sectionKey ? String(sectionKey).trim() : null;
+            const checkPageKey = pageKey ? String(pageKey).trim() : '';
+            
+            console.log(`[PERM] Looking for pageKey="${checkPageKey}", sectionKey="${checkSectionKey}", flag=${flag}`);
+            console.log(`[PERM] Available records:`, pagePerms.map((p: any) => ({
+                page_key: String(p.page_key || '').trim(),
+                section_key: p.section_key ? String(p.section_key || '').trim() : null,
+                [flag]: p[flag]
+            })));
+            
+            // Find matching permission record
             for (const p of pagePerms) {
-                const pk = normalizePageKey(p.page_key || p.pageKey || '');
-                const sk = p.section_key || p.sectionKey || p.section || null;
-                const skClean = sk ? String(sk) : null;
-                if (skClean) {
-                    if (pk === norm && skClean === (sectionKey || null)) return !!p[flag];
+                const dbPageKey = String(p.page_key || '').trim();
+                const dbSectionKey = p.section_key ? String(p.section_key).trim() : null;
+                
+                const pageKeyMatch = (dbPageKey === checkPageKey);
+                const sectionKeyMatch = (dbSectionKey === checkSectionKey);
+                
+                if (pageKeyMatch && sectionKeyMatch) {
+                    const hasFlag = !!p[flag];
+                    console.log(`[PERM]   ✓ FOUND: ${flag}=${hasFlag}`);
+                    return hasFlag;
                 }
             }
-            // then match by page prefix
-            for (const p of pagePerms) {
-                const pk = normalizePageKey(p.page_key || p.pageKey || '');
-                if (!pk) continue;
-                if (norm.startsWith(pk)) return !!p[flag];
-            }
+            
+            // No matching record found
+            console.log(`[PERM]   ✗ NOT FOUND in permissions - denying access`);
+            return false;
+        } catch (e) { 
+            console.error('[PERM] Exception in hasPermissionFlag:', e);
             return true;
-        } catch (e) { return true; }
+        }
     };
 
     const handleFinalize = () => {
@@ -938,7 +963,32 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         );
     }
 
-    const currentPage = formDef.pages[activePageIndex] || formDef.pages[0];
+    // Filter pages and sections by permission at the top level
+    const getPageKey = (pageId: string) => `/activities/fill/${activityId || ''}:page:${pageId}`;
+    const visiblePages = formDef.pages.filter(page => {
+      const pageKey = getPageKey(page.id);
+      console.log(`[VISIBILITY] Checking visibility for page "${page.name}" with pageKey="${pageKey}"`);
+      const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
+      console.log(`[VISIBILITY]   -> can_view=${viewAllowed}`);
+      return viewAllowed;
+    });
+
+    // If user has no visible pages, show access message
+    if (visiblePages.length === 0) {
+        return (
+            <Card className="m-6 bg-yellow-50 border border-yellow-200">
+                <div className="p-6 text-center">
+                    <h2 className="text-lg font-semibold text-yellow-800 mb-2">No Accessible Pages</h2>
+                    <p className="text-yellow-700 mb-4">You do not have permission to view any pages in this form.</p>
+                    <Button onClick={() => history('/activities')} variant="secondary">Back to Activities</Button>
+                </div>
+            </Card>
+        );
+    }
+
+    // Ensure activePageIndex is valid for visible pages
+    const safeActivePageIndex = activePageIndex < visiblePages.length ? activePageIndex : 0;
+    const currentPage = visiblePages[safeActivePageIndex] || visiblePages[0];
 
     return (
         <div className="space-y-6">
@@ -961,12 +1011,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     <form onSubmit={handleSubmit}>
                         <div className="border-b border-gray-200">
                             <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
-                                        {formDef.pages.filter(page => {
-                                            const pagePath = `/activities/fill/${activityId || ''}`;
-                                            const viewAllowed = hasPermissionFlag('can_view', pagePath, page.id);
-                                            return viewAllowed;
-                                        }).map((page, index) => (
-                                            <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === activePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
+                                        {visiblePages.map((page, index) => (
+                                            <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === safeActivePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
                                                 {page.name}
                                             </button>
                                         ))}
@@ -975,8 +1021,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
                         <div className="mt-6 space-y-8">
                             {currentPage.sections.filter(section => {
-                                const pagePath = `/activities/fill/${activityId || ''}`;
-                                const sectionAllowed = hasPermissionFlag('can_view', pagePath, section.id);
+                                const pageKey = getPageKey(currentPage.id);
+                                const sectionAllowed = hasPermissionFlag('can_view', pageKey, section.id);
                                 return sectionAllowed;
                             }).map(section => (
                                 <div key={section.id} className="bg-gray-50 p-4 rounded-md">
@@ -1014,9 +1060,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                             else if (q.columnSize === 3) colClass = 'md:col-span-3 col-span-12';
                                                             else colClass = 'col-span-12';
                                                             // determine whether current role can create/edit in this section
-                                                            const pagePath = `/activities/fill/${activityId || ''}`;
-                                                            const canCreateSection = hasPermissionFlag('can_create', pagePath, section.id);
-                                                            const canEditSection = hasPermissionFlag('can_edit', pagePath, section.id);
+                                                            const pageKey = getPageKey(currentPage.id);
+                                                            const canCreateSection = hasPermissionFlag('can_create', pageKey, section.id);
+                                                            const canEditSection = hasPermissionFlag('can_edit', pageKey, section.id);
                                                             const canInteract = editingReport ? canEditSection : canCreateSection;
 
                                                             return (
@@ -1048,9 +1094,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                             const groupName = getSectionGroupName(section);
                                             const rows = Array.isArray(repeatRows[groupName]) ? repeatRows[groupName] : [{}];
                                             // determine section-level permissions for repeatable rows
-                                            const pagePath = `/activities/fill/${activityId || ''}`;
-                                            const canCreateSection = hasPermissionFlag('can_create', pagePath, section.id);
-                                            const canEditSection = hasPermissionFlag('can_edit', pagePath, section.id);
+                                            const pageKey = getPageKey(currentPage.id);
+                                            const canCreateSection = hasPermissionFlag('can_create', pageKey, section.id);
+                                            const canEditSection = hasPermissionFlag('can_edit', pageKey, section.id);
                                             const canInteract = editingReport ? canEditSection : canCreateSection;
 
                                             return rows.map((row, rowIndex) => (

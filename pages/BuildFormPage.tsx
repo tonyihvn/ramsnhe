@@ -460,13 +460,13 @@ const BuildFormPage: React.FC = () => {
       return { can_create: false, can_view: false, can_edit: false, can_delete: false };
     };
     try {
-      // initialize defaults (deny-by-default, with role-specific exceptions)
+      // initialize defaults for all roles
       for (const r of roles) {
         const roleName = (r && (r.name || r)) ? (r.name || r) : String(r || '');
         out[roleName] = roleDefault(roleName);
       }
-
-      // fetch page_permissions per role (server supports GET /api/page_permissions?role=...)
+      
+      // Fetch page_permissions per role
       await Promise.all((roles || []).map(async (r: any) => {
         try {
           const rn = (r && (r.name || r)) ? (r.name || r) : String(r || '');
@@ -543,6 +543,7 @@ const BuildFormPage: React.FC = () => {
         }
       }
     } catch (e) { /* ignore */ }
+    // Set rolePerms to only contain permissions for this target
     setRolePerms(out);
     setRolePermsLoading(false);
   };
@@ -550,8 +551,8 @@ const BuildFormPage: React.FC = () => {
   const openRoleModalForPage = async (pageIndex: number) => {
     if (!formDef) return;
     const page = formDef.pages[pageIndex];
-    // Use activity-based page key so permissions align with FillFormPage checks
-    const pk = `/activities/fill/${activityId}`;
+    // Use activity-based page key with page ID to uniquely identify each page
+    const pk = `/activities/fill/${activityId}:page:${page.id}`;
     setRoleModalPageKey(pk);
     setRoleModalSectionKey(null);
     setRoleModalTarget({ type: 'page', pageIndex });
@@ -564,8 +565,8 @@ const BuildFormPage: React.FC = () => {
     if (!formDef) return;
     const page = formDef.pages[pageIndex];
     const section = page.sections[sectionIndex];
-    // Align page key with FillFormPage (activity-based) and use section id for section_key
-    const pk = `/activities/fill/${activityId}`;
+    // Align page key with FillFormPage (activity-based with page ID) and use section id for section_key
+    const pk = `/activities/fill/${activityId}:page:${page.id}`;
     const sk = section.id || `section-${sectionIndex}`;
     setRoleModalPageKey(pk);
     setRoleModalSectionKey(sk);
@@ -577,9 +578,9 @@ const BuildFormPage: React.FC = () => {
   const handleSaveRolePerms = async () => {
     if (!roleModalTarget) return alert('No target selected');
     const payload: any[] = [];
+    // Save all roles currently in rolePerms state (which only contains perms for current target)
     for (const [roleName, permsAny] of Object.entries(rolePerms || {})) {
       const perms = permsAny as { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean };
-      // Persist exactly what the user configured for each role; defaults are applied only at load-time
       payload.push({
         page_key: roleModalPageKey,
         section_key: roleModalSectionKey || null,
@@ -1045,10 +1046,10 @@ const BuildFormPage: React.FC = () => {
               question.columnSize,
               page.name,
               section.name,
-              question.metadata?.showif || '',
-              question.metadata?.calculation || '',
+              question.metadata?.showIf || '',
+              question.metadata?.computedFormula || '',
               question.metadata?.score || 0,
-              question.metadata?.reviewersComment ? 'true' : 'false',
+              question.metadata?.displayReviewersComment ? 'true' : 'false',
               section.groupName || ''
             ]);
           });

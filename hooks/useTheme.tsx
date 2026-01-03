@@ -71,7 +71,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (e) { }
     }, [settings]);
 
-    // Determine if current user is admin to enable auto-save
+    // Determine if current user is admin to enable auto-save AND load persisted settings
     useEffect(() => {
         (async () => {
             try {
@@ -79,7 +79,37 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
                 if (!r.ok) { setIsAdmin(false); return; }
                 const j = await r.json();
                 const role = (j && (j.role || '')).toString().toLowerCase();
-                setIsAdmin(role === 'admin' || role === 'super-admin' || role === 'super_admin');
+                const isAdminUser = role === 'admin' || role === 'super-admin' || role === 'super_admin';
+                setIsAdmin(isAdminUser);
+                
+                // If admin, load persisted settings from server
+                if (isAdminUser) {
+                    try {
+                        const settingsRes = await fetch('/api/admin/settings', { credentials: 'include' });
+                        if (!settingsRes.ok) return;
+                        const payload = await settingsRes.json();
+                        if (!payload) return;
+                        // payload is { key: value } mapping; merge keys that match ThemeSettings
+                        const merge: Partial<ThemeSettings> = {};
+                        // common theme keys live at top-level in the settings object; if server saved the whole theme object, it may be returned directly
+                        if (typeof payload === 'object' && !Array.isArray(payload)) {
+                            // if payload looks like a theme object directly (has primaryColor), merge it
+                            if (payload.primaryColor) {
+                                Object.assign(merge, payload);
+                            } else if (payload.theme) {
+                                Object.assign(merge, payload.theme);
+                            } else {
+                                // sometimes settings stored top-level — pick known keys
+                                ['primaryColor','sidebarBg','navTextColor','logoColor','textColor','fontFamily','navbarBg','logoDataUrl','logoText','fontSize','logoWidth','organizationName','backgroundImage'].forEach(k => {
+                                    if (k in payload) (merge as any)[k] = (payload as any)[k];
+                                });
+                                // also if server returned many keys and one is 'theme', prefer that
+                                if (payload.settings && typeof payload.settings === 'object') Object.assign(merge, payload.settings);
+                            }
+                        }
+                        if (Object.keys(merge).length) setSettingsState(prev => ({ ...prev, ...merge }));
+                    } catch (e) { /* ignore settings fetch */ }
+                }
             } catch (e) { setIsAdmin(false); }
         })();
     }, []);
@@ -87,40 +117,10 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     // Debounced autosave: if admin, persist theme to server after changes
     const persistToServer = async (toSave: ThemeSettings) => {
         try {
-            await fetch('/api/admin/settings', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toSave) });
+            // Try admin endpoint first, ignore errors silently
+            await fetch('/api/admin/settings', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toSave) }).catch(() => {});
         } catch (e) { /* ignore saving errors silently */ }
     };
-
-    // On mount, try to load persisted settings from server (admin endpoint). Fail silently if unauthorized.
-    useEffect(() => {
-        (async () => {
-            try {
-                const r = await fetch('/api/admin/settings', { credentials: 'include' });
-                if (!r.ok) return;
-                const payload = await r.json();
-                if (!payload) return;
-                // payload is { key: value } mapping; merge keys that match ThemeSettings
-                const merge: Partial<ThemeSettings> = {};
-                // common theme keys live at top-level in the settings object; if server saved the whole theme object, it may be returned directly
-                if (typeof payload === 'object' && !Array.isArray(payload)) {
-                    // if payload looks like a theme object directly (has primaryColor), merge it
-                    if (payload.primaryColor) {
-                        Object.assign(merge, payload);
-                    } else if (payload.theme) {
-                        Object.assign(merge, payload.theme);
-                    } else {
-                        // sometimes settings stored top-level — pick known keys
-                        ['primaryColor','sidebarBg','navTextColor','logoColor','textColor','fontFamily','navbarBg','logoDataUrl','logoText','fontSize','logoWidth','organizationName','backgroundImage'].forEach(k => {
-                            if (k in payload) (merge as any)[k] = (payload as any)[k];
-                        });
-                        // also if server returned many keys and one is 'theme', prefer that
-                        if (payload.settings && typeof payload.settings === 'object') Object.assign(merge, payload.settings);
-                    }
-                }
-                if (Object.keys(merge).length) setSettingsState(prev => ({ ...prev, ...merge }));
-            } catch (e) { /* ignore */ }
-        })();
-    }, []);
 
     const setSettings = (patch: Partial<ThemeSettings>) => {
         setSettingsState(prev => {

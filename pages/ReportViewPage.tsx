@@ -34,6 +34,8 @@ const ReportViewPage: React.FC = () => {
   const [imageModalOpen, setImageModalOpen] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
   const [facilityName, setFacilityName] = useState<string | null>(null);
+  const [powerbiExpanded, setPowerbiExpanded] = useState(false);
+  const [conversationExpanded, setConversationExpanded] = useState(false);
 
   const saveReview = async () => {
     if (!report) return;
@@ -528,40 +530,53 @@ const ReportViewPage: React.FC = () => {
 
       {/* Power BI Card */}
       <Card>
-        <h2 className="text-lg font-semibold mb-2">Power BI</h2>
-        {powerbiConfig && powerbiConfig.mode && powerbiConfig.mode.toLowerCase() === 'disabled' && <div className="text-sm text-gray-500 mb-2">Power BI embed is disabled for this report.</div>}
-        {powerbiConfig && powerbiConfig.mode && powerbiConfig.mode.toLowerCase() === 'enabled' && powerbiConfig.powerbi_link && (
-          <div className="mb-4">
-            <div className="text-sm text-gray-700 mb-2">Embedded Power BI</div>
-            <div style={{ width: '100%', minHeight: 360 }}>
-              {(() => {
-                const extractUrlFromIframe = (maybeIframe: any) => {
-                  if (!maybeIframe) return null;
-                  if (typeof maybeIframe !== 'string') return String(maybeIframe);
-                  const s = maybeIframe.trim();
-                  if (s.startsWith('<iframe') || /<iframe/i.test(s)) {
-                    const m = s.match(/src\s*=\s*"([^"]+)"/) || s.match(/src\s*=\s*'([^']+)'/) || s.match(/src\s*=\s*([^\s>]+)/);
-                    if (m && m[1]) return m[1];
-                  }
-                  return s;
-                };
-                const raw = powerbiConfig.powerbi_link;
-                const url = extractUrlFromIframe(raw);
-                // basic validation: must be absolute http(s) URL
-                if (!url || !/^https?:\/\//i.test(url)) {
-                  return <div className="text-sm text-red-500">Invalid Power BI link. Please paste the embed URL (or the iframe snippet) and save.</div>;
-                }
-                return <iframe src={url} title={`powerbi-${report.id}`} style={{ width: '100%', height: 480, border: 'none' }} />;
-              })()}
-            </div>
-          </div>
-        )}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-700">Manage Power BI settings for this report.</div>
-            <Button onClick={() => setPowerbiModalOpen(true)}>Configure Power BI</Button>
-          </div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold">Power BI</h2>
+          <Button 
+            variant="secondary" 
+            size="sm"
+            onClick={() => setPowerbiExpanded(!powerbiExpanded)}
+          >
+            {powerbiExpanded ? 'Collapse' : 'Expand'}
+          </Button>
         </div>
+        {powerbiExpanded && (
+          <>
+            {powerbiConfig && powerbiConfig.mode && powerbiConfig.mode.toLowerCase() === 'disabled' && <div className="text-sm text-gray-500 mb-2">Power BI embed is disabled for this report.</div>}
+            {powerbiConfig && powerbiConfig.mode && powerbiConfig.mode.toLowerCase() === 'enabled' && powerbiConfig.powerbi_link && (
+              <div className="mb-4">
+                <div className="text-sm text-gray-700 mb-2">Embedded Power BI</div>
+                <div style={{ width: '100%', minHeight: 360 }}>
+                  {(() => {
+                    const extractUrlFromIframe = (maybeIframe: any) => {
+                      if (!maybeIframe) return null;
+                      if (typeof maybeIframe !== 'string') return String(maybeIframe);
+                      const s = maybeIframe.trim();
+                      if (s.startsWith('<iframe') || /<iframe/i.test(s)) {
+                        const m = s.match(/src\s*=\s*"([^"]+)"/) || s.match(/src\s*=\s*'([^']+)'/) || s.match(/src\s*=\s*([^\s>]+)/);
+                        if (m && m[1]) return m[1];
+                      }
+                      return s;
+                    };
+                    const raw = powerbiConfig.powerbi_link;
+                    const url = extractUrlFromIframe(raw);
+                    // basic validation: must be absolute http(s) URL
+                    if (!url || !/^https?:\/\//i.test(url)) {
+                      return <div className="text-sm text-red-500">Invalid Power BI link. Please paste the embed URL (or the iframe snippet) and save.</div>;
+                    }
+                    return <iframe src={url} title={`powerbi-${report.id}`} style={{ width: '100%', height: 480, border: 'none' }} />;
+                  })()}
+                </div>
+              </div>
+            )}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-700">Manage Power BI settings for this report.</div>
+                <Button onClick={() => setPowerbiModalOpen(true)}>Configure Power BI</Button>
+              </div>
+            </div>
+          </>
+        )}
       </Card>
 
       <Card>
@@ -641,9 +656,23 @@ const ReportViewPage: React.FC = () => {
         })()}
       </Card>
 
-      <div className="mt-6">
-        <ConversationPanel context={{ report, answers, uploadedDocs }} scope={`report:${report.id}`} />
-      </div>
+      <Card className="mt-6">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold">Conversation / Query Assistant</h2>
+          <Button 
+            variant="secondary" 
+            size="sm"
+            onClick={() => setConversationExpanded(!conversationExpanded)}
+          >
+            {conversationExpanded ? 'Collapse' : 'Expand'}
+          </Button>
+        </div>
+        {conversationExpanded && (
+          <div className="mt-4">
+            <ConversationPanel context={{ report, answers, uploadedDocs }} scope={`report:${report.id}`} />
+          </div>
+        )}
+      </Card>
 
       {/* Paper preview modal for built template HTML */}
       <Modal

@@ -1633,6 +1633,18 @@ async function initDb() {
             form_definition JSONB DEFAULT '{}'::jsonb,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
+        `CREATE TABLE IF NOT EXISTS ${tables.ACTIVITY_ROLES} (
+            activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
+            role_id INTEGER REFERENCES ${tables.ROLES}(id) ON DELETE CASCADE,
+            page_key TEXT NOT NULL DEFAULT '',
+            section_key TEXT NOT NULL DEFAULT '',
+            can_view BOOLEAN DEFAULT FALSE,
+            can_create BOOLEAN DEFAULT FALSE,
+            can_edit BOOLEAN DEFAULT FALSE,
+            can_delete BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (activity_id, role_id, page_key, section_key)
+        )`,
         `CREATE TABLE IF NOT EXISTS ${tables.ACTIVITY_REPORTS} (
             id SERIAL PRIMARY KEY,
             activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE CASCADE,
@@ -1834,6 +1846,12 @@ async function initDb() {
             user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE CASCADE,
             role_id INTEGER REFERENCES ${tables.ROLES}(id) ON DELETE CASCADE,
             PRIMARY KEY (user_id, role_id)
+        )`);
+        // Direct permissions assigned to users
+        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.USER_PERMISSIONS} (
+            user_id INTEGER REFERENCES ${tables.USERS}(id) ON DELETE CASCADE,
+            permission_id INTEGER REFERENCES ${tables.PERMISSIONS}(id) ON DELETE CASCADE,
+            PRIMARY KEY (user_id, permission_id)
         )`);
         // Page/section-level permissions: store per-role flags for pages/sections
         await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PAGE_PERMISSIONS} (
@@ -2386,6 +2404,18 @@ async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
                 form_definition JSONB DEFAULT '{}'::jsonb,
                 created_at TIMESTAMP DEFAULT NOW()
             )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}activity_roles" (
+                activity_id INTEGER,
+                role_id INTEGER,
+                page_key TEXT NOT NULL DEFAULT '',
+                section_key TEXT NOT NULL DEFAULT '',
+                can_view BOOLEAN DEFAULT FALSE,
+                can_create BOOLEAN DEFAULT FALSE,
+                can_edit BOOLEAN DEFAULT FALSE,
+                can_delete BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (activity_id, role_id, page_key, section_key)
+            )`);
             await q(`CREATE TABLE IF NOT EXISTS "${prefix}activity_reports" (
                 id SERIAL PRIMARY KEY,
                 activity_id INTEGER,
@@ -2460,6 +2490,11 @@ async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
                 role_id INTEGER,
                 PRIMARY KEY (user_id, role_id)
             )`);
+            await q(`CREATE TABLE IF NOT EXISTS "${prefix}user_permissions" (
+                user_id INTEGER,
+                permission_id INTEGER,
+                PRIMARY KEY (user_id, permission_id)
+            )`);
             await q(`CREATE TABLE IF NOT EXISTS "${prefix}settings" (
                 key TEXT PRIMARY KEY,
                 value JSONB
@@ -2526,6 +2561,18 @@ async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
                 created_by INT,
                 form_definition JSON,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}activity_roles\` (
+                activity_id INT,
+                role_id INT,
+                page_key TEXT NOT NULL DEFAULT '',
+                section_key TEXT NOT NULL DEFAULT '',
+                can_view BOOLEAN DEFAULT FALSE,
+                can_create BOOLEAN DEFAULT FALSE,
+                can_edit BOOLEAN DEFAULT FALSE,
+                can_delete BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (activity_id, role_id, page_key, section_key)
             )`);
             await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}activity_reports\` (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2600,6 +2647,11 @@ async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
                 user_id INT,
                 role_id INT,
                 PRIMARY KEY (user_id, role_id)
+            )`);
+            await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}user_permissions\` (
+                user_id INT,
+                permission_id INT,
+                PRIMARY KEY (user_id, permission_id)
             )`);
             await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}settings\` (
                 \`key\` TEXT PRIMARY KEY,
@@ -3729,6 +3781,24 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
 });
 
 // Admin: Datasets CRUD
+// Public endpoint to list datasets for authenticated users
+app.get('/api/datasets', async (req, res) => {
+    try {
+        // Only accessible to authenticated users
+        if (!req.session?.userId) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        
+        const businessId = req.session?.businessId || null;
+        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
+        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        const r = isSuperAdmin && !businessId 
+            ? await pool.query(`SELECT * FROM ${tables.DATASETS} ORDER BY id DESC`)
+            : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC`, [businessId]);
+        res.json(r.rows);
+    } catch (e) { console.error('Failed to list datasets', e); res.status(500).json({ error: 'Failed to list datasets' }); }
+});
+
 app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
@@ -4199,11 +4269,57 @@ app.delete('/api/admin/permissions/:id', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/roles/assign', requireAdmin, async (req, res) => {
-    try { const { userId, roleId } = req.body; await pool.query(`INSERT INTO ${tables.USER_ROLES} (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign role' }); }
+    try {
+        const { userId, roleId, roleIds } = req.body;
+        if (!userId) return res.status(400).json({ error: 'Missing userId' });
+        
+        // Handle both single roleId and array of roleIds
+        const rolesToAssign = roleIds && Array.isArray(roleIds) ? roleIds : (roleId ? [roleId] : []);
+        
+        if (rolesToAssign.length === 0) return res.status(400).json({ error: 'No roles to assign' });
+        
+        // First, clear existing roles for this user
+        await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [userId]);
+        
+        // Then assign new roles
+        for (const rid of rolesToAssign) {
+            if (rid !== null && rid !== undefined) {
+                await pool.query(`INSERT INTO ${tables.USER_ROLES} (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, rid]);
+            }
+        }
+        res.json({ success: true });
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign role' }); }
 });
 
 app.post('/api/admin/roles/unassign', requireAdmin, async (req, res) => {
     try { const { userId, roleId } = req.body; await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id=$1 AND role_id=$2`, [userId, roleId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unassign role' }); }
+});
+
+app.post('/api/admin/permissions/assign', requireAdmin, async (req, res) => {
+    try {
+        const { userId, permissionId, permissionIds } = req.body;
+        if (!userId) return res.status(400).json({ error: 'Missing userId' });
+        
+        // Handle both single permissionId and array of permissionIds
+        const permissionsToAssign = permissionIds && Array.isArray(permissionIds) ? permissionIds : (permissionId ? [permissionId] : []);
+        
+        if (permissionsToAssign.length === 0) return res.status(400).json({ error: 'No permissions to assign' });
+        
+        // First, clear existing permissions for this user
+        await pool.query(`DELETE FROM ${tables.USER_PERMISSIONS} WHERE user_id = $1`, [userId]);
+        
+        // Then assign new permissions
+        for (const pid of permissionsToAssign) {
+            if (pid !== null && pid !== undefined) {
+                await pool.query(`INSERT INTO ${tables.USER_PERMISSIONS} (user_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, pid]);
+            }
+        }
+        res.json({ success: true });
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to assign permission' }); }
+});
+
+app.post('/api/admin/permissions/unassign', requireAdmin, async (req, res) => {
+    try { const { userId, permissionId } = req.body; await pool.query(`DELETE FROM ${tables.USER_PERMISSIONS} WHERE user_id=$1 AND permission_id=$2`, [userId, permissionId]); res.json({ success: true }); } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unassign permission' }); }
 });
 
 app.get('/api/admin/user_roles', requireAdmin, async (req, res) => {
@@ -5189,7 +5305,7 @@ app.get('/api/users', async (req, res) => {
 
 // Create or update user
 app.post('/api/users', async (req, res) => {
-    const { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId, profileImage, ...customFieldsRaw } = req.body;
+    let { id, firstName, lastName, email, role, status, phoneNumber, password, facilityId, profileImage, ...customFieldsRaw } = req.body;
     try {
         // Separate custom fields (any field not in the standard set)
         const standardFields = ['id', 'firstName', 'lastName', 'email', 'role', 'status', 'phoneNumber', 'password', 'facilityId', 'profileImage', 'business_id'];
@@ -6504,6 +6620,228 @@ app.get('/api/answers', async (req, res) => {
         const result = await pool.query(sql, params);
         res.json(result.rows);
     } catch (e) { res.status(500).send(e.message); }
+});
+
+// Check original role permissions from the primary RBAC system
+// This endpoint checks ROLES/ROLE_PERMISSIONS/USER_ROLES tables
+// PAGE_PERMISSIONS is reserved for FillFormPage only
+// Returns: { can_view?, can_create?, can_edit?, can_delete? } or null if no original permission found
+app.get('/api/check-original-permissions', async (req, res) => {
+    try {
+        // Accessible to authenticated users
+        if (!req.session?.userId) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        
+        try {
+            // Get current user's direct role from USERS table
+            const userResult = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+            if (userResult.rows.length === 0) {
+                return res.json(null);
+            }
+            
+            const userRole = userResult.rows[0]?.role;
+            if (!userRole) {
+                return res.json(null);
+            }
+            
+            // Look up the role in the ROLES table by name
+            const roleResult = await pool.query(
+                `SELECT id FROM ${tables.ROLES} WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+                [userRole]
+            );
+            
+            if (roleResult.rows.length === 0) {
+                return res.json(null);
+            }
+            
+            const roleId = roleResult.rows[0].id;
+            
+            // Get all permissions for this role from ROLE_PERMISSIONS and PERMISSIONS tables
+            // This checks the primary RBAC system (not PAGE_PERMISSIONS which is form-specific)
+            const permResult = await pool.query(
+                `SELECT p.* FROM ${tables.PERMISSIONS} p
+                 INNER JOIN ${tables.ROLE_PERMISSIONS} rp ON p.id = rp.permission_id
+                 WHERE rp.role_id = $1`,
+                [roleId]
+            );
+            
+            // Build permission object from returned permissions
+            // Check if specific permission types exist (can_view, can_create, can_edit, can_delete)
+            const permissions = {};
+            for (const perm of permResult.rows) {
+                const permName = (perm.name || '').toLowerCase();
+                if (permName.includes('view')) permissions.can_view = true;
+                if (permName.includes('create')) permissions.can_create = true;
+                if (permName.includes('edit')) permissions.can_edit = true;
+                if (permName.includes('delete')) permissions.can_delete = true;
+            }
+            
+            // Return permissions object if any were found, otherwise null
+            if (Object.keys(permissions).length > 0) {
+                res.json(permissions);
+            } else {
+                res.json(null);
+            }
+        } catch (dbError) {
+            console.error('Database error in check-original-permissions:', dbError.message);
+            // Return null on error to fall back to activity permissions
+            res.json(null);
+        }
+    } catch (e) { 
+        console.error('Failed to check original permissions:', e.message);
+        res.status(500).json({ error: e.message }); 
+    }
+});
+
+// Get activity role permissions
+// Public endpoint to check activity role permissions for current user's role
+app.get('/api/activities/:activityId/role_permissions', async (req, res) => {
+    try {
+        // Accessible to authenticated users
+        if (!req.session?.userId) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        
+        const { activityId } = req.params;
+        const id = parseInt(activityId, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid activity ID' });
+        
+        // Get current user's role name
+        let userResult;
+        try {
+            userResult = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+        } catch (e) {
+            console.error('Error fetching user role:', e.message, 'SQL tables.USERS:', tables.USERS);
+            return res.json([]);
+        }
+        
+        if (userResult.rows.length === 0) {
+            // User not found, return empty permissions
+            return res.json([]);
+        }
+        
+        const userRoleName = userResult.rows[0]?.role;
+        if (!userRoleName) {
+            // User has no role assigned, return empty permissions
+            return res.json([]);
+        }
+        
+        try {
+            // Get the role_id from the role name, then get permissions
+            console.log('Fetching permissions for activity:', id, 'userRole:', userRoleName, 'tables.ACTIVITY_ROLES:', tables.ACTIVITY_ROLES, 'tables.ROLES:', tables.ROLES);
+            const result = await pool.query(
+                `SELECT ar.*, COALESCE(r.name, 'Unknown Role') as role_name 
+                 FROM ${tables.ACTIVITY_ROLES} ar 
+                 LEFT JOIN ${tables.ROLES} r ON ar.role_id = r.id 
+                 WHERE ar.activity_id = $1 
+                   AND ar.role_id = (SELECT id FROM ${tables.ROLES} WHERE name = $2 LIMIT 1)
+                 ORDER BY ar.page_key, ar.section_key`,
+                [id, userRoleName]
+            );
+            console.log('Permissions found:', result.rows.length, 'for role:', userRoleName);
+            res.json(result.rows);
+        } catch (dbError) {
+            console.error('Database error in activity permissions:', dbError.message, 'Code:', dbError.code);
+            console.error('Full error:', dbError);
+            console.error('SQL attempted: SELECT from', tables.ACTIVITY_ROLES, 'and', tables.ROLES);
+            // Return empty array on database error instead of 500
+            res.json([]);
+        }
+    } catch (e) { 
+        console.error('Failed to get activity permissions:', e.message);
+        // Return empty array instead of 500 error
+        res.json([]);
+    }
+});
+
+// Admin endpoint to get all activity role permissions
+app.get('/api/activities/:activityId/role_permissions/admin', requireAdmin, async (req, res) => {
+    try {
+        const { activityId } = req.params;
+        const id = parseInt(activityId, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid activity ID' });
+        const result = await pool.query(
+            `SELECT ar.*, COALESCE(r.name, 'Unknown Role') as role_name FROM ${tables.ACTIVITY_ROLES} ar 
+             LEFT JOIN ${tables.ROLES} r ON ar.role_id = r.id 
+             WHERE ar.activity_id = $1 
+             ORDER BY COALESCE(r.name, 'Unknown Role'), ar.page_key, ar.section_key`,
+            [id]
+        );
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Set activity role permissions for a specific role and activity (admin only)
+app.post('/api/activities/:activityId/role_permissions/admin', requireAdmin, async (req, res) => {
+    try {
+        const { activityId } = req.params;
+        const { roleId, pageKey, sectionKey, canView, canCreate, canEdit, canDelete } = req.body;
+        
+        const aid = parseInt(activityId, 10);
+        const rid = parseInt(roleId, 10);
+        if (isNaN(aid)) return res.status(400).json({ error: 'Invalid activity ID' });
+        if (isNaN(rid)) return res.status(400).json({ error: 'Invalid role ID' });
+        
+        await pool.query(
+            `INSERT INTO ${tables.ACTIVITY_ROLES} (activity_id, role_id, page_key, section_key, can_view, can_create, can_edit, can_delete)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (activity_id, role_id, page_key, section_key) 
+             DO UPDATE SET can_view = $5, can_create = $6, can_edit = $7, can_delete = $8`,
+            [aid, rid, pageKey || '', sectionKey || '', !!canView, !!canCreate, !!canEdit, !!canDelete]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Set activity role permissions for a specific role and activity
+app.post('/api/activities/:activityId/role_permissions', requireAdmin, async (req, res) => {
+    try {
+        const { activityId } = req.params;
+        const { roleId, pageKey, sectionKey, canView, canCreate, canEdit, canDelete } = req.body;
+        
+        const aid = parseInt(activityId, 10);
+        const rid = parseInt(roleId, 10);
+        if (isNaN(aid)) return res.status(400).json({ error: 'Invalid activity ID' });
+        if (isNaN(rid)) return res.status(400).json({ error: 'Invalid role ID' });
+        
+        await pool.query(
+            `INSERT INTO ${tables.ACTIVITY_ROLES} (activity_id, role_id, page_key, section_key, can_view, can_create, can_edit, can_delete)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (activity_id, role_id, page_key, section_key) 
+             DO UPDATE SET can_view = $5, can_create = $6, can_edit = $7, can_delete = $8`,
+            [aid, rid, pageKey || '', sectionKey || '', !!canView, !!canCreate, !!canEdit, !!canDelete]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete activity role permissions
+app.delete('/api/activities/:activityId/role_permissions/:roleId', requireAdmin, async (req, res) => {
+    try {
+        const { activityId, roleId } = req.params;
+        const { pageKey, sectionKey } = req.query;
+        
+        const aid = parseInt(activityId, 10);
+        const rid = parseInt(roleId, 10);
+        if (isNaN(aid)) return res.status(400).json({ error: 'Invalid activity ID' });
+        if (isNaN(rid)) return res.status(400).json({ error: 'Invalid role ID' });
+        
+        let query = `DELETE FROM ${tables.ACTIVITY_ROLES} WHERE activity_id = $1 AND role_id = $2`;
+        const params = [aid, rid];
+        
+        if (pageKey) {
+            query += ` AND page_key = $${params.length + 1}`;
+            params.push(pageKey);
+        }
+        if (sectionKey) {
+            query += ` AND section_key = $${params.length + 1}`;
+            params.push(sectionKey);
+        }
+        
+        await pool.query(query, params);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Activity dashboard aggregation endpoint

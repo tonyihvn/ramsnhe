@@ -59,11 +59,25 @@ const UsersPage: React.FC = () => {
   const openModal = (u?: User) => {
     setAvatarFile(null);
     setAvatarPreview(u?.profileImage || null);
-    setCurrentUserEdit({
-      ...u,
-      assignedRoles: u?.assignedRoles || [],
-      assignedPermissions: u?.assignedPermissions || [],
-    } as any || { firstName: '', lastName: '', email: '', role: 'Data Collector', status: 'Active', password: '', facilityId: undefined, assignedRoles: [], assignedPermissions: [] });
+    setCurrentUserEdit(
+      u
+        ? {
+            ...u,
+            assignedRoles: (u as any).assignedRoles || [],
+            assignedPermissions: (u as any).assignedPermissions || [],
+          }
+        : {
+            firstName: '',
+            lastName: '',
+            email: '',
+            role: 'Data Collector',
+            status: 'Active',
+            password: '',
+            facilityId: undefined,
+            assignedRoles: [],
+            assignedPermissions: [],
+          }
+    );
     setIsModalOpen(true);
   };
 
@@ -231,7 +245,7 @@ const UsersPage: React.FC = () => {
           </div>
           <div>
             <MInput label="Role" type="select" value={currentUserEdit.role} onChange={v => setCurrentUserEdit({ ...currentUserEdit, role: v })}
-              options={[{ value: 'Admin', label: 'Admin' }, { value: 'Form Builder', label: 'Form Builder' }, { value: 'Data Collector', label: 'Data Collector' }, { value: 'Viewer', label: 'Viewer' }, { value: 'Responder', label: 'Responder' }, { value: 'Controller', label: 'Controller' }, { value: 'Validator', label: 'Validator' }, { value: 'Public', label: 'Public' }]} />
+              options={[{ value: 'Admin', label: 'Admin' }, { value: 'Form Builder', label: 'Form Builder' }, { value: 'Data Collector', label: 'Data Collector' }, { value: 'Viewer', label: 'Viewer' }, { value: 'Responder', label: 'Responder' }, { value: 'Controller', label: 'Controller' }, { value: 'Validator', label: 'Validator' }, { value: 'Reviewer', label: 'Reviewer' }, { value: 'Public', label: 'Public' }]} />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Assign Roles</label>

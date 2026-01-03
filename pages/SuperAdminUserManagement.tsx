@@ -366,8 +366,8 @@ const CreateUserForm: React.FC<{ onSuccess: () => void; onCancel: () => void }> 
             onChange={handleChange}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
           >
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
+            <option value="User">User</option>
+            <option value="Admin">Admin</option>
             <option value="Form Builder">Form Builder</option>
             <option value="Data Collector">Data Collector</option>
             <option value="Viewer">Viewer</option>
@@ -457,8 +457,8 @@ const UserDetailsModal: React.FC<{ user: any; onClose: () => void; onUpdate: () 
               onChange={(e) => setEditRole(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
             >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
+              <option value="User">User</option>
+              <option value="Admin">Admin</option>
               <option value="Form Builder">Form Builder</option>
               <option value="Data Collector">Data Collector</option>
               <option value="Viewer">Viewer</option>
