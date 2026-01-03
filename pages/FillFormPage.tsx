@@ -582,19 +582,26 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         let cancelled = false;
         (async () => {
             try {
-                if (!currentUser || !currentUser.role) return;
+                if (!currentUser || !currentUser.role) {
+                    console.log('[PERM-LOAD] No current user or role');
+                    return;
+                }
                 const roleName = String(currentUser.role || '').trim();
-                if (!roleName) return;
+                if (!roleName) {
+                    console.log('[PERM-LOAD] Role name is empty');
+                    return;
+                }
+                console.log('[PERM-LOAD] Loading permissions for role:', roleName);
                 const resp = await fetch(`/api/page_permissions?role=${encodeURIComponent(roleName)}`);
                 if (!resp.ok) {
-                    console.warn(`Failed to load page permissions for role ${roleName}:`, resp.status);
+                    console.warn(`[PERM-LOAD] Failed to load (status ${resp.status})`);
                     return;
                 }
                 const j = await resp.json();
-                console.log('Loaded page permissions for role', roleName, ':', j);
+                console.log('[PERM-LOAD] ✓ Loaded permissions:', j);
                 if (!cancelled) setPagePerms(j);
             } catch (e) { 
-                console.error('Error loading page permissions:', e);
+                console.error('[PERM-LOAD] Error:', e);
             }
         })();
         return () => { cancelled = true; };
@@ -614,7 +621,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             
             // If no permissions are configured, allow all access (default behavior)
             if (!pagePerms || pagePerms.length === 0) {
-                console.log('[PERM] No PAGE_PERMISSIONS configured, allowing all access');
+                console.log('[PERM] No PAGE_PERMISSIONS configured for this role, allowing all access');
                 return true;
             }
             
@@ -622,12 +629,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             const checkSectionKey = sectionKey ? String(sectionKey).trim() : null;
             const checkPageKey = pageKey ? String(pageKey).trim() : '';
             
-            console.log(`[PERM] Looking for pageKey="${checkPageKey}", sectionKey="${checkSectionKey}", flag=${flag}`);
-            console.log(`[PERM] Available records:`, pagePerms.map((p: any) => ({
-                page_key: String(p.page_key || '').trim(),
-                section_key: p.section_key ? String(p.section_key || '').trim() : null,
-                [flag]: p[flag]
-            })));
+            console.log(`[PERM] Checking ${flag} for pageKey="${checkPageKey}", sectionKey="${checkSectionKey}"`);
             
             // Find matching permission record
             for (const p of pagePerms) {
@@ -638,17 +640,19 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 const sectionKeyMatch = (dbSectionKey === checkSectionKey);
                 
                 if (pageKeyMatch && sectionKeyMatch) {
+                    // Found a matching permission record - use its flag value
                     const hasFlag = !!p[flag];
-                    console.log(`[PERM]   ✓ FOUND: ${flag}=${hasFlag}`);
+                    console.log(`[PERM]   ✓ Found record: ${flag}=${hasFlag}`);
                     return hasFlag;
                 }
             }
             
-            // No matching record found
-            console.log(`[PERM]   ✗ NOT FOUND in permissions - denying access`);
-            return false;
+            // No matching record found - default to ALLOW
+            // (only deny if a record exists with can_view=false)
+            console.log(`[PERM]   ✗ No record found - defaulting to ALLOW`);
+            return true;
         } catch (e) { 
-            console.error('[PERM] Exception in hasPermissionFlag:', e);
+            console.error('[PERM] Exception:', e);
             return true;
         }
     };
@@ -967,9 +971,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const getPageKey = (pageId: string) => `/activities/fill/${activityId || ''}:page:${pageId}`;
     const visiblePages = formDef.pages.filter(page => {
       const pageKey = getPageKey(page.id);
-      console.log(`[VISIBILITY] Checking visibility for page "${page.name}" with pageKey="${pageKey}"`);
+      console.log(`[VISIBILITY] Page "${page.name}" (id=${page.id}), pageKey="${pageKey}", pagePerms=${pagePerms ? pagePerms.length : 0} records`);
       const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
-      console.log(`[VISIBILITY]   -> can_view=${viewAllowed}`);
+      console.log(`[VISIBILITY]   → can_view=${viewAllowed}`);
       return viewAllowed;
     });
 
