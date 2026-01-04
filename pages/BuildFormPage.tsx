@@ -289,6 +289,22 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
               />
               <span className="text-xs text-gray-700">Show this question's answer on the map popup</span>
             </label>
+            {/* Map label customization */}
+            {question.metadata && question.metadata.show_on_map && (
+              <div className="mt-3 mb-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Map Label <span className="text-gray-400">(custom label for map display)</span>
+                </label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={question.metadata?.map_label || ''}
+                  onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), map_label: e.target.value } })}
+                  placeholder={question.questionText || 'Enter custom label...'}
+                />
+                <div className="text-xs text-gray-400 mt-1">This label will appear on the map instead of the full question text.</div>
+              </div>
+            )}
             {/* Role-restriction UI for show_on_map */}
             {question.metadata && question.metadata.show_on_map && (
               <div className="mt-2">

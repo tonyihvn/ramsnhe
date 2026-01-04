@@ -30,6 +30,8 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
   const [mapAnswers, setMapAnswers] = useState<any | null>(null);
   const [activityIndicators, setActivityIndicators] = useState<any[]>([]);
   const [activityIndicatorValues, setActivityIndicatorValues] = useState<Record<string, any>>({});
+  const [allIndicators, setAllIndicators] = useState<any[]>([]);
+  const [allIndicatorValues, setAllIndicatorValues] = useState<Record<string, any>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -86,10 +88,13 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
                             value = resForFacility.value;
                           } else if (resForFacility.rows && Array.isArray(resForFacility.rows) && resForFacility.rows.length > 0) {
                             const r0 = resForFacility.rows[0];
-                            // Prefer a property named 'answer_value' or 'value' if present
+                            // Prefer a property named 'answer_value', 'value', 'sum', or 'count' if present, else first property
                             if (r0 && typeof r0 === 'object') {
                               if (Object.prototype.hasOwnProperty.call(r0, 'answer_value')) value = r0['answer_value'];
                               else if (Object.prototype.hasOwnProperty.call(r0, 'value')) value = r0['value'];
+                              else if (Object.prototype.hasOwnProperty.call(r0, 'sum')) value = r0['sum'];
+                              else if (Object.prototype.hasOwnProperty.call(r0, 'sum_value')) value = r0['sum_value'];
+                              else if (Object.prototype.hasOwnProperty.call(r0, 'count')) value = r0['count'];
                               else value = Object.values(r0)[0];
                             } else {
                               value = r0;
@@ -122,6 +127,76 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
     })();
     return () => { cancelled = true; };
   }, [facility && facility.id, JSON.stringify(visibleActivities || [])]);
+
+  // Load all indicators for this facility
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const fid = facility && (facility.id || facility.id === 0) ? facility.id : null;
+        if (!fid) return;
+        
+        // Fetch all indicators
+        const indResp = await fetch('/api/indicators');
+        if (!indResp.ok) return;
+        const allInds = await indResp.json();
+        if (cancelled) return;
+        setAllIndicators(allInds || []);
+        
+        // Compute values for all indicators
+        if (allInds && allInds.length > 0) {
+          const ids = allInds.map((i: any) => Number(i.id)).filter(Boolean);
+          try {
+            const cb = await fetch('/api/indicators/compute_bulk', { 
+              method: 'POST', 
+              headers: { 'Content-Type': 'application/json' }, 
+              body: JSON.stringify({ indicatorIds: ids, facilityIds: [fid] }) 
+            });
+            if (cb.ok) {
+              const cbj = await cb.json();
+              const computed: Record<string, any> = {};
+              if (cbj && cbj.computed) {
+                for (const iid of Object.keys(cbj.computed)) {
+                  const entry = cbj.computed[iid];
+                  const resForFacility = entry.results && (entry.results[String(fid)] || entry.results[fid]) ? (entry.results[String(fid)] || entry.results[fid]) : null;
+                  let value: any = null;
+                  if (resForFacility) {
+                    if (resForFacility.value !== undefined) {
+                      value = resForFacility.value;
+                    } else if (resForFacility.rows && Array.isArray(resForFacility.rows) && resForFacility.rows.length > 0) {
+                      const r0 = resForFacility.rows[0];
+                      if (r0 && typeof r0 === 'object') {
+                        if (Object.prototype.hasOwnProperty.call(r0, 'answer_value')) value = r0['answer_value'];
+                        else if (Object.prototype.hasOwnProperty.call(r0, 'value')) value = r0['value'];
+                        else if (Object.prototype.hasOwnProperty.call(r0, 'sum')) value = r0['sum'];
+                        else if (Object.prototype.hasOwnProperty.call(r0, 'sum_value')) value = r0['sum_value'];
+                        else if (Object.prototype.hasOwnProperty.call(r0, 'count')) value = r0['count'];
+                        else value = Object.values(r0)[0];
+                      } else {
+                        value = r0;
+                      }
+                    } else if (typeof resForFacility === 'number' || typeof resForFacility === 'string') {
+                      value = resForFacility;
+                    }
+                    try {
+                      if (typeof value === 'string' && value.trim() !== '') {
+                        const n = Number(value);
+                        if (!Number.isNaN(n)) value = n;
+                      }
+                    } catch (e) { /* ignore */ }
+                  }
+                  computed[iid] = value;
+                }
+              }
+              if (cancelled) return;
+              setAllIndicatorValues(computed);
+            }
+          } catch (e) { /* ignore compute errors */ }
+        }
+      } catch (e) { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [facility && facility.id]);
 
   const indicators = meta.indicators || [];
 
@@ -185,7 +260,7 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
                       <div style={{ display: 'grid', gap: 6 }}>
                         {qs.map((q: any) => {
                           const qid = String(q.id);
-                          const label = q.questionText || qid;
+                          const label = (q.metadata && q.metadata.map_label) || q.questionText || qid;
                           const val = r.answers ? r.answers[qid] : undefined;
                           if (typeof val === 'undefined' || val === null) return null;
                           const displayVal = (typeof val === 'object') ? (val.value ?? JSON.stringify(val)) : String(val);
@@ -224,8 +299,59 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
         </div>
       )}
 
+      {/* All facility indicators */}
+      {allIndicators && allIndicators.length > 0 && (
+        <div style={{ marginTop: 10, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>KPIs</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {allIndicators.map((ind: any) => {
+              const value = allIndicatorValues[String(ind.id)] ?? null;
+              return (
+                <div key={ind.id} style={{ padding: 8, borderRadius: 6, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#1f2937' }}>{ind.title || ind.name}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#374151' }}>
+                        {value !== null ? String(value) : '—'}
+                      </div>
+                      {ind.unit_of_measurement && (
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>{ind.unit_of_measurement}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: 8 }}>
         <EvidenceAccordion facility={facility} mapAnswers={mapAnswers} />
+      </div>
+
+      <div style={{ marginTop: 12, borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
+        <button
+          onClick={() => window.location.href = `/#/facilities/${facility.id}/dashboard`}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            backgroundColor: '#3b82f6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'background-color 0.2s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+        >
+          View Facility Dashboard →
+        </button>
       </div>
     </div>
   );

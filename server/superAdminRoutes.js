@@ -198,7 +198,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
 
-            let query = `SELECT id, first_name, last_name, email, role, status, business_id, created_at, last_login_at, account_type, is_demo_account FROM ${tables.USERS} WHERE 1=1`;
+            let query = `SELECT * FROM ${tables.USERS} WHERE 1=1`;
             const params = [];
 
             // Super admin sees all users, business admin sees only their business
@@ -209,7 +209,15 @@ export function registerSuperAdminRoutes(app, pool) {
 
             query += ' ORDER BY created_at DESC LIMIT 500';
             const result = await pool.query(query, params);
-            res.json({ users: result.rows });
+            // Parse custom_fields JSONB and merge into each user object
+            const users = result.rows.map(u => {
+                const customFields = u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null;
+                return {
+                    ...u,
+                    ...(customFields || {})
+                };
+            });
+            res.json({ users });
         } catch (error) {
             console.error('GET users error:', error);
             res.status(500).json({ error: error.message });
@@ -238,7 +246,14 @@ export function registerSuperAdminRoutes(app, pool) {
                 return res.status(404).json({ error: 'User not found' });
             }
 
-            res.json({ user: user.rows[0] });
+            // Parse custom_fields JSONB and merge into user object
+            const u = user.rows[0];
+            const customFields = u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null;
+            const userData = {
+                ...u,
+                ...(customFields || {})
+            };
+            res.json({ user: userData });
         } catch (error) {
             console.error('GET user error:', error);
             res.status(500).json({ error: error.message });

@@ -13,6 +13,7 @@ const FacilityDashboardPage: React.FC = () => {
   const [indicators, setIndicators] = useState<any[]>([]);
   const [computedIndicators, setComputedIndicators] = useState<any>({});
   const [computing, setComputing] = useState(false);
+  const [documents, setDocuments] = useState<any[]>([]);
 
   useEffect(() => {
     setFacility(facilities.find(f => String(f.id) === String(facilityId)) || null);
@@ -49,6 +50,77 @@ const FacilityDashboardPage: React.FC = () => {
       } catch (e) { console.error('Failed to compute indicators for facility', e); setComputing(false); }
     })();
   }, [facility]);
+
+  // Load documents from all reports for this facility
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!facility) return;
+        
+        // Get all reports for this facility
+        const facilityReports = (reports || []).filter(r => String(r.facility_id) === String(facility.id));
+        if (facilityReports.length === 0) {
+          setDocuments([]);
+          return;
+        }
+
+        // For each report, fetch its answers to extract file attachments
+        const allDocuments: any[] = [];
+        
+        for (const report of facilityReports) {
+          try {
+            const resp = await fetch(`/api/reports/${report.id}`);
+            if (!resp.ok) continue;
+            const reportData = await resp.json();
+            
+            // Get the activity name
+            const activity = activities.find((a: any) => String(a.id) === String(report.activity_id));
+            const activityName = activity?.title || activity?.name || `Activity ${report.activity_id}`;
+            
+            // Fetch answers for this report to find file uploads
+            const answersResp = await fetch(`/api/reports/${report.id}/answers`);
+            if (answersResp.ok) {
+              const answers = await answersResp.json();
+              // Process answers to find file attachments
+              (answers || []).forEach((answer: any) => {
+                if (answer.answer_value) {
+                  try {
+                    const parsed = typeof answer.answer_value === 'string' ? JSON.parse(answer.answer_value) : answer.answer_value;
+                    
+                    // Check if it's a file or array of files
+                    if (parsed && typeof parsed === 'object') {
+                      let files = [];
+                      if (Array.isArray(parsed)) {
+                        files = parsed.filter((f: any) => f && f.fileName);
+                      } else if (parsed.fileName) {
+                        files = [parsed];
+                      }
+                      
+                      files.forEach((file: any) => {
+                        allDocuments.push({
+                          fileName: file.fileName,
+                          fileUrl: file.fileUrl,
+                          activityName,
+                          reportId: report.id,
+                          submissionDate: report.submission_date
+                        });
+                      });
+                    }
+                  } catch (e) {
+                    // Not a JSON object or file, skip
+                  }
+                }
+              });
+            }
+          } catch (e) {
+            console.error('Failed to fetch documents for report', report.id, e);
+          }
+        }
+        
+        setDocuments(allDocuments);
+      } catch (e) { console.error('Failed to load documents', e); }
+    })();
+  }, [facility, reports, activities]);
 
   const rows = (reports || []).filter(r => String(r.facility_id) === String(facilityId)).map((r: any) => ({
     id: r.id,
@@ -132,6 +204,60 @@ const FacilityDashboardPage: React.FC = () => {
         <h2 className="text-lg font-semibold">Collected Reports</h2>
         <div className="mt-3">
           <DataTable columns={columns} data={rows} />
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="text-lg font-semibold">Uploaded Documents</h2>
+        <div className="mt-3">
+          {documents.length === 0 ? (
+            <div className="text-sm text-gray-500">No documents uploaded yet.</div>
+          ) : (
+            <div className="space-y-4">
+              {/* Group documents by activity */}
+              {Array.from(new Set(documents.map(d => d.activityName))).map(activityName => {
+                const activityDocs = documents.filter(d => d.activityName === activityName);
+                return (
+                  <div key={activityName} className="border rounded-lg p-4 bg-gray-50">
+                    <h3 className="font-semibold text-base mb-3">{activityName}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {activityDocs.map((doc: any, idx: number) => (
+                        <div key={idx} className="flex items-start justify-between p-3 border rounded bg-white hover:shadow-sm transition-shadow">
+                          <div className="flex-1 min-w-0">
+                            <a
+                              href={doc.fileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm font-medium text-blue-600 hover:text-blue-800 truncate block"
+                              title={doc.fileName}
+                            >
+                              📄 {doc.fileName}
+                            </a>
+                            <div className="text-xs text-gray-500 mt-1">
+                              Report #{doc.reportId}
+                            </div>
+                            {doc.submissionDate && (
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                {new Date(doc.submissionDate).toLocaleDateString()}
+                              </div>
+                            )}
+                          </div>
+                          <a
+                            href={doc.fileUrl}
+                            download
+                            className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors whitespace-nowrap"
+                            title="Download file"
+                          >
+                            ↓
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </Card>
     </div>

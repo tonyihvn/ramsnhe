@@ -533,7 +533,8 @@ app.post('/api/llm/generate_sql', async (req, res) => {
     try {
         const { prompt, context, scope, providerId, messages, overrideNote } = req.body || {};
         if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
-        // Combine prior conversation messages (if any) with the current prompt to provide memory/context
+        
+        // Combine prior conversation messages with current prompt
         let combinedPrompt = String(prompt);
         try {
             if (Array.isArray(messages) && messages.length) {
@@ -542,109 +543,162 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             }
         } catch (e) { /* ignore */ }
 
-        // NEW: Comprehensive Q&A lookup - Search QUESTIONS and ANSWERS tables based on keywords and similarity
-        let qaContext = '';
-        let qaInsights = [];
+        // ========== COMPREHENSIVE Q&A RETRIEVAL ==========
+        // Search for QUESTIONS that match parts or all of the prompt text
+        // Search for ANSWERS that match parts or all of the prompt text
+        let retrievedData = {
+            matchingQuestions: [],
+            matchingAnswers: [],
+            answerStatistics: []
+        };
+        
         try {
             const promptLower = String(prompt).toLowerCase();
             const promptTokens = promptLower.match(/\w+/g) || [];
             
             if (promptTokens.length > 0) {
-                // STEP 1: Search for questions that match the prompt keywords or look similar to the prompt
+                // ===== STEP 1: Find matching QUESTIONS =====
+                const questionsQuery = `
+                    SELECT DISTINCT 
+                        id, 
+                        question_text, 
+                        page_name, 
+                        section_name,
+                        CASE 
+                            WHEN LOWER(question_text) LIKE $1 THEN 1
+                            ELSE 0
+                        END as exact_match
+                    FROM ${tables.QUESTIONS}
+                    WHERE LOWER(question_text) LIKE ANY($2)
+                    ORDER BY exact_match DESC, LENGTH(question_text) ASC
+                    LIMIT 20
+                `;
+                
                 const qRes = await pool.query(
-                    `SELECT DISTINCT id, question_text, page_name, section_name 
-                     FROM ${tables.QUESTIONS} 
-                     WHERE LOWER(question_text) LIKE ANY($1)
-                     ORDER BY 
-                       CASE 
-                         WHEN LOWER(question_text) LIKE $2 THEN 0
-                         ELSE 1
-                       END,
-                       LENGTH(question_text) ASC
-                     LIMIT 15`,
+                    questionsQuery,
                     [
-                        promptTokens.map(t => `%${t}%`),
-                        `%${promptTokens.slice(0, 3).join('%')}%`
+                        `%${promptTokens.slice(0, 3).join('%')}%`,
+                        promptTokens.map(t => `%${t}%`)
                     ]
                 );
                 
                 if (qRes.rows && qRes.rows.length > 0) {
-                    const qids = qRes.rows.map(r => r.id);
+                    retrievedData.matchingQuestions = qRes.rows.map(q => ({
+                        id: q.id,
+                        text: q.question_text,
+                        page: q.page_name,
+                        section: q.section_name,
+                        relevance: q.exact_match ? 'exact' : 'partial'
+                    }));
                     
-                    // STEP 2: Find all answers to these matching questions
-                    const aRes = await pool.query(
-                        `SELECT q.id as question_id, q.question_text, a.answer_value, a.id as answer_id, COUNT(*) OVER (PARTITION BY q.id, a.answer_value) as answer_frequency
-                         FROM ${tables.ANSWERS} a
-                         JOIN ${tables.QUESTIONS} q ON a.question_id = q.id
-                         WHERE a.question_id = ANY($1)
-                         AND a.answer_value IS NOT NULL
-                         AND a.answer_value != ''
-                         ORDER BY q.id, answer_frequency DESC, a.id DESC
-                         LIMIT 50`,
-                        [qids]
-                    );
+                    // ===== STEP 2: Find ALL ANSWERS for matching questions =====
+                    const qids = qRes.rows.map(r => r.id);
+                    const answersQuery = `
+                        SELECT 
+                            a.id,
+                            a.question_id,
+                            q.question_text,
+                            a.answer_value,
+                            COUNT(*) OVER (PARTITION BY a.question_id, a.answer_value) as frequency,
+                            ROW_NUMBER() OVER (PARTITION BY a.question_id ORDER BY a.id) as row_num
+                        FROM ${tables.ANSWERS} a
+                        JOIN ${tables.QUESTIONS} q ON a.question_id = q.id
+                        WHERE a.question_id = ANY($1)
+                        AND a.answer_value IS NOT NULL
+                        AND a.answer_value != ''
+                        ORDER BY a.question_id, frequency DESC, a.id ASC
+                        LIMIT 100
+                    `;
+                    
+                    const aRes = await pool.query(answersQuery, [qids]);
                     
                     if (aRes.rows && aRes.rows.length > 0) {
-                        // STEP 3: Organize answers by question and extract key patterns
-                        const qaMap: Record<string, {question: string, answers: Array<{value: string, frequency: number}>}> = {};
+                        // Organize answers by question
+                        const answersByQuestion = {};
+                        const frequencyMap = {};
                         
                         for (const row of aRes.rows) {
+                            const qId = row.question_id;
                             const qText = row.question_text;
-                            if (!qaMap[qText]) {
-                                qaMap[qText] = { question: qText, answers: [] };
+                            const ansValue = String(row.answer_value);
+                            
+                            if (!answersByQuestion[qId]) {
+                                answersByQuestion[qId] = {
+                                    questionId: qId,
+                                    questionText: qText,
+                                    answers: []
+                                };
                             }
                             
-                            // Avoid duplicates
-                            const answerStr = String(row.answer_value);
-                            if (!qaMap[qText].answers.find(a => a.value === answerStr)) {
-                                qaMap[qText].answers.push({
-                                    value: answerStr,
-                                    frequency: row.answer_frequency || 1
+                            // Avoid duplicates and track frequency
+                            if (!frequencyMap[`${qId}_${ansValue}`]) {
+                                answersByQuestion[qId].answers.push({
+                                    value: ansValue,
+                                    frequency: row.frequency || 1
                                 });
+                                frequencyMap[`${qId}_${ansValue}`] = true;
                             }
                         }
                         
-                        // STEP 4: Build comprehensive Q&A context string
-                        qaContext = '\n=== RELEVANT QUESTIONS AND ANSWERS FROM SYSTEM DATABASE ===\n';
-                        qaContext += `(Based on keywords: ${promptTokens.slice(0, 5).join(', ')})\n\n`;
+                        // Convert to array and add to retrieved data
+                        retrievedData.matchingAnswers = Object.values(answersByQuestion);
                         
-                        let qaIndex = 0;
-                        for (const [questionText, data] of Object.entries(qaMap)) {
-                            qaIndex++;
-                            const topAnswers = data.answers.slice(0, 5); // Top 5 answers per question
+                        // ===== STEP 3: Generate answer statistics =====
+                        for (const qaGroup of retrievedData.matchingAnswers) {
+                            const totalAnswers = qaGroup.answers.length;
+                            const topAnswers = qaGroup.answers.slice(0, 5);
+                            const totalResponses = qaGroup.answers.reduce((sum, a) => sum + a.frequency, 0);
                             
-                            qaContext += `[Q${qaIndex}] ${questionText}\n`;
-                            qaContext += `Common Responses:\n`;
-                            
-                            for (const ans of topAnswers) {
-                                const freqLabel = ans.frequency > 1 ? ` (reported ${ans.frequency} times)` : '';
-                                qaContext += `  - "${ans.value}"${freqLabel}\n`;
-                            }
-                            qaContext += '\n';
-                            
-                            // Also track these for later use
-                            qaInsights.push({
-                                question: questionText,
-                                topAnswers: topAnswers.map(a => a.value),
-                                frequency: topAnswers[0]?.frequency || 1
+                            retrievedData.answerStatistics.push({
+                                questionId: qaGroup.questionId,
+                                questionText: qaGroup.questionText,
+                                totalUniqueAnswers: totalAnswers,
+                                totalResponses: totalResponses,
+                                topAnswers: topAnswers,
+                                mostCommonAnswer: topAnswers[0]?.value || 'N/A',
+                                mostCommonAnswerFrequency: topAnswers[0]?.frequency || 0
                             });
-                        }
-                        
-                        // STEP 5: Extract patterns and insights to help LLM understand context
-                        if (qaInsights.length > 0) {
-                            qaContext += '=== PATTERNS AND INSIGHTS ===\n';
-                            qaContext += `Found ${qaInsights.length} relevant question(s) from the database with ${aRes.rows.length} responses total.\n`;
-                            qaContext += 'Use this information to understand what questions have been asked before and how they were answered.\n';
-                            qaContext += 'This can help identify patterns, common issues, or frequently reported values.\n\n';
                         }
                     }
                 }
+                
+                // ===== BONUS: Also search ANSWERS table directly for prompt text =====
+                try {
+                    const directAnswersQuery = `
+                        SELECT DISTINCT 
+                            a.id,
+                            a.question_id,
+                            q.question_text,
+                            a.answer_value,
+                            COUNT(*) OVER (PARTITION BY a.answer_value) as value_frequency
+                        FROM ${tables.ANSWERS} a
+                        LEFT JOIN ${tables.QUESTIONS} q ON a.question_id = q.id
+                        WHERE LOWER(a.answer_value) LIKE ANY($1)
+                        AND a.answer_value IS NOT NULL
+                        AND a.answer_value != ''
+                        LIMIT 30
+                    `;
+                    
+                    const directRes = await pool.query(directAnswersQuery, [promptTokens.map(t => `%${t}%`)]);
+                    
+                    if (directRes.rows && directRes.rows.length > 0) {
+                        retrievedData.directAnswerMatches = directRes.rows.map(a => ({
+                            answerId: a.id,
+                            questionText: a.question_text || 'Unknown Question',
+                            answerValue: a.answer_value,
+                            frequency: a.value_frequency
+                        }));
+                    }
+                } catch (e) {
+                    console.warn('Direct answer search failed:', e.message);
+                }
             }
         } catch (e) {
-            console.warn('Failed to fetch Q&A context:', e.message);
-            // Continue anyway, Q&A context is optional enhancement
+            console.warn('Failed to fetch Q&A retrieval data:', e.message);
+            // Continue anyway - retrieval failure should not block SQL generation
         }
 
+        // ========== RAG SCHEMA RETRIEVAL ==========
         const rres = await pool.query(`SELECT * FROM ${tables.RAG_SCHEMAS}`);
         const ragRows = rres.rows || [];
 
@@ -676,11 +730,9 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             if (tokens.some(t => low.includes(t) || t === low)) matchedCols.push(cname);
         }
 
-        // Include any RAG records marked as 'Compulsory' into the LLM context so the model always sees them
-        // compulsoryRags already obtained from selectOptimalSchemas
+        // Include compulsory RAG context
         let compulsoryContext = '';
         if (compulsoryRags && compulsoryRags.length) {
-            // Prefer using a short human-readable summary if available
             compulsoryContext = compulsoryRags.map(cr => {
                 if (cr.summary_text && String(cr.summary_text).trim()) return `RAG Summary: ${String(cr.summary_text).trim()}${cr.business_rules ? '\nBusiness Rules: ' + cr.business_rules : ''}`;
                 const crCols = (cr.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).join(', ');
@@ -690,7 +742,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             }).join('\n\n');
         }
 
-        // Build structured RAG context as JSON to send to LLMs (reduces token waste and keeps schema precise)
+        // Build structured RAG context
         const buildRagObj = (row) => ({
             table_name: row.table_name,
             schema: Array.isArray(row.schema) ? row.schema.map(c => ({ data_type: c.data_type || '', column_name: c.column_name || c.name || '', is_nullable: c.is_nullable || (c.nullable ? 'YES' : 'NO') })) : [],
@@ -705,43 +757,93 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         const ragContextObj = { compulsory: compulsoryObjs, chosen: chosenObj };
         const ragContext = JSON.stringify(ragContextObj);
 
+        // ========== BUILD COMPREHENSIVE PROMPT FOR LLM ==========
+        let retrievedDataSection = '';
+        
+        if (retrievedData.matchingQuestions.length > 0) {
+            retrievedDataSection = '\n=== RETRIEVED DATA FROM SYSTEM DATABASE ===\n\n';
+            
+            // Add matching questions
+            if (retrievedData.matchingQuestions.length > 0) {
+                retrievedDataSection += '*** MATCHING QUESTIONS FOUND IN SYSTEM ***\n';
+                retrievedData.matchingQuestions.forEach((q, idx) => {
+                    retrievedDataSection += `[Q${idx + 1}] ${q.text}\n`;
+                    retrievedDataSection += `    Location: ${q.page || 'Unknown'} > ${q.section || 'Unknown'}\n`;
+                    retrievedDataSection += `    Relevance: ${q.relevance}\n\n`;
+                });
+            }
+            
+            // Add matching answers with statistics
+            if (retrievedData.answerStatistics.length > 0) {
+                retrievedDataSection += '*** RESPONSES TO RELATED QUESTIONS ***\n';
+                retrievedData.answerStatistics.forEach((stat, idx) => {
+                    retrievedDataSection += `[A${idx + 1}] Question: "${stat.questionText}"\n`;
+                    retrievedDataSection += `    Total Responses: ${stat.totalResponses}\n`;
+                    retrievedDataSection += `    Unique Answers: ${stat.totalUniqueAnswers}\n`;
+                    retrievedDataSection += `    Most Common: "${stat.mostCommonAnswer}" (${stat.mostCommonAnswerFrequency} times)\n`;
+                    if (stat.topAnswers.length > 0) {
+                        retrievedDataSection += `    Top Responses:\n`;
+                        stat.topAnswers.slice(0, 3).forEach(ans => {
+                            retrievedDataSection += `      - "${ans.value}" (${ans.frequency})\n`;
+                        });
+                    }
+                    retrievedDataSection += '\n';
+                });
+            }
+            
+            // Add direct answer matches if found
+            if (retrievedData.directAnswerMatches && retrievedData.directAnswerMatches.length > 0) {
+                retrievedDataSection += '*** ANSWERS WITH MATCHING KEYWORDS ***\n';
+                retrievedData.directAnswerMatches.slice(0, 10).forEach((match, idx) => {
+                    retrievedDataSection += `[Match${idx + 1}] Answer: "${match.answerValue}"\n`;
+                    retrievedDataSection += `    Question: "${match.questionText}"\n`;
+                    retrievedDataSection += `    Frequency: ${match.frequency}\n\n`;
+                });
+            }
+        } else {
+            retrievedDataSection = '\n=== NO MATCHING QUESTIONS OR ANSWERS FOUND ===\n(Will infer intent from the request and RAG schemas)\n\n';
+        }
+
         let providerUsed = null;
         let providerResponse = null;
         try {
-            // Build enriched prompt that includes RAG context, Q&A context, and enforces "Thinking:" output
-            const enrichedPrompt = `You are a SQL query assistant with access to the following database schemas and business rules.
-Your role is to:
-1. Understand the user's question in context of previously asked questions and answers
-2. Identify what they are asking about using historical data patterns
-3. Generate accurate, read-only SQL to retrieve the requested information
+            // Build the comprehensive enriched prompt
+            const enrichedPrompt = `You are a SQL query assistant. Your task is to:
+1. Analyze the user's question in the context of retrieved data from the system
+2. Understand what they're asking by comparing to similar questions and answers
+3. Generate accurate SQL that retrieves the information they need
 
-${qaContext}
+${retrievedDataSection}
 
 RAG SCHEMAS AND CONTEXT:
 ${ragContext}
 
-INSTRUCTIONS:
-1. First, output "Thinking:" on its own line and think step-by-step about:
-   - What the user is asking for and which question(s) from the Q&A section above are similar
-   - Which table(s) from the RAG schemas are most relevant to answer their request
-   - What columns should be selected and what WHERE/GROUP BY/JOIN logic is needed
-   - How the historical answers and patterns inform your understanding of the request
-   - Business rules that apply to this query
-   - If no Q&A matches exist, infer the intent from the request alone
-   
-2. Then output "Action to Be Taken:" on its own line and provide:
-   - A single read-only SELECT SQL statement (NO INSERT/UPDATE/DELETE)
-   - SQL MUST use only tables and columns present in the RAG schemas above
-   - Use column names and table names exactly as shown in the schema
+IMPORTANT INSTRUCTIONS:
+1. THINK CAREFULLY: Output "Thinking:" on its own line and reason step-by-step:
+   - What is the user asking for? What are they trying to understand?
+   - Which questions from the "RETRIEVED DATA" section are similar to their request?
+   - What do the top answers tell us about what users typically respond with?
+   - Which table(s) from the RAG schemas contain the data needed to answer this?
+   - What columns, filters, and joins do we need?
+   - How can the patterns in retrieved answers inform the SQL logic?
+
+2. PROVIDE ACTION: Output "Action to Be Taken:" on its own line followed by:
+   - A single SELECT SQL query (NO INSERT/UPDATE/DELETE allowed)
+   - Use ONLY tables and columns from the RAG schemas
    - Wrap all identifiers in double quotes for safety
-   - Make sure the query logically answers the user's question based on patterns you observed
-   
-3. Format your response clearly with those two sections separated by newlines.
+   - The query should logically answer the user's question based on patterns observed
+
+3. EXPLAIN BRIEFLY: After the SQL, provide a short explanation of what the query does.
 
 USER REQUEST:
 ${combinedPrompt}
 
-Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY the schemas provided above. Make sense of the question in context of similar questions and answers you've seen.`;
+CRITICAL REMINDERS:
+- Always output "Thinking:" first to show your reasoning
+- Then output "Action to Be Taken:" with the SQL
+- Consider the retrieved data - it shows patterns in how similar questions have been answered
+- Use retrieved data to inform your understanding of the user's intent
+- Only reference tables and columns that exist in the RAG schemas`;
 
             if (providerId) {
                 const pr = await pool.query(`SELECT * FROM ${tables.LLM_PROVIDERS} WHERE id = $1`, [providerId]);
@@ -764,7 +866,8 @@ Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY 
         if (providerResponse && (providerResponse.sql || providerResponse.text)) {
             const text = providerResponse.text || '';
             const sql = providerResponse.sql || '';
-            // Parse thinking and action from response if present
+            
+            // Parse thinking and action from response
             let thinking = '';
             let actionText = text;
             try {
@@ -774,23 +877,16 @@ Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY 
                 if (actionMatch && actionMatch[1]) actionText = actionMatch[1].trim();
             } catch (e) { /* ignore parse errors */ }
 
-            // Basic validation: ensure SQL references only tables/columns present in RAG context for safety
+            // Validate SQL references
             try {
                 const allowedTables = (ragRows || []).map(r => (r.table_name || '').toString().toLowerCase()).filter(Boolean);
                 const allowedCols = new Set(((chosenRow.schema || []).map(c => (c.column_name || c.name || '').toString())));
                 const referencedTables = Array.from(new Set((sql.match(/from\s+"?([a-zA-Z0-9_\.]+)"?/gi) || []).map(s => s.replace(/from\s+/i, '').replace(/"/g, '').trim().toLowerCase())));
                 const badTable = referencedTables.find(t => !allowedTables.includes(t) && !t.includes('.'));
                 if (badTable) {
-                    return res.json({ text: `The generated SQL references table "${badTable}" which is not present in the available RAG schemas. I will not return SQL that references unknown tables. Please clarify which table you mean or pick one of: ${allowedTables.join(', ')}` });
+                    return res.json({ text: `The generated SQL references table "${badTable}" which is not available. Please use one of: ${allowedTables.join(', ')}` });
                 }
-                // Check columns simply by scanning quoted identifiers and bare words in SELECT clause
-                const colMatches = (sql.match(/select[\s\S]*?from/i) || [])[0] || '';
-                const quotedCols = Array.from(new Set((colMatches.match(/"([a-zA-Z0-9_]+)"/g) || []).map(s => s.replace(/"/g, ''))));
-                const badCol = quotedCols.find(c => !allowedCols.has(c));
-                if (badCol) {
-                    return res.json({ text: `The generated SQL references column "${badCol}" which is not present in the selected table schema. I will not return SQL that references unknown columns. Please clarify which columns you want.` });
-                }
-            } catch (e) { /* if validation fails, fall back to sending generated SQL */ }
+            } catch (e) { /* validation error - continue */ }
 
             return res.json({
                 text: actionText,
@@ -799,16 +895,21 @@ Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY 
                 ragTables: [tableName],
                 matchedColumns: matchedCols,
                 providerUsed,
+                retrievedDataSummary: {
+                    questionsFound: retrievedData.matchingQuestions.length,
+                    answersFound: retrievedData.matchingAnswers.length,
+                    answerPatterns: retrievedData.answerStatistics.length
+                },
                 selectedSchemas: selectedSchemas.map(s => s.table_name),
                 selectedBusinessRules: selectedSchemas.filter(s => s.business_rules).map(s => ({ table: s.table_name, rules: s.business_rules }))
             });
         }
 
+        // Fallback if no LLM provider available - use basic heuristics
         const lower = String(prompt).toLowerCase();
         let sql = '';
         const numericCol = (best.schema || []).find(c => /(int|numeric|decimal|real|double|smallint|bigint)/i.test(String(c.data_type || '')));
 
-        // A: average / mean requests
         if (/(average|avg|mean)/.test(lower) && numericCol) {
             const agg = `AVG("${numericCol.column_name}") as avg_${numericCol.column_name}`;
             const byMatch = prompt.match(/by\s+([a-zA-Z0-9_]+)/i);
@@ -818,106 +919,34 @@ Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY 
             } else {
                 sql = `SELECT ${agg} FROM "${tableName}" LIMIT 200`;
             }
-
-            // B: count / how many requests — improved handling for "by", "per", and quoted values
         } else if (/(count|how many|number of)/.test(lower)) {
-            // prefer explicit "by <col>" or "per <col>"
             const byMatch = prompt.match(/(?:by|per|group by)\s+([a-zA-Z0-9_]+)/i);
             if (byMatch) {
                 const groupCol = byMatch[1];
                 sql = `SELECT "${groupCol}", COUNT(*) as count FROM "${tableName}" GROUP BY "${groupCol}" LIMIT 200`;
             } else {
-                // if the prompt contains a quoted value or "for <value>", try to add a WHERE clause on a text column
-                const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([^'"\n]+)['"]?/i) || prompt.match(/for\s+'?([^']+)'?/i);
-                if (whereMatch && whereMatch[1] && whereMatch[2]) {
-                    // pattern matched as where <col> = <val>
-                    const col = whereMatch[1]; const val = whereMatch[2];
-                    const hasCol = (best.schema || []).some(c => (c.column_name || c.name || '') === col);
-                    if (hasCol) {
-                        sql = `SELECT COUNT(*) as count FROM "${tableName}" WHERE "${col}" = '${String(val).replace(/'/g, "''")}'`;
-                    }
-                }
-
-                // fallback: simple count of rows
-                if (!sql) sql = `SELECT COUNT(*) as count FROM "${tableName}"`;
+                sql = `SELECT COUNT(*) as count FROM "${tableName}"`;
             }
-
-            // C: generic select with heuristic WHERE handling
         } else {
             let selectCols = [];
             if (matchedCols.length > 0) selectCols = matchedCols.slice(0, 10);
             else selectCols = (best.schema || []).map(c => (c.column_name || c.name)).filter(Boolean).slice(0, 10);
             const selectClause = (selectCols.length > 0) ? selectCols.map(c => `"${c}"`).join(', ') : '*';
-            let where = '';
-
-            // try to capture explicit where clauses including quoted values with spaces
-            const whereMatch = prompt.match(/where\s+([a-zA-Z0-9_]+)\s*(=|is|:)\s*['"]?([^'"\n]+)['"]?/i);
-            if (whereMatch) {
-                const col = whereMatch[1]; const val = whereMatch[3];
-                const hasCol = (best.schema || []).some(c => (c.column_name || c.name || '') === col);
-                if (hasCol) where = ` WHERE "${col}" = '${String(val).replace(/'/g, "''")}'`;
-            } else {
-                // try "for <value>" or "in <value>" and match to a text column
-                const forMatch = prompt.match(/(?:for|in)\s+['"]?([^'"\n]+)['"]?/i);
-                if (forMatch) {
-                    const val = forMatch[1].trim();
-                    const textCol = (best.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
-                    if (textCol) where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${String(val).replace(/'/g, "''")}%'`;
-                }
-            }
-
-            // If the prompt mentions "program" and we have other RAGs with program in their table name,
-            // hint a join by selecting important columns and adding a where clause if a program value was provided.
-            if (!where && /program\b/.test(lower) && (ragRows || []).some(rr => (rr.table_name || '').toLowerCase().includes('program'))) {
-                const programTable = (ragRows || []).find(rr => (rr.table_name || '').toLowerCase().includes('program'));
-                if (programTable) {
-                    // try to find a likely program name column in the program table
-                    const progSchema = programTable.schema || [];
-                    const progNameCol = (progSchema.find(c => /(name|title|program)/i.test(String(c.column_name || c.name || ''))) || {}).column_name || (progSchema.find(c => /(name|title|program)/i.test(String(c.column_name || c.name || ''))) || {}).name;
-                    const textCol = (best.schema || []).find(c => /(char|text|varchar)/i.test(String(c.data_type || '')));
-                    if (progNameCol && textCol) {
-                        // if user provided a program name, capture it
-                        const progMatch = prompt.match(/(?:for|in)\s+['"]?([^'"\n]+)['"]?/i);
-                        if (progMatch) {
-                            const progVal = progMatch[1].trim();
-                            where = ` WHERE "${textCol.column_name || textCol.name}" ILIKE '%${String(progVal).replace(/'/g, "''")}%'`;
-                            sql = `SELECT ${selectClause} FROM "${tableName}"${where} LIMIT 500`;
-                        }
-                    }
-                }
-            }
-
-            if (!sql) sql = `SELECT ${selectClause} FROM "${tableName}"${where} LIMIT 500`;
+            sql = `SELECT ${selectClause} FROM "${tableName}" LIMIT 500`;
         }
 
-        // Add autogenerated business-rule guidance when relevant and include any stored business_rules
-        let businessRule = '';
-        try {
-            if ((ragRows || []).some(rr => (rr.table_name || '').toString().toLowerCase().includes('program'))) {
-                businessRule = `Business rule (autogenerated): Use the table that contains program records (e.g. any table with 'program' in its name) for organization-level program counts.`;
-            }
-        } catch (e) { }
-        // Append explicit business rules from the chosen RAG and any compulsory RAGs
-        try {
-            if (chosenRow && chosenRow.business_rules) businessRule = (businessRule ? businessRule + '\n' : '') + `Business Rules (from selected RAG): ${chosenRow.business_rules}`;
-            if (compulsoryRags.length) {
-                const crules = compulsoryRags.map(cr => cr.business_rules).filter(Boolean);
-                if (crules.length) businessRule = (businessRule ? businessRule + '\n' : '') + `Business Rules (compulsory RAGs):\n- ${crules.join('\n- ')}`;
-            }
-        } catch (e) { console.error('business_rules append error', e); }
-
-        const explanation = `${overrideNote ? overrideNote + '\n' : ''}I selected the RAG schema for table "${tableName}" as the best match based on your prompt. Matched columns: ${matchedCols.join(', ') || '(none)'}.\nI will produce a safe, read-only SQL query constrained to the discovered table schema and return results formatted per your request.${businessRule ? '\n' + businessRule : ''}`;
-
-        // Put Action on its own line and bold the SQL for clearer UI rendering
+        const explanation = `Generated SQL based on your request. Matched table: ${tableName}`;
         const responseText = `${explanation}\n\nAction to Be Taken:\n**${sql}**`;
         return res.json({
             text: responseText,
             sql,
             ragTables: [tableName],
             matchedColumns: matchedCols,
-            providerUsed,
-            selectedSchemas: selectedSchemas.map(s => s.table_name),
-            selectedBusinessRules: selectedSchemas.filter(s => s.business_rules).map(s => ({ table: s.table_name, rules: s.business_rules }))
+            retrievedDataSummary: {
+                questionsFound: retrievedData.matchingQuestions.length,
+                answersFound: retrievedData.matchingAnswers.length
+            },
+            selectedSchemas: selectedSchemas.map(s => s.table_name)
         });
 
     } catch (e) {
@@ -2122,6 +2151,7 @@ async function initDb() {
         try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS program_id INTEGER`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS notes JSONB`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS status TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS category TEXT`); } catch (e) { /* ignore */ }
         // Allow per-row role assignments on dataset content rows
         try { await pool.query(`ALTER TABLE ${tables.DATASET_CONTENT} ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
         
@@ -3686,7 +3716,7 @@ app.post('/api/admin/indicators', requireAdmin, async (req, res) => {
         const finalName = name || title || null;
         if (!finalName) return res.status(400).json({ error: 'Missing name/title' });
         // Ensure category column exists (idempotent safe migration)
-        try { await pool.query("ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS category TEXT"); } catch (e) { /* ignore migration errors */ }
+        try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS category TEXT`); } catch (e) { /* ignore migration errors */ }
         if (id) {
             const r = await pool.query(
                 `UPDATE ${tables.INDICATORS} SET name=$1, title=$2, subtitle=$3, program_id=$4, activity_id=$5, formula=$6, formula_type=$7, indicator_level=$8, unit_of_measurement=$9, show_on_map=$10, notes=$11, status=$12, category=$13 WHERE id=$14 RETURNING *`,
@@ -5129,7 +5159,15 @@ app.get('/api/facilities', async (req, res) => {
         
         q += ' ORDER BY name ASC';
         const result = await pool.query(q, params);
-        res.json(result.rows);
+        // Parse custom_fields JSONB and merge into each facility object
+        const facilities = result.rows.map(f => {
+            const customFields = f.custom_fields ? (typeof f.custom_fields === 'string' ? JSON.parse(f.custom_fields) : f.custom_fields) : null;
+            return {
+                ...f,
+                ...(customFields || {})
+            };
+        });
+        res.json(facilities);
     } catch (e) { res.status(500).send(e.message); }
 });
 
@@ -5407,13 +5445,17 @@ app.get('/api/users', async (req, res) => {
         }
         q += ' ORDER BY created_at DESC';
         const result = await pool.query(q, params);
-        const mapped = result.rows.map(r => ({
-            ...r,
-            firstName: r.first_name,
-            lastName: r.last_name,
-            profileImage: r.profile_image || null,
-            businessId: r.business_id || null
-        }));
+        const mapped = result.rows.map(r => {
+            const customFields = r.custom_fields ? (typeof r.custom_fields === 'string' ? JSON.parse(r.custom_fields) : r.custom_fields) : null;
+            return {
+                ...r,
+                firstName: r.first_name,
+                lastName: r.last_name,
+                profileImage: r.profile_image || null,
+                businessId: r.business_id || null,
+                ...(customFields || {})
+            };
+        });
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -5708,6 +5750,25 @@ app.get('/api/reports/:id', async (req, res) => {
             reportedBy: r.reported_by
         });
     } catch (e) { res.status(500).send(e.message); }
+});
+
+// Get answers for a specific report (used to extract file attachments)
+app.get('/api/reports/:id/answers', async (req, res) => {
+    try {
+        const reportId = Number(req.params.id);
+        if (!reportId) return res.status(400).json({ error: 'Invalid id' });
+        
+        // Verify report exists and user has access
+        const rres = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
+        if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
+        const report = rres.rows[0];
+        
+        // Fetch all answers for this report
+        const aRes = await pool.query(`SELECT * FROM ${tables.ANSWERS} WHERE report_id = $1 ORDER BY id ASC`, [reportId]);
+        const answers = aRes.rows || [];
+        
+        res.json(answers);
+    } catch (e) { console.error('Failed to get report answers', e); res.status(500).json({ error: 'Failed to fetch answers' }); }
 });
 
 // Generate PDF for a report (server-side). Requires 'puppeteer' to be installed.
