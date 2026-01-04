@@ -764,10 +764,22 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 }
                 payloadBase.answers = strippedAnswers;
 
-                // create report on server
+                // Include uploaded Excel/CSV files in the payload
+                payloadBase.uploadedFiles = uploadedFiles.map(f => ({
+                    filename: f.fileName || f.name || `file_${f.id}`,
+                    data: f.data || [],
+                    name: f.fileName || f.name || `file_${f.id}`
+                }));
+
+                // If editing an existing report, include the report ID so server performs an update instead of creating a duplicate
+                if (editingReport && editingReport.id) {
+                    payloadBase.id = editingReport.id;
+                }
+
+                // create or update report on server
                 const createRes = await fetch('/api/reports', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadBase) });
                 if (!createRes.ok) {
-                    alert('Failed to create report');
+                    alert('Failed to ' + (editingReport ? 'update' : 'create') + ' report');
                     return;
                 }
                 const created = await createRes.json();

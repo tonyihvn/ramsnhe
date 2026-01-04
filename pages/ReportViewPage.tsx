@@ -118,7 +118,16 @@ const ReportViewPage: React.FC = () => {
           apiFetch(`/api/questions?activityId=${jr.activity_id}`, { credentials: 'include' }),
           apiFetch(`/api/uploaded_docs?reportId=${jr.id}`, { credentials: 'include' })
         ]);
-        if (aRes.ok) setAnswers(await aRes.json() || []);
+        if (aRes.ok) {
+          const answersData = await aRes.json() || [];
+          // Sort answers by ID to maintain consistent order
+          const sortedAnswers = answersData.sort((a: any, b: any) => {
+            const aId = Number(a.id) || 0;
+            const bId = Number(b.id) || 0;
+            return aId - bId;
+          });
+          setAnswers(sortedAnswers);
+        }
         if (qRes.ok) setQuestions(await qRes.json() || []);
         if (docs.ok) setUploadedDocs(await docs.json() || []);
         // fetch activity (title + data)

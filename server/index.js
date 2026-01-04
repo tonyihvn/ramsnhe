@@ -542,6 +542,109 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             }
         } catch (e) { /* ignore */ }
 
+        // NEW: Comprehensive Q&A lookup - Search QUESTIONS and ANSWERS tables based on keywords and similarity
+        let qaContext = '';
+        let qaInsights = [];
+        try {
+            const promptLower = String(prompt).toLowerCase();
+            const promptTokens = promptLower.match(/\w+/g) || [];
+            
+            if (promptTokens.length > 0) {
+                // STEP 1: Search for questions that match the prompt keywords or look similar to the prompt
+                const qRes = await pool.query(
+                    `SELECT DISTINCT id, question_text, page_name, section_name 
+                     FROM ${tables.QUESTIONS} 
+                     WHERE LOWER(question_text) LIKE ANY($1)
+                     ORDER BY 
+                       CASE 
+                         WHEN LOWER(question_text) LIKE $2 THEN 0
+                         ELSE 1
+                       END,
+                       LENGTH(question_text) ASC
+                     LIMIT 15`,
+                    [
+                        promptTokens.map(t => `%${t}%`),
+                        `%${promptTokens.slice(0, 3).join('%')}%`
+                    ]
+                );
+                
+                if (qRes.rows && qRes.rows.length > 0) {
+                    const qids = qRes.rows.map(r => r.id);
+                    
+                    // STEP 2: Find all answers to these matching questions
+                    const aRes = await pool.query(
+                        `SELECT q.id as question_id, q.question_text, a.answer_value, a.id as answer_id, COUNT(*) OVER (PARTITION BY q.id, a.answer_value) as answer_frequency
+                         FROM ${tables.ANSWERS} a
+                         JOIN ${tables.QUESTIONS} q ON a.question_id = q.id
+                         WHERE a.question_id = ANY($1)
+                         AND a.answer_value IS NOT NULL
+                         AND a.answer_value != ''
+                         ORDER BY q.id, answer_frequency DESC, a.id DESC
+                         LIMIT 50`,
+                        [qids]
+                    );
+                    
+                    if (aRes.rows && aRes.rows.length > 0) {
+                        // STEP 3: Organize answers by question and extract key patterns
+                        const qaMap: Record<string, {question: string, answers: Array<{value: string, frequency: number}>}> = {};
+                        
+                        for (const row of aRes.rows) {
+                            const qText = row.question_text;
+                            if (!qaMap[qText]) {
+                                qaMap[qText] = { question: qText, answers: [] };
+                            }
+                            
+                            // Avoid duplicates
+                            const answerStr = String(row.answer_value);
+                            if (!qaMap[qText].answers.find(a => a.value === answerStr)) {
+                                qaMap[qText].answers.push({
+                                    value: answerStr,
+                                    frequency: row.answer_frequency || 1
+                                });
+                            }
+                        }
+                        
+                        // STEP 4: Build comprehensive Q&A context string
+                        qaContext = '\n=== RELEVANT QUESTIONS AND ANSWERS FROM SYSTEM DATABASE ===\n';
+                        qaContext += `(Based on keywords: ${promptTokens.slice(0, 5).join(', ')})\n\n`;
+                        
+                        let qaIndex = 0;
+                        for (const [questionText, data] of Object.entries(qaMap)) {
+                            qaIndex++;
+                            const topAnswers = data.answers.slice(0, 5); // Top 5 answers per question
+                            
+                            qaContext += `[Q${qaIndex}] ${questionText}\n`;
+                            qaContext += `Common Responses:\n`;
+                            
+                            for (const ans of topAnswers) {
+                                const freqLabel = ans.frequency > 1 ? ` (reported ${ans.frequency} times)` : '';
+                                qaContext += `  - "${ans.value}"${freqLabel}\n`;
+                            }
+                            qaContext += '\n';
+                            
+                            // Also track these for later use
+                            qaInsights.push({
+                                question: questionText,
+                                topAnswers: topAnswers.map(a => a.value),
+                                frequency: topAnswers[0]?.frequency || 1
+                            });
+                        }
+                        
+                        // STEP 5: Extract patterns and insights to help LLM understand context
+                        if (qaInsights.length > 0) {
+                            qaContext += '=== PATTERNS AND INSIGHTS ===\n';
+                            qaContext += `Found ${qaInsights.length} relevant question(s) from the database with ${aRes.rows.length} responses total.\n`;
+                            qaContext += 'Use this information to understand what questions have been asked before and how they were answered.\n';
+                            qaContext += 'This can help identify patterns, common issues, or frequently reported values.\n\n';
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to fetch Q&A context:', e.message);
+            // Continue anyway, Q&A context is optional enhancement
+        }
+
         const rres = await pool.query(`SELECT * FROM ${tables.RAG_SCHEMAS}`);
         const ragRows = rres.rows || [];
 
@@ -605,28 +708,40 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         let providerUsed = null;
         let providerResponse = null;
         try {
-            // Build enriched prompt that includes RAG context and enforces "Thinking:" output
+            // Build enriched prompt that includes RAG context, Q&A context, and enforces "Thinking:" output
             const enrichedPrompt = `You are a SQL query assistant with access to the following database schemas and business rules.
+Your role is to:
+1. Understand the user's question in context of previously asked questions and answers
+2. Identify what they are asking about using historical data patterns
+3. Generate accurate, read-only SQL to retrieve the requested information
+
+${qaContext}
 
 RAG SCHEMAS AND CONTEXT:
 ${ragContext}
 
 INSTRUCTIONS:
 1. First, output "Thinking:" on its own line and think step-by-step about:
-   - Which table(s) from the RAG schemas are most relevant to the user's request
-   - What columns should be selected and any WHERE/GROUP BY/JOIN logic needed
+   - What the user is asking for and which question(s) from the Q&A section above are similar
+   - Which table(s) from the RAG schemas are most relevant to answer their request
+   - What columns should be selected and what WHERE/GROUP BY/JOIN logic is needed
+   - How the historical answers and patterns inform your understanding of the request
    - Business rules that apply to this query
+   - If no Q&A matches exist, infer the intent from the request alone
+   
 2. Then output "Action to Be Taken:" on its own line and provide:
    - A single read-only SELECT SQL statement (NO INSERT/UPDATE/DELETE)
    - SQL MUST use only tables and columns present in the RAG schemas above
    - Use column names and table names exactly as shown in the schema
    - Wrap all identifiers in double quotes for safety
+   - Make sure the query logically answers the user's question based on patterns you observed
+   
 3. Format your response clearly with those two sections separated by newlines.
 
 USER REQUEST:
 ${combinedPrompt}
 
-Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY the schemas provided above.`;
+Remember: Always output "Thinking:" first, then "Action to Be Taken:". Use ONLY the schemas provided above. Make sense of the question in context of similar questions and answers you've seen.`;
 
             if (providerId) {
                 const pr = await pool.query(`SELECT * FROM ${tables.LLM_PROVIDERS} WHERE id = $1`, [providerId]);
