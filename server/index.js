@@ -106,9 +106,9 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
                                     existingUsed[key] = true;
                                 } else {
                                     const allowedCreate = await canCheck(pageKey, sectionKey, 'create');
-                                        if (allowedCreate) {
+                                    if (allowedCreate) {
                                         const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                            await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
+                                        await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [reportId, payload.activityId || payload.activity_id || existingRow.activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existingRow.facility_id || null, payload.userId || payload.user_id || existingRow.user_id || null, currentUserId, new Date(), reviewersComment, qiFollowup, score, answerBusinessId]);
                                     }
                                 }
                             } catch (ie) { console.error('Failed to process repeated answer during update for question', subQId, ie); }
@@ -244,7 +244,7 @@ app.use('/builds', express.static(buildsRoot));
 app.post('/api/upload-image', async (req, res) => {
     try {
         const { file, filename } = req.body;
-        
+
         if (!file || !filename) {
             return res.status(400).json({ error: 'Missing file or filename' });
         }
@@ -533,7 +533,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
     try {
         const { prompt, context, scope, providerId, messages, overrideNote } = req.body || {};
         if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
-        
+
         // Combine prior conversation messages with current prompt
         let combinedPrompt = String(prompt);
         try {
@@ -551,11 +551,11 @@ app.post('/api/llm/generate_sql', async (req, res) => {
             matchingAnswers: [],
             answerStatistics: []
         };
-        
+
         try {
             const promptLower = String(prompt).toLowerCase();
             const promptTokens = promptLower.match(/\w+/g) || [];
-            
+
             if (promptTokens.length > 0) {
                 // ===== STEP 1: Find matching QUESTIONS =====
                 const questionsQuery = `
@@ -573,7 +573,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                     ORDER BY exact_match DESC, LENGTH(question_text) ASC
                     LIMIT 20
                 `;
-                
+
                 const qRes = await pool.query(
                     questionsQuery,
                     [
@@ -581,7 +581,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                         promptTokens.map(t => `%${t}%`)
                     ]
                 );
-                
+
                 if (qRes.rows && qRes.rows.length > 0) {
                     retrievedData.matchingQuestions = qRes.rows.map(q => ({
                         id: q.id,
@@ -590,7 +590,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                         section: q.section_name,
                         relevance: q.exact_match ? 'exact' : 'partial'
                     }));
-                    
+
                     // ===== STEP 2: Find ALL ANSWERS for matching questions =====
                     const qids = qRes.rows.map(r => r.id);
                     const answersQuery = `
@@ -609,19 +609,19 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                         ORDER BY a.question_id, frequency DESC, a.id ASC
                         LIMIT 100
                     `;
-                    
+
                     const aRes = await pool.query(answersQuery, [qids]);
-                    
+
                     if (aRes.rows && aRes.rows.length > 0) {
                         // Organize answers by question
                         const answersByQuestion = {};
                         const frequencyMap = {};
-                        
+
                         for (const row of aRes.rows) {
                             const qId = row.question_id;
                             const qText = row.question_text;
                             const ansValue = String(row.answer_value);
-                            
+
                             if (!answersByQuestion[qId]) {
                                 answersByQuestion[qId] = {
                                     questionId: qId,
@@ -629,7 +629,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                                     answers: []
                                 };
                             }
-                            
+
                             // Avoid duplicates and track frequency
                             if (!frequencyMap[`${qId}_${ansValue}`]) {
                                 answersByQuestion[qId].answers.push({
@@ -639,16 +639,16 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                                 frequencyMap[`${qId}_${ansValue}`] = true;
                             }
                         }
-                        
+
                         // Convert to array and add to retrieved data
                         retrievedData.matchingAnswers = Object.values(answersByQuestion);
-                        
+
                         // ===== STEP 3: Generate answer statistics =====
                         for (const qaGroup of retrievedData.matchingAnswers) {
                             const totalAnswers = qaGroup.answers.length;
                             const topAnswers = qaGroup.answers.slice(0, 5);
                             const totalResponses = qaGroup.answers.reduce((sum, a) => sum + a.frequency, 0);
-                            
+
                             retrievedData.answerStatistics.push({
                                 questionId: qaGroup.questionId,
                                 questionText: qaGroup.questionText,
@@ -661,7 +661,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                         }
                     }
                 }
-                
+
                 // ===== BONUS: Also search ANSWERS table directly for prompt text =====
                 try {
                     const directAnswersQuery = `
@@ -678,9 +678,9 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                         AND a.answer_value != ''
                         LIMIT 30
                     `;
-                    
+
                     const directRes = await pool.query(directAnswersQuery, [promptTokens.map(t => `%${t}%`)]);
-                    
+
                     if (directRes.rows && directRes.rows.length > 0) {
                         retrievedData.directAnswerMatches = directRes.rows.map(a => ({
                             answerId: a.id,
@@ -759,10 +759,10 @@ app.post('/api/llm/generate_sql', async (req, res) => {
 
         // ========== BUILD COMPREHENSIVE PROMPT FOR LLM ==========
         let retrievedDataSection = '';
-        
+
         if (retrievedData.matchingQuestions.length > 0) {
             retrievedDataSection = '\n=== RETRIEVED DATA FROM SYSTEM DATABASE ===\n\n';
-            
+
             // Add matching questions
             if (retrievedData.matchingQuestions.length > 0) {
                 retrievedDataSection += '*** MATCHING QUESTIONS FOUND IN SYSTEM ***\n';
@@ -772,7 +772,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                     retrievedDataSection += `    Relevance: ${q.relevance}\n\n`;
                 });
             }
-            
+
             // Add matching answers with statistics
             if (retrievedData.answerStatistics.length > 0) {
                 retrievedDataSection += '*** RESPONSES TO RELATED QUESTIONS ***\n';
@@ -790,7 +790,7 @@ app.post('/api/llm/generate_sql', async (req, res) => {
                     retrievedDataSection += '\n';
                 });
             }
-            
+
             // Add direct answer matches if found
             if (retrievedData.directAnswerMatches && retrievedData.directAnswerMatches.length > 0) {
                 retrievedDataSection += '*** ANSWERS WITH MATCHING KEYWORDS ***\n';
@@ -866,7 +866,7 @@ CRITICAL REMINDERS:
         if (providerResponse && (providerResponse.sql || providerResponse.text)) {
             const text = providerResponse.text || '';
             const sql = providerResponse.sql || '';
-            
+
             // Parse thinking and action from response
             let thinking = '';
             let actionText = text;
@@ -1194,7 +1194,7 @@ app.post('/api/build_report', async (req, res) => {
                 } else {
                     // Sanitize HTML for DOCX by removing problematic elements
                     let sanitizedHtml = wrapperHtml;
-                    
+
                     // Remove script tags and their content
                     sanitizedHtml = sanitizedHtml.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
                     // Remove style tags and their content
@@ -1219,16 +1219,16 @@ app.post('/api/build_report', async (req, res) => {
                     sanitizedHtml = sanitizedHtml.replace(/<img([^>]*)(?<!\/)>/g, '<img$1/>');
                     sanitizedHtml = sanitizedHtml.replace(/<hr([^>]*)(?<!\/)>/g, '<hr$1/>');
                     sanitizedHtml = sanitizedHtml.replace(/<input([^>]*)(?<!\/)>/g, '<input$1/>');
-                    
+
                     // Wrap in proper HTML document structure for better compatibility
                     if (!sanitizedHtml.toLowerCase().includes('<html')) {
                         sanitizedHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body>${sanitizedHtml}</body></html>`;
                     }
-                    
+
                     try {
                         let docxBuffer;
                         let convertedSuccessfully = false;
-                        
+
                         // Try primary method: htmlDocx.asBlob
                         if (htmlDocx && htmlDocx.asBlob && !convertedSuccessfully) {
                             try {
@@ -1253,7 +1253,7 @@ app.post('/api/build_report', async (req, res) => {
                                 console.warn('asBlob method failed:', e.message);
                             }
                         }
-                        
+
                         // Try secondary method: htmlDocx.default.asBlob
                         if (htmlDocx && htmlDocx.default && htmlDocx.default.asBlob && !convertedSuccessfully) {
                             try {
@@ -1275,7 +1275,7 @@ app.post('/api/build_report', async (req, res) => {
                                 console.warn('default.asBlob method failed:', e.message);
                             }
                         }
-                        
+
                         // Try tertiary method: htmlDocx.asDocument
                         if (htmlDocx && htmlDocx.asDocument && !convertedSuccessfully) {
                             try {
@@ -1294,26 +1294,26 @@ app.post('/api/build_report', async (req, res) => {
                                 console.warn('asDocument method failed:', e.message);
                             }
                         }
-                        
+
                         if (!convertedSuccessfully || !docxBuffer) {
                             throw new Error('All html-docx-js conversion methods failed');
                         }
-                        
+
                         // Verify the buffer is not empty and has reasonable size
                         if (docxBuffer.length < 100) {
                             throw new Error(`Generated DOCX buffer too small (${docxBuffer.length} bytes) - likely corrupted`);
                         }
-                        
+
                         const outName = `${safeName}_${Date.now()}.docx`;
                         const outPath = path.join(buildsRoot, outName);
                         fs.writeFileSync(outPath, docxBuffer);
-                        
+
                         // Verify file was written correctly
                         const fileStats = fs.statSync(outPath);
                         if (fileStats.size < 100) {
                             throw new Error(`Generated DOCX file too small (${fileStats.size} bytes) - file may be corrupted`);
                         }
-                        
+
                         const publicUrl = `/builds/${outName}`;
                         return res.json({ url: publicUrl, path: outPath });
                     } catch (e) {
@@ -1332,15 +1332,15 @@ app.post('/api/build_report', async (req, res) => {
                     const imgPath = path.join(buildsRoot, imgName);
                     await page.screenshot({ path: imgPath, fullPage: true, type: 'jpeg', quality: 90 });
                     await browser.close();
-                    
+
                     // Create a simple DOCX with the image embedded
                     const imgBuf = fs.readFileSync(imgPath);
                     const b64 = imgBuf.toString('base64');
                     const fallbackHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head><body style="margin:0;padding:0;"><img src="data:image/jpeg;base64,${b64}" style="width:100%;height:auto;display:block;"/></body></html>`;
-                    
+
                     let docxBuffer;
                     let fallbackDocxGenerated = false;
-                    
+
                     try {
                         // Try multiple methods to create DOCX with image
                         if (htmlDocx && htmlDocx.asBlob) {
@@ -1363,7 +1363,7 @@ app.post('/api/build_report', async (req, res) => {
                                 console.warn('Fallback asBlob method failed:', e.message);
                             }
                         }
-                        
+
                         if (!fallbackDocxGenerated && htmlDocx && htmlDocx.default && htmlDocx.default.asBlob) {
                             try {
                                 const blobOrBuffer = await htmlDocx.default.asBlob(fallbackHtml);
@@ -1387,17 +1387,17 @@ app.post('/api/build_report', async (req, res) => {
                     } catch (docxErr) {
                         console.error('Failed to create DOCX with image:', docxErr.message);
                     }
-                    
+
                     if (!fallbackDocxGenerated || !docxBuffer || docxBuffer.length < 100) {
                         console.warn('DOCX generation failed or produced invalid file, returning raw image instead');
                         // Return image path directly if DOCX creation fails
                         return res.json({ url: `/builds/${imgName}`, path: imgPath, fallback: true, message: 'Rendered as image due to DOCX compatibility issue' });
                     }
-                    
+
                     const outName = `${safeName}_${Date.now()}.docx`;
                     const outPath = path.join(buildsRoot, outName);
                     fs.writeFileSync(outPath, docxBuffer);
-                    
+
                     // Verify file was written correctly
                     const fileStats = fs.statSync(outPath);
                     if (fileStats.size < 100) {
@@ -1406,7 +1406,7 @@ app.post('/api/build_report', async (req, res) => {
                         try { fs.unlinkSync(outPath); } catch (e) { /* ignore */ }
                         return res.json({ url: `/builds/${imgName}`, path: imgPath, fallback: true, message: 'Rendered as image due to DOCX file corruption' });
                     }
-                    
+
                     const publicUrl = `/builds/${outName}`;
                     return res.json({ url: publicUrl, path: outPath, fallback: true, message: 'Rendered as image due to HTML compatibility issues' });
                 } catch (fallbackErr) {
@@ -1605,7 +1605,7 @@ app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
                 [formType]
             );
             console.log('[Form Schema Load] Fallback query result:', { found: fallbackRes.rowCount > 0 });
-            
+
             if (fallbackRes.rowCount > 0) {
                 const row = fallbackRes.rows[0];
                 return res.json({
@@ -1761,6 +1761,11 @@ async function initDb() {
             lga TEXT,
             address TEXT,
             category TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS ${tables.ROLES} (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT
         )`,
         `CREATE TABLE IF NOT EXISTS ${tables.ACTIVITIES} (
             id SERIAL PRIMARY KEY,
@@ -1970,12 +1975,7 @@ async function initDb() {
         await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`);
         // Add show_in_menu flag for datasets so datasets can be shown in sidebar
         await pool.query(`ALTER TABLE ${tables.DATASETS} ADD COLUMN IF NOT EXISTS show_in_menu BOOLEAN DEFAULT FALSE`);
-        // Create roles, permissions and settings tables
-        await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.ROLES} (
-            id SERIAL PRIMARY KEY,
-            name TEXT UNIQUE NOT NULL,
-            description TEXT
-        )`);
+        // Create permissions and settings tables
         await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PERMISSIONS} (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE NOT NULL,
@@ -2154,7 +2154,7 @@ async function initDb() {
         try { await pool.query(`ALTER TABLE ${tables.INDICATORS} ADD COLUMN IF NOT EXISTS category TEXT`); } catch (e) { /* ignore */ }
         // Allow per-row role assignments on dataset content rows
         try { await pool.query(`ALTER TABLE ${tables.DATASET_CONTENT} ADD COLUMN IF NOT EXISTS dataset_roles JSONB DEFAULT '[]'::jsonb`); } catch (e) { /* ignore */ }
-        
+
         // Ensure user approvals table exists
         try {
             await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.USER_APPROVALS} (
@@ -2167,7 +2167,7 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )`);
         } catch (e) { /* ignore */ }
-        
+
         // Ensure feedback messages table exists
         try {
             await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.FEEDBACK_MESSAGES} (
@@ -2183,14 +2183,14 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )`);
         } catch (e) { /* ignore */ }
-        
+
         // Add last_login_at to users table if missing
         try { await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`); } catch (e) { /* ignore */ }
-        
+
         // Add business_id to datasets table for multi-tenancy
         try { await pool.query(`ALTER TABLE ${tables.DATASETS} ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE ${tables.DATASET_CONTENT} ADD COLUMN IF NOT EXISTS business_id INTEGER`); } catch (e) { /* ignore */ }
-        
+
         // Create landing page config table if missing
         try {
             await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.LANDING_PAGE_CONFIG} (
@@ -2230,7 +2230,7 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )`);
         } catch (e) { /* ignore */ }
-        
+
         // Ensure ${tables.LANDING_PAGE_CONFIG} has all required columns
         try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS features_data JSONB`); } catch (e) { /* ignore */ }
         try { await pool.query(`ALTER TABLE ${tables.LANDING_PAGE_CONFIG} ADD COLUMN IF NOT EXISTS carousel_items JSONB`); } catch (e) { /* ignore */ }
@@ -3858,7 +3858,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
             out[iid] = { indicator: ind, results: {} };
 
             // SQL mode: run per-facility (support {placeholders} substitution)
-                const isSqlModeBulk = String(formula || '').toLowerCase().startsWith('sql:') || (ftype === 'sql') || String((formula || '')).trim().toLowerCase().startsWith('select');
+            const isSqlModeBulk = String(formula || '').toLowerCase().startsWith('sql:') || (ftype === 'sql') || String((formula || '')).trim().toLowerCase().startsWith('select');
             if (isSqlModeBulk) {
                 const rawSql = String(formula).toLowerCase().startsWith('sql:') ? String(formula).slice(4).trim() : String(formula).trim();
                 const sql = rawSql;
@@ -3884,7 +3884,7 @@ app.post('/api/indicators/compute_bulk', async (req, res) => {
 
                 for (const fid of facilityIds) {
                     try {
-                            const context = { selected_facility_id: fid, selected_facility: fid, facilityid: fid, facility_id: fid, selected_state: (req.body && (req.body.selected_state || req.body.state)) || null, selected_lga: (req.body && (req.body.selected_lga || req.body.lga)) || null, selected_user_id: (req.body && (req.body.selected_user_id || req.body.userId)) || null };
+                        const context = { selected_facility_id: fid, selected_facility: fid, facilityid: fid, facility_id: fid, selected_state: (req.body && (req.body.selected_state || req.body.state)) || null, selected_lga: (req.body && (req.body.selected_lga || req.body.lga)) || null, selected_user_id: (req.body && (req.body.selected_user_id || req.body.userId)) || null };
                         const { text, values } = prepareSqlWithContext(sql, context);
                         let execValues = values;
                         if (values.length === 0) {
@@ -3933,11 +3933,11 @@ app.get('/api/datasets', async (req, res) => {
         if (!req.session?.userId) {
             return res.status(401).json({ error: 'Not authenticated' });
         }
-        
+
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        const r = isSuperAdmin && !businessId 
+        const r = isSuperAdmin && !businessId
             ? await pool.query(`SELECT * FROM ${tables.DATASETS} ORDER BY id DESC`)
             : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC`, [businessId]);
         res.json(r.rows);
@@ -3949,7 +3949,7 @@ app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        const r = isSuperAdmin && !businessId 
+        const r = isSuperAdmin && !businessId
             ? await pool.query(`SELECT * FROM ${tables.DATASETS} ORDER BY id DESC`)
             : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC`, [businessId]);
         res.json(r.rows);
@@ -3962,7 +3962,7 @@ app.get('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        const r = isSuperAdmin && !businessId 
+        const r = isSuperAdmin && !businessId
             ? await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE id = $1`, [id])
             : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)`, [id, businessId]);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
@@ -4066,7 +4066,7 @@ app.delete('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        
+
         if (isSuperAdmin && !businessId) {
             await pool.query(`DELETE FROM ${tables.DATASET_CONTENT} WHERE dataset_id = $1`, [id]);
             await pool.query(`DELETE FROM ${tables.DATASETS} WHERE id = $1`, [id]);
@@ -4087,7 +4087,7 @@ app.get('/api/admin/datasets/:id/content', requireAdmin, async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        
+
         if (isSuperAdmin && !businessId) {
             const r = await pool.query(`SELECT * FROM ${tables.DATASET_CONTENT} WHERE dataset_id = $1 ORDER BY id DESC LIMIT $2`, [datasetId, limit]);
             res.json({ rows: r.rows, count: r.rowCount });
@@ -4417,15 +4417,15 @@ app.post('/api/admin/roles/assign', requireAdmin, async (req, res) => {
     try {
         const { userId, roleId, roleIds } = req.body;
         if (!userId) return res.status(400).json({ error: 'Missing userId' });
-        
+
         // Handle both single roleId and array of roleIds
         const rolesToAssign = roleIds && Array.isArray(roleIds) ? roleIds : (roleId ? [roleId] : []);
-        
+
         if (rolesToAssign.length === 0) return res.status(400).json({ error: 'No roles to assign' });
-        
+
         // First, clear existing roles for this user
         await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [userId]);
-        
+
         // Then assign new roles
         for (const rid of rolesToAssign) {
             if (rid !== null && rid !== undefined) {
@@ -4444,15 +4444,15 @@ app.post('/api/admin/permissions/assign', requireAdmin, async (req, res) => {
     try {
         const { userId, permissionId, permissionIds } = req.body;
         if (!userId) return res.status(400).json({ error: 'Missing userId' });
-        
+
         // Handle both single permissionId and array of permissionIds
         const permissionsToAssign = permissionIds && Array.isArray(permissionIds) ? permissionIds : (permissionId ? [permissionId] : []);
-        
+
         if (permissionsToAssign.length === 0) return res.status(400).json({ error: 'No permissions to assign' });
-        
+
         // First, clear existing permissions for this user
         await pool.query(`DELETE FROM ${tables.USER_PERMISSIONS} WHERE user_id = $1`, [userId]);
-        
+
         // Then assign new permissions
         for (const pid of permissionsToAssign) {
             if (pid !== null && pid !== undefined) {
@@ -4677,7 +4677,7 @@ app.post('/auth/login', async (req, res) => {
             // set business id in session for scoping
             try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
             // Update last_login_at timestamp
-            try { 
+            try {
                 await pool.query(`UPDATE ${tables.USERS} SET last_login_at = NOW() WHERE id = $1`, [user.id]);
             } catch (e) { console.warn('Failed to update last_login_at', e); }
             // Return sanitized user object (omit password)
@@ -4723,7 +4723,7 @@ app.post('/auth/login', async (req, res) => {
         req.session.userId = user.id;
         try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
         // Update last_login_at timestamp
-        try { 
+        try {
             await pool.query(`UPDATE ${tables.USERS} SET last_login_at = NOW() WHERE id = $1`, [user.id]);
         } catch (e) { console.warn('Failed to update last_login_at', e); }
         try {
@@ -4887,16 +4887,16 @@ app.get('/api/programs', async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        
+
         let q = `SELECT * FROM ${tables.PROGRAMS}`;
         const params = [];
-        
+
         // Super-admin without business context sees all, otherwise filter by business_id
         if (!isSuperAdmin || businessId) {
             q += ' WHERE business_id = $1 OR business_id IS NULL';
             params.push(businessId);
         }
-        
+
         q += ' ORDER BY created_at DESC';
         const result = await pool.query(q, params);
         res.json(result.rows);
@@ -4993,16 +4993,16 @@ app.get('/api/activities', async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        
+
         let q = `SELECT * FROM ${tables.ACTIVITIES}`;
         const params = [];
-        
+
         // Super-admin without business context sees all, otherwise filter by business_id
         if (!isSuperAdmin || businessId) {
             q += ' WHERE business_id = $1 OR business_id IS NULL';
             params.push(businessId);
         }
-        
+
         q += ' ORDER BY created_at DESC';
         const result = await pool.query(q, params);
         const mapped = result.rows.map(row => ({
@@ -5147,16 +5147,16 @@ app.get('/api/facilities', async (req, res) => {
         const businessId = req.session?.businessId || null;
         const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
         const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        
+
         let q = `SELECT * FROM ${tables.FACILITIES}`;
         const params = [];
-        
+
         // Super-admin without business context sees all, otherwise filter by business_id
         if (!isSuperAdmin || businessId) {
             q += ' WHERE business_id = $1 OR business_id IS NULL';
             params.push(businessId);
         }
-        
+
         q += ' ORDER BY name ASC';
         const result = await pool.query(q, params);
         // Parse custom_fields JSONB and merge into each facility object
@@ -5757,16 +5757,16 @@ app.get('/api/reports/:id/answers', async (req, res) => {
     try {
         const reportId = Number(req.params.id);
         if (!reportId) return res.status(400).json({ error: 'Invalid id' });
-        
+
         // Verify report exists and user has access
         const rres = await pool.query(`SELECT * FROM ${tables.ACTIVITY_REPORTS} WHERE id = $1`, [reportId]);
         if (rres.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
         const report = rres.rows[0];
-        
+
         // Fetch all answers for this report
         const aRes = await pool.query(`SELECT * FROM ${tables.ANSWERS} WHERE report_id = $1 ORDER BY id ASC`, [reportId]);
         const answers = aRes.rows || [];
-        
+
         res.json(answers);
     } catch (e) { console.error('Failed to get report answers', e); res.status(500).json({ error: 'Failed to fetch answers' }); }
 });
@@ -6262,7 +6262,7 @@ app.put('/api/reports/:id', async (req, res) => {
                 return res.status(500).send('Failed to update report');
             }
         }
-        
+
         // Replace answers if provided (update via helper)
         if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
             try {
@@ -6277,57 +6277,57 @@ app.put('/api/reports/:id', async (req, res) => {
         // Legacy answers block disabled; kept for reference
         if (false) {
 
-        // Replace answers if provided (delete existing and re-insert)
-        if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
-            try {
-                await client.query(`DELETE FROM ${tables.ANSWERS} WHERE report_id = $1`, [reportId]);
-                const answers = payload.answers || {};
-                if (answers && typeof answers === 'object') {
-                    for (const [qId, val] of Object.entries(answers)) {
-                        try {
-                            // If value is an array, treat as a repeatable group: each element is a row object
-                            if (Array.isArray(val)) {
-                                for (let ri = 0; ri < val.length; ri++) {
-                                    const row = val[ri] || {};
-                                    if (!row || typeof row !== 'object') continue;
-                                    for (const [subQId, subVal] of Object.entries(row)) {
-                                        try {
-                                            let answerVal = subVal;
-                                            let reviewersComment = null; let qiFollowup = null; let score = null;
-                                            if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
-                                                if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
-                                                reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
-                                                qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
-                                                score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
-                                            }
-                                            const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                            const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                            await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
-                                        } catch (ie) { console.error('Failed to insert repeated answer during report update for question', subQId, ie); }
+            // Replace answers if provided (delete existing and re-insert)
+            if (Object.prototype.hasOwnProperty.call(payload, 'answers')) {
+                try {
+                    await client.query(`DELETE FROM ${tables.ANSWERS} WHERE report_id = $1`, [reportId]);
+                    const answers = payload.answers || {};
+                    if (answers && typeof answers === 'object') {
+                        for (const [qId, val] of Object.entries(answers)) {
+                            try {
+                                // If value is an array, treat as a repeatable group: each element is a row object
+                                if (Array.isArray(val)) {
+                                    for (let ri = 0; ri < val.length; ri++) {
+                                        const row = val[ri] || {};
+                                        if (!row || typeof row !== 'object') continue;
+                                        for (const [subQId, subVal] of Object.entries(row)) {
+                                            try {
+                                                let answerVal = subVal;
+                                                let reviewersComment = null; let qiFollowup = null; let score = null;
+                                                if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                                    if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                                    reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                                    qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                                    score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                                }
+                                                const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                                const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                                await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                            } catch (ie) { console.error('Failed to insert repeated answer during report update for question', subQId, ie); }
+                                        }
                                     }
+                                } else {
+                                    let answerVal = val;
+                                    let reviewersComment = null; let qiFollowup = null; let score = null;
+                                    if (val && typeof val === 'object' && !(val instanceof Array)) {
+                                        if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
+                                        reviewersComment = val.reviewersComment || val.reviewers_comment || null;
+                                        qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
+                                        score = (typeof val.score !== 'undefined') ? val.score : null;
+                                    }
+                                    // non-repeated answers: store null group values
+                                    const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                    await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
                                 }
-                            } else {
-                                let answerVal = val;
-                                let reviewersComment = null; let qiFollowup = null; let score = null;
-                                if (val && typeof val === 'object' && !(val instanceof Array)) {
-                                    if (Object.prototype.hasOwnProperty.call(val, 'value')) answerVal = val.value;
-                                    reviewersComment = val.reviewersComment || val.reviewers_comment || null;
-                                    qiFollowup = val.qualityImprovementFollowup || val.quality_improvement_followup || null;
-                                    score = (typeof val.score !== 'undefined') ? val.score : null;
-                                }
-                                // non-repeated answers: store null group values
-                                const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
-                            }
-                        } catch (ie) { console.error('Failed to insert answer during report update for question', qId, ie); }
+                            } catch (ie) { console.error('Failed to insert answer during report update for question', qId, ie); }
+                        }
                     }
+                } catch (e) {
+                    console.error('Failed to replace answers during report update', e);
+                    await client.query('ROLLBACK');
+                    return res.status(500).send('Failed to update answers');
                 }
-            } catch (e) {
-                console.error('Failed to replace answers during report update', e);
-                await client.query('ROLLBACK');
-                return res.status(500).send('Failed to update answers');
             }
-        }
 
         }
 
@@ -6808,31 +6808,31 @@ app.get('/api/check-original-permissions', async (req, res) => {
         if (!req.session?.userId) {
             return res.status(401).json({ error: 'Not authenticated' });
         }
-        
+
         try {
             // Get current user's direct role from USERS table
             const userResult = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
             if (userResult.rows.length === 0) {
                 return res.json(null);
             }
-            
+
             const userRole = userResult.rows[0]?.role;
             if (!userRole) {
                 return res.json(null);
             }
-            
+
             // Look up the role in the ROLES table by name
             const roleResult = await pool.query(
                 `SELECT id FROM ${tables.ROLES} WHERE LOWER(name) = LOWER($1) LIMIT 1`,
                 [userRole]
             );
-            
+
             if (roleResult.rows.length === 0) {
                 return res.json(null);
             }
-            
+
             const roleId = roleResult.rows[0].id;
-            
+
             // Get all permissions for this role from ROLE_PERMISSIONS and PERMISSIONS tables
             // This checks the primary RBAC system (not PAGE_PERMISSIONS which is form-specific)
             const permResult = await pool.query(
@@ -6841,7 +6841,7 @@ app.get('/api/check-original-permissions', async (req, res) => {
                  WHERE rp.role_id = $1`,
                 [roleId]
             );
-            
+
             // Build permission object from returned permissions
             // Check if specific permission types exist (can_view, can_create, can_edit, can_delete)
             const permissions = {};
@@ -6852,7 +6852,7 @@ app.get('/api/check-original-permissions', async (req, res) => {
                 if (permName.includes('edit')) permissions.can_edit = true;
                 if (permName.includes('delete')) permissions.can_delete = true;
             }
-            
+
             // Return permissions object if any were found, otherwise null
             if (Object.keys(permissions).length > 0) {
                 res.json(permissions);
@@ -6864,9 +6864,9 @@ app.get('/api/check-original-permissions', async (req, res) => {
             // Return null on error to fall back to activity permissions
             res.json(null);
         }
-    } catch (e) { 
+    } catch (e) {
         console.error('Failed to check original permissions:', e.message);
-        res.status(500).json({ error: e.message }); 
+        res.status(500).json({ error: e.message });
     }
 });
 
@@ -6878,11 +6878,11 @@ app.get('/api/activities/:activityId/role_permissions', async (req, res) => {
         if (!req.session?.userId) {
             return res.status(401).json({ error: 'Not authenticated' });
         }
-        
+
         const { activityId } = req.params;
         const id = parseInt(activityId, 10);
         if (isNaN(id)) return res.status(400).json({ error: 'Invalid activity ID' });
-        
+
         // Get current user's role name
         let userResult;
         try {
@@ -6891,18 +6891,18 @@ app.get('/api/activities/:activityId/role_permissions', async (req, res) => {
             console.error('Error fetching user role:', e.message, 'SQL tables.USERS:', tables.USERS);
             return res.json([]);
         }
-        
+
         if (userResult.rows.length === 0) {
             // User not found, return empty permissions
             return res.json([]);
         }
-        
+
         const userRoleName = userResult.rows[0]?.role;
         if (!userRoleName) {
             // User has no role assigned, return empty permissions
             return res.json([]);
         }
-        
+
         try {
             // Get the role_id from the role name, then get permissions
             console.log('Fetching permissions for activity:', id, 'userRole:', userRoleName, 'tables.ACTIVITY_ROLES:', tables.ACTIVITY_ROLES, 'tables.ROLES:', tables.ROLES);
@@ -6924,7 +6924,7 @@ app.get('/api/activities/:activityId/role_permissions', async (req, res) => {
             // Return empty array on database error instead of 500
             res.json([]);
         }
-    } catch (e) { 
+    } catch (e) {
         console.error('Failed to get activity permissions:', e.message);
         // Return empty array instead of 500 error
         res.json([]);
@@ -6953,12 +6953,12 @@ app.post('/api/activities/:activityId/role_permissions/admin', requireAdmin, asy
     try {
         const { activityId } = req.params;
         const { roleId, pageKey, sectionKey, canView, canCreate, canEdit, canDelete } = req.body;
-        
+
         const aid = parseInt(activityId, 10);
         const rid = parseInt(roleId, 10);
         if (isNaN(aid)) return res.status(400).json({ error: 'Invalid activity ID' });
         if (isNaN(rid)) return res.status(400).json({ error: 'Invalid role ID' });
-        
+
         await pool.query(
             `INSERT INTO ${tables.ACTIVITY_ROLES} (activity_id, role_id, page_key, section_key, can_view, can_create, can_edit, can_delete)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -6975,12 +6975,12 @@ app.post('/api/activities/:activityId/role_permissions', requireAdmin, async (re
     try {
         const { activityId } = req.params;
         const { roleId, pageKey, sectionKey, canView, canCreate, canEdit, canDelete } = req.body;
-        
+
         const aid = parseInt(activityId, 10);
         const rid = parseInt(roleId, 10);
         if (isNaN(aid)) return res.status(400).json({ error: 'Invalid activity ID' });
         if (isNaN(rid)) return res.status(400).json({ error: 'Invalid role ID' });
-        
+
         await pool.query(
             `INSERT INTO ${tables.ACTIVITY_ROLES} (activity_id, role_id, page_key, section_key, can_view, can_create, can_edit, can_delete)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -6997,15 +6997,15 @@ app.delete('/api/activities/:activityId/role_permissions/:roleId', requireAdmin,
     try {
         const { activityId, roleId } = req.params;
         const { pageKey, sectionKey } = req.query;
-        
+
         const aid = parseInt(activityId, 10);
         const rid = parseInt(roleId, 10);
         if (isNaN(aid)) return res.status(400).json({ error: 'Invalid activity ID' });
         if (isNaN(rid)) return res.status(400).json({ error: 'Invalid role ID' });
-        
+
         let query = `DELETE FROM ${tables.ACTIVITY_ROLES} WHERE activity_id = $1 AND role_id = $2`;
         const params = [aid, rid];
-        
+
         if (pageKey) {
             query += ` AND page_key = $${params.length + 1}`;
             params.push(pageKey);
@@ -7014,7 +7014,7 @@ app.delete('/api/activities/:activityId/role_permissions/:roleId', requireAdmin,
             query += ` AND section_key = $${params.length + 1}`;
             params.push(sectionKey);
         }
-        
+
         await pool.query(query, params);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7379,9 +7379,9 @@ app.post('/api/reports', async (req, res) => {
                                             qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
                                             score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
                                         }
-                                            const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                            const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                            await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
+                                        const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                        const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                        await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
                                     } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
                                 }
                             }
@@ -7444,87 +7444,87 @@ app.get('/api/public/metadata', (req, res) => {
     }
 });
 
-    // Public indicator summary endpoint: aggregates answers by indicator definitions
-    app.get('/api/public/indicator_summary', async (req, res) => {
-        try {
-            const { activityId } = req.query;
-            // load indicators metadata from public metadata folder
-            const metaDir = path.join(__dirname, '..', 'public', 'metadata');
-            const indicatorsPath = path.join(metaDir, 'indicators.json');
-            let indicators = [];
-            try { if (fs.existsSync(indicatorsPath)) indicators = JSON.parse(fs.readFileSync(indicatorsPath, 'utf8')); } catch (e) { indicators = []; }
+// Public indicator summary endpoint: aggregates answers by indicator definitions
+app.get('/api/public/indicator_summary', async (req, res) => {
+    try {
+        const { activityId } = req.query;
+        // load indicators metadata from public metadata folder
+        const metaDir = path.join(__dirname, '..', 'public', 'metadata');
+        const indicatorsPath = path.join(metaDir, 'indicators.json');
+        let indicators = [];
+        try { if (fs.existsSync(indicatorsPath)) indicators = JSON.parse(fs.readFileSync(indicatorsPath, 'utf8')); } catch (e) { indicators = []; }
 
-            // If activityId provided, determine the set of question_ids for that activity
-            let allowedQuestionIds = null;
-            if (activityId) {
-                try {
-                    const qres = await pool.query(`SELECT id FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [activityId]);
-                    allowedQuestionIds = qres.rows.map(r => String(r.id));
-                } catch (e) { allowedQuestionIds = null; }
-            }
-
-            const results = [];
-            for (const ind of (indicators || [])) {
-                const questionId = ind.questionId || ind.id || ind.dataType;
-                // If activity provided and this indicator's questionId is not part of activity, skip
-                if (activityId && Array.isArray(allowedQuestionIds) && allowedQuestionIds.length && !allowedQuestionIds.includes(String(questionId))) {
-                    continue;
-                }
-
-                // build query: match by question_id == questionId
-                const params = [questionId];
-                let idx = 2;
-                let where = `WHERE question_id = $1`;
-                if (activityId) { where += ` AND activity_id = $${idx++}`; params.push(activityId); }
-                const sql = `SELECT answer_value, facility_id FROM ${tables.ANSWERS} ${where} ORDER BY created_at DESC LIMIT 10000`;
-                const ares = await pool.query(sql, params);
-                const rows = ares.rows || [];
-
-                const bandCounts = {};
-                const sampleValues = [];
-                let reported = 0;
-                for (const r of rows) {
-                    let val = r.answer_value;
-                    if (val === null || typeof val === 'undefined') { bandCounts['unknown'] = (bandCounts['unknown'] || 0) + 1; continue; }
-                    reported += 1;
-                    if (typeof val === 'string') {
-                        try { val = JSON.parse(val); } catch (e) { /* keep as string */ }
-                    }
-                    if (val && typeof val === 'object' && Object.prototype.hasOwnProperty.call(val, 'band')) {
-                        const b = String(val.band || 'unknown').toLowerCase();
-                        bandCounts[b] = (bandCounts[b] || 0) + 1;
-                        sampleValues.push(val);
-                    } else if (typeof val === 'number') {
-                        const n = Number(val);
-                        let b = 'unknown';
-                        if (!isNaN(n)) { if (n >= 90) b = 'high'; else if (n >= 70) b = 'medium'; else b = 'low'; }
-                        bandCounts[b] = (bandCounts[b] || 0) + 1;
-                        sampleValues.push(n);
-                    } else {
-                        bandCounts['unknown'] = (bandCounts['unknown'] || 0) + 1;
-                        sampleValues.push(val);
-                    }
-                    if (sampleValues.length >= 5) { /* keep small sample */ }
-                }
-                results.push({ id: ind.id, name: ind.name || ind.id, reported, sampleValues: sampleValues.slice(0, 5), bandCounts });
-            }
-
-            res.json({ indicators: results });
-        } catch (e) {
-            console.error('indicator_summary error', e);
-            res.status(500).json({ error: String(e) });
+        // If activityId provided, determine the set of question_ids for that activity
+        let allowedQuestionIds = null;
+        if (activityId) {
+            try {
+                const qres = await pool.query(`SELECT id FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [activityId]);
+                allowedQuestionIds = qres.rows.map(r => String(r.id));
+            } catch (e) { allowedQuestionIds = null; }
         }
-    });
 
-    // Public facility summary endpoint (country-level aggregates)
-    app.get('/api/public/facility_summary', async (req, res) => {
-        try {
-            // total facilities
-            const totalRes = await pool.query(`SELECT COUNT(*)::int as cnt FROM ${tables.FACILITIES}`);
-            const total = totalRes.rows && totalRes.rows[0] ? Number(totalRes.rows[0].cnt || 0) : 0;
+        const results = [];
+        for (const ind of (indicators || [])) {
+            const questionId = ind.questionId || ind.id || ind.dataType;
+            // If activity provided and this indicator's questionId is not part of activity, skip
+            if (activityId && Array.isArray(allowedQuestionIds) && allowedQuestionIds.length && !allowedQuestionIds.includes(String(questionId))) {
+                continue;
+            }
 
-            // contributors: distinct users from activity_reports.reported_by and answers.recorded_by/user_id
-            const contribRes = await pool.query(`
+            // build query: match by question_id == questionId
+            const params = [questionId];
+            let idx = 2;
+            let where = `WHERE question_id = $1`;
+            if (activityId) { where += ` AND activity_id = $${idx++}`; params.push(activityId); }
+            const sql = `SELECT answer_value, facility_id FROM ${tables.ANSWERS} ${where} ORDER BY created_at DESC LIMIT 10000`;
+            const ares = await pool.query(sql, params);
+            const rows = ares.rows || [];
+
+            const bandCounts = {};
+            const sampleValues = [];
+            let reported = 0;
+            for (const r of rows) {
+                let val = r.answer_value;
+                if (val === null || typeof val === 'undefined') { bandCounts['unknown'] = (bandCounts['unknown'] || 0) + 1; continue; }
+                reported += 1;
+                if (typeof val === 'string') {
+                    try { val = JSON.parse(val); } catch (e) { /* keep as string */ }
+                }
+                if (val && typeof val === 'object' && Object.prototype.hasOwnProperty.call(val, 'band')) {
+                    const b = String(val.band || 'unknown').toLowerCase();
+                    bandCounts[b] = (bandCounts[b] || 0) + 1;
+                    sampleValues.push(val);
+                } else if (typeof val === 'number') {
+                    const n = Number(val);
+                    let b = 'unknown';
+                    if (!isNaN(n)) { if (n >= 90) b = 'high'; else if (n >= 70) b = 'medium'; else b = 'low'; }
+                    bandCounts[b] = (bandCounts[b] || 0) + 1;
+                    sampleValues.push(n);
+                } else {
+                    bandCounts['unknown'] = (bandCounts['unknown'] || 0) + 1;
+                    sampleValues.push(val);
+                }
+                if (sampleValues.length >= 5) { /* keep small sample */ }
+            }
+            results.push({ id: ind.id, name: ind.name || ind.id, reported, sampleValues: sampleValues.slice(0, 5), bandCounts });
+        }
+
+        res.json({ indicators: results });
+    } catch (e) {
+        console.error('indicator_summary error', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+
+// Public facility summary endpoint (country-level aggregates)
+app.get('/api/public/facility_summary', async (req, res) => {
+    try {
+        // total facilities
+        const totalRes = await pool.query(`SELECT COUNT(*)::int as cnt FROM ${tables.FACILITIES}`);
+        const total = totalRes.rows && totalRes.rows[0] ? Number(totalRes.rows[0].cnt || 0) : 0;
+
+        // contributors: distinct users from activity_reports.reported_by and answers.recorded_by/user_id
+        const contribRes = await pool.query(`
                 SELECT COUNT(DISTINCT uid) as cnt FROM (
                     SELECT reported_by as uid FROM ${tables.ACTIVITY_REPORTS} WHERE reported_by IS NOT NULL
                     UNION
@@ -7535,64 +7535,64 @@ app.get('/api/public/metadata', (req, res) => {
                     SELECT user_id as uid FROM ${tables.ANSWERS} WHERE user_id IS NOT NULL
                 ) t
             `);
-            const contributors = contribRes.rows && contribRes.rows[0] ? Number(contribRes.rows[0].cnt || 0) : 0;
+        const contributors = contribRes.rows && contribRes.rows[0] ? Number(contribRes.rows[0].cnt || 0) : 0;
 
-            // tiers: derive from ${tables.FACILITIES}.category and map to care_levels where possible
-            const tierRows = await pool.query(`SELECT category, COUNT(*)::int as cnt FROM ${tables.FACILITIES} GROUP BY category`);
-            const tiers = [];
-            let otherCount = 0;
-            try {
-                const metaDir = path.join(__dirname, '..', 'public', 'metadata');
-                const carePath = path.join(metaDir, 'care_levels.json');
-                let careLevels = [];
-                if (fs.existsSync(carePath)) careLevels = JSON.parse(fs.readFileSync(carePath, 'utf8'));
-                const careIds = (careLevels || []).map((c) => (c.id || String(c.name || '')).toString().toLowerCase());
-                for (const r of tierRows.rows) {
-                    const name = String(r.category || 'other');
-                    const key = name.toLowerCase();
-                    if (careIds.includes(key)) {
-                        const pct = total > 0 ? Math.round((Number(r.cnt) / total) * 100) : 0;
-                        tiers.push({ name: name, count: Number(r.cnt), percent: pct });
-                    } else {
-                        otherCount += Number(r.cnt);
-                    }
+        // tiers: derive from ${tables.FACILITIES}.category and map to care_levels where possible
+        const tierRows = await pool.query(`SELECT category, COUNT(*)::int as cnt FROM ${tables.FACILITIES} GROUP BY category`);
+        const tiers = [];
+        let otherCount = 0;
+        try {
+            const metaDir = path.join(__dirname, '..', 'public', 'metadata');
+            const carePath = path.join(metaDir, 'care_levels.json');
+            let careLevels = [];
+            if (fs.existsSync(carePath)) careLevels = JSON.parse(fs.readFileSync(carePath, 'utf8'));
+            const careIds = (careLevels || []).map((c) => (c.id || String(c.name || '')).toString().toLowerCase());
+            for (const r of tierRows.rows) {
+                const name = String(r.category || 'other');
+                const key = name.toLowerCase();
+                if (careIds.includes(key)) {
+                    const pct = total > 0 ? Math.round((Number(r.cnt) / total) * 100) : 0;
+                    tiers.push({ name: name, count: Number(r.cnt), percent: pct });
+                } else {
+                    otherCount += Number(r.cnt);
                 }
-            } catch (e) {
-                for (const r of tierRows.rows) { otherCount += Number(r.cnt); }
             }
-            if (otherCount > 0) tiers.push({ name: 'Other', count: otherCount, percent: total > 0 ? Math.round((otherCount / total) * 100) : 0 });
-
-            // functional status: based on latest ${tables.ANSWERS} for question_id = 'q_energy_resilience'
-            const bandsSql = `SELECT DISTINCT ON (facility_id) facility_id, answer_value FROM ${tables.ANSWERS} WHERE question_id = $1 AND answer_value IS NOT NULL ORDER BY facility_id, created_at DESC`;
-            const bres = await pool.query(bandsSql, ['q_energy_resilience']);
-            const funcCounts = { fully: 0, partial: 0, none: 0 };
-            for (const r of bres.rows) {
-                let v = r.answer_value;
-                if (typeof v === 'string') {
-                    try { v = JSON.parse(v); } catch (e) { /* keep string */ }
-                }
-                let band = null;
-                if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'band')) band = String(v.band || '').toLowerCase();
-                else if (typeof v === 'string') band = String(v).toLowerCase();
-                if (band === 'green') funcCounts.fully += 1;
-                else if (band === 'yellow') funcCounts.partial += 1;
-                else if (band === 'red') funcCounts.none += 1;
-                else funcCounts.partial += 0; // unknowns ignored
-            }
-            const funcTotal = funcCounts.fully + funcCounts.partial + funcCounts.none;
-            const functional = [
-                { name: 'Fully functional', percent: funcTotal ? Math.round((funcCounts.fully / funcTotal) * 100) : 0 },
-                { name: 'Partially functional', percent: funcTotal ? Math.round((funcCounts.partial / funcTotal) * 100) : 0 },
-                { name: 'Not functional', percent: funcTotal ? Math.round((funcCounts.none / funcTotal) * 100) : 0 }
-            ];
-
-            // Respond with a sensible structure
-            res.json({ country: 'Nigeria', totalFacilities: total, contributors, tiers, functional });
         } catch (e) {
-            console.error('facility_summary error', e);
-            res.status(500).json({ error: String(e) });
+            for (const r of tierRows.rows) { otherCount += Number(r.cnt); }
         }
-    });
+        if (otherCount > 0) tiers.push({ name: 'Other', count: otherCount, percent: total > 0 ? Math.round((otherCount / total) * 100) : 0 });
+
+        // functional status: based on latest ${tables.ANSWERS} for question_id = 'q_energy_resilience'
+        const bandsSql = `SELECT DISTINCT ON (facility_id) facility_id, answer_value FROM ${tables.ANSWERS} WHERE question_id = $1 AND answer_value IS NOT NULL ORDER BY facility_id, created_at DESC`;
+        const bres = await pool.query(bandsSql, ['q_energy_resilience']);
+        const funcCounts = { fully: 0, partial: 0, none: 0 };
+        for (const r of bres.rows) {
+            let v = r.answer_value;
+            if (typeof v === 'string') {
+                try { v = JSON.parse(v); } catch (e) { /* keep string */ }
+            }
+            let band = null;
+            if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'band')) band = String(v.band || '').toLowerCase();
+            else if (typeof v === 'string') band = String(v).toLowerCase();
+            if (band === 'green') funcCounts.fully += 1;
+            else if (band === 'yellow') funcCounts.partial += 1;
+            else if (band === 'red') funcCounts.none += 1;
+            else funcCounts.partial += 0; // unknowns ignored
+        }
+        const funcTotal = funcCounts.fully + funcCounts.partial + funcCounts.none;
+        const functional = [
+            { name: 'Fully functional', percent: funcTotal ? Math.round((funcCounts.fully / funcTotal) * 100) : 0 },
+            { name: 'Partially functional', percent: funcTotal ? Math.round((funcCounts.partial / funcTotal) * 100) : 0 },
+            { name: 'Not functional', percent: funcTotal ? Math.round((funcCounts.none / funcTotal) * 100) : 0 }
+        ];
+
+        // Respond with a sensible structure
+        res.json({ country: 'Nigeria', totalFacilities: total, contributors, tiers, functional });
+    } catch (e) {
+        console.error('facility_summary error', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
 
 // Allow skipping DB init for metadata-only development by setting SKIP_DB_ON_INIT=true
 if (process.env.SKIP_DB_ON_INIT === 'true') {

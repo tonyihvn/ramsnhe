@@ -481,7 +481,7 @@ const BuildFormPage: React.FC = () => {
         const roleName = (r && (r.name || r)) ? (r.name || r) : String(r || '');
         out[roleName] = roleDefault(roleName);
       }
-      
+
       // Fetch page_permissions per role
       await Promise.all((roles || []).map(async (r: any) => {
         try {
@@ -656,7 +656,9 @@ const BuildFormPage: React.FC = () => {
           allQuestions.push(q);
           const qErrors: QuestionErrors = {};
 
-          if (!q.questionText || q.questionText.trim() === '') {
+          // Ensure questionText is a string before calling trim()
+          const questionTextStr = typeof q.questionText === 'string' ? q.questionText : String(q.questionText || '');
+          if (!questionTextStr || questionTextStr.trim() === '') {
             qErrors.questionText = 'Question text is required';
             isValid = false;
           }
@@ -668,7 +670,7 @@ const BuildFormPage: React.FC = () => {
             }
           }
 
-          if (q.required && (!q.questionText || q.questionText.trim() === '')) {
+          if (q.required && (!questionTextStr || questionTextStr.trim() === '')) {
             qErrors.questionText = 'Required question must have text';
             isValid = false;
           }
@@ -946,7 +948,7 @@ const BuildFormPage: React.FC = () => {
             activityId: activityId || '',
             pageName: pageNameFromRow || formDef.pages[activePageIndex].name,
             sectionName: sectionNameFromRow || formDef.pages[activePageIndex].sections[0].name,
-            questionText: row['Question'] || row['question'] || 'Untitled',
+            questionText: String(row['Question'] || row['question'] || 'Untitled').trim(),
             questionHelper: row['Helper Text'] || row['HelperText'] || row['helper'] || undefined,
             answerType,
             columnSize: Number(row['ColumnSize'] || row['columnSize'] || 12),
@@ -1040,15 +1042,15 @@ const BuildFormPage: React.FC = () => {
 
       const wb = new ExcelJS.Workbook();
       const sheet = wb.addWorksheet('questions');
-      
+
       // Add header row
       sheet.addRow(['Question', 'Type', 'Helper Text', 'field_name', 'Required', 'ColumnSize', 'Page', 'Section', 'ShowIf', 'calculation', 'score', 'reviewers_comment', 'group_name']);
-      
+
       // Format header row
       const headerRow = sheet.getRow(1);
       headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F81BD' } };
-      
+
       // Add all questions from all pages/sections
       formDef.pages.forEach((page: FormPage) => {
         page.sections.forEach((section: FormSection) => {
@@ -1080,7 +1082,7 @@ const BuildFormPage: React.FC = () => {
       // Create options sheet
       const optsSheet = wb.addWorksheet('options');
       optsSheet.addRow(['name', 'value', 'label', 'showif', 'score']);
-      
+
       const optionsSet = new Set<string>();
       formDef.pages.forEach((page: FormPage) => {
         page.sections.forEach((section: FormSection) => {
@@ -1116,7 +1118,7 @@ const BuildFormPage: React.FC = () => {
       downloadLink.click();
       downloadLink.remove();
       URL.revokeObjectURL(url);
-      
+
       alert('Form exported successfully!');
     } catch (e) {
       console.error('Failed to export form', e);
@@ -1250,8 +1252,8 @@ const BuildFormPage: React.FC = () => {
                       )}
                     </>
                   )}
+                </div>
               </div>
-            </div>
               <div className="flex space-x-2">
                 <button onClick={() => moveSection(activePageIndex, sIdx, 'up')} disabled={sIdx === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowUpIcon className="h-5 w-5" /></button>
                 <button onClick={() => moveSection(activePageIndex, sIdx, 'down')} disabled={sIdx === formDef.pages[activePageIndex].sections.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-30"><ArrowDownIcon className="h-5 w-5" /></button>

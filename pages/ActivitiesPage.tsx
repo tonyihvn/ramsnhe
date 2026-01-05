@@ -27,7 +27,7 @@ const ActivityActionButtonsComponent: React.FC<{
   isMobile?: boolean;
 }> = ({ activity, currentUser, canEdit, canViewDashboard, onEdit, onDelete, onViewData, onBuildForm, onBuildReport, onCopyLink, onQRCode, onEmbed, isMobile = false }) => {
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
-  
+
   if (isMobile) {
     return (
       <>
@@ -97,7 +97,7 @@ const ActivityActionButtonsWrapper: React.FC<{
   // For the list view, always show View Data for admins
   // Permission checking happens when viewing the dashboard
   const canViewDashboard = isAdmin || props.canEdit;
-  
+
   return (
     <ActivityActionButtonsComponent
       {...props}
@@ -347,15 +347,16 @@ const ActivitiesPage: React.FC = () => {
               {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Subtitle</label>
-            <input type="text" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-              value={currentActivity.subtitle || ''} onChange={(e) => setCurrentActivity({ ...currentActivity, subtitle: e.target.value })} />
-          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700">Title</label>
             <input type="text" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
               value={currentActivity.title || ''} onChange={(e) => setCurrentActivity({ ...currentActivity, title: e.target.value })} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Subtitle</label>
+            <input type="text" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+              value={currentActivity.subtitle || ''} onChange={(e) => setCurrentActivity({ ...currentActivity, subtitle: e.target.value })} />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Details</label>

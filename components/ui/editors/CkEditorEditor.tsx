@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 
 interface CkEditorProps {
     value?: string;
@@ -8,8 +8,9 @@ interface CkEditorProps {
 }
 
 const CkEditorEditor: React.FC<CkEditorProps> = ({ value = '', onChange, height = 300, placeholder = 'Enter text...' }) => {
-    const [CKEditorComp, setCKEditorComp] = useState<any>(null);
-    const [ClassicEditor, setClassicEditor] = useState<any>(null);
+    const [isReady, setIsReady] = useState(false);
+    const CKEditorRef = useRef<any>(null);
+    const ClassicEditorRef = useRef<any>(null);
 
     useEffect(() => {
         let mounted = true;
@@ -18,16 +19,18 @@ const CkEditorEditor: React.FC<CkEditorProps> = ({ value = '', onChange, height 
                 const ck = await import('@ckeditor/ckeditor5-react');
                 const build = await import('@ckeditor/ckeditor5-build-classic');
                 if (!mounted) return;
-                setCKEditorComp(ck.CKEditor || ck.default || ck);
-                setClassicEditor(build.default || build);
+                CKEditorRef.current = ck.CKEditor;
+                ClassicEditorRef.current = build.default || build;
+                setIsReady(true);
             } catch (e) {
                 // not installed or failed to load
+                if (mounted) setIsReady(false);
             }
         })();
         return () => { mounted = false; };
     }, []);
 
-    if (!CKEditorComp || !ClassicEditor) {
+    if (!isReady || !CKEditorRef.current || !ClassicEditorRef.current) {
         return (
             <div>
                 <div className="text-xs text-gray-500 mb-2">CKEditor not installed — using basic fallback.</div>
@@ -50,9 +53,12 @@ const CkEditorEditor: React.FC<CkEditorProps> = ({ value = '', onChange, height 
         }
     }
 
+    const CKEditor = CKEditorRef.current;
+    const ClassicEditor = ClassicEditorRef.current;
+
     return (
         <div>
-            <CKEditorComp
+            <CKEditor
                 editor={ClassicEditor}
                 data={dataForEditor}
                 onChange={(event: any, editor: any) => { const data = editor.getData(); onChange?.(data); }}
