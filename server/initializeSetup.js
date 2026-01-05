@@ -526,7 +526,7 @@ async function createDefaultLandingPageConfig(pool) {
         if (result.rows.length === 0) {
             // Create default config
             const defaultConfig = {
-                heroTitle: 'Welcome to OneApp',
+                heroTitle: 'Welcome to DQAi',
                 heroSubtitle: 'A comprehensive data quality management solution',
                 heroImage: 'https://via.placeholder.com/1200x600?text=OneApp',
                 heroButtonText: 'Get Started',
@@ -555,8 +555,8 @@ async function createDefaultLandingPageConfig(pool) {
                 logoUrl: 'https://via.placeholder.com/200x50?text=OneApp+Logo',
                 faviconUrl: 'https://via.placeholder.com/32x32?text=Logo',
 
-                footerText: '© 2025 OneApp. All rights reserved.',
-                companyName: 'OneApp',
+                footerText: '© 2025 DQAi. All rights reserved.',
+                companyName: 'DQAi',
             };
 
             await pool.query(
@@ -714,7 +714,7 @@ async function initializeSettings(pool) {
 
         // Initialize default settings if they don't exist
         const defaultSettings = {
-            'app.name': 'OneApp',
+            'app.name': 'DQAi',
             'app.version': '2.0.0',
             'app.multi_tenancy_enabled': true,
             'email.enabled': process.env.SMTP_HOST ? true : false,
@@ -756,11 +756,11 @@ async function initializeSettings(pool) {
  */
 export function logStartupInfo() {
     console.log('\n' + '='.repeat(60));
-    console.log('OneApp Multi-Tenancy Initialization Summary');
+    console.log('DQAi Multi-Tenancy Initialization Summary');
     console.log('='.repeat(60));
     console.log(`Timestamp: ${new Date().toISOString()}`);
     console.log(`Node Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Database: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || 'oneapp'}`);
+    console.log(`Database: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || 'ondqaieapp'}`);
     console.log(`Server Port: ${process.env.PORT || 5000}`);
     console.log(`Frontend Port: ${process.env.FRONTEND_PORT || 5173}`);
     console.log('='.repeat(60));

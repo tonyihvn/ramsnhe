@@ -134,7 +134,7 @@ const LoginPage: React.FC = () => {
   // Determine background image and app name
   const heroFeaturedImages = landingConfig?.heroFeaturedImages || landingConfig?.hero_featured_images || [];
   const backgroundImage = (heroFeaturedImages && heroFeaturedImages.length > 0) ? heroFeaturedImages[0] : settings?.backgroundImage;
-  const appName = landingConfig?.appName || 'OneApp';
+  const appName = landingConfig?.appName || 'DQAi';
   const logoUrl = landingConfig?.logoUrl;
   const navBackgroundColor = landingConfig?.navBackgroundColor || landingConfig?.nav_background_color || '#ffffff';
 

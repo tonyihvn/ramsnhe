@@ -32,7 +32,7 @@ async function sendEmail(to, subject, htmlContent, textContent = '') {
 
         const transporter = createEmailTransporter();
         await transporter.sendMail({
-            from: `${process.env.SMTP_FROM_NAME || 'OneApp'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+            from: `${process.env.SMTP_FROM_NAME || 'DQAi'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
             to,
             subject,
             html: htmlContent,
@@ -305,9 +305,9 @@ export function registerSuperAdminRoutes(app, pool) {
             if (sendInvitation) {
                 await sendEmail(
                     email,
-                    'Welcome to OneApp - Account Invitation',
+                    'Welcome to DQAi - Account Invitation',
                     `<p>Hello ${firstName},</p>
-                     <p>Your account has been created on OneApp. Please log in with your email and set your password.</p>
+                     <p>Your account has been created on DQAi. Please log in with your email and set your password.</p>
                      <p><strong>Email:</strong> ${email}</p>
                      <p><strong>Temporary Password:</strong> ${tempPassword}</p>
                      <p><a href="${process.env.FRONTEND_HOST}/login">Click here to log in</a></p>`
@@ -479,7 +479,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 // Return default config
                 config = {
                     businessId: 0,
-                    heroTitle: 'Welcome to OneApp',
+                    heroTitle: 'Welcome to DQAi',
                     heroTitleFontSize: '48px',
                     heroTitleFontWeight: '700',
                     heroSubtitle: 'Transform your data into insights',
@@ -614,7 +614,7 @@ export function registerSuperAdminRoutes(app, pool) {
                 // Return default config
                 config = {
                     businessId,
-                    heroTitle: 'Welcome to OneApp',
+                    heroTitle: 'Welcome to DQAi',
                     heroSubtitle: 'Transform your data into insights',
                     heroVisible: true,
                     featuresTitle: 'Our Features',

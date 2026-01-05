@@ -98,13 +98,13 @@ const LandingPage: React.FC = () => {
     );
   }
 
-  const heroTitle = config?.heroTitle || 'Welcome to OneApp';
+  const heroTitle = config?.heroTitle || 'Welcome to DQAi';
   const heroSubtitle = config?.heroSubtitle || 'Transform your data into insights';
   const primaryColor = config?.primaryColor || '#2563eb';
   const secondaryColor = config?.secondaryColor || '#1e40af';
   const navBackgroundColor = config?.navBackgroundColor || '#ffffff';
   const navTextColor = config?.navTextColor || '#374151';
-  const appName = config?.appName || 'OneApp';
+  const appName = config?.appName || 'DQAi';
   const carouselItems = config?.carouselItems || [];
   const heroFeaturedImages = config?.heroFeaturedImages || [];
   const customPages = config?.customPages || [];
@@ -402,7 +402,7 @@ const LandingPage: React.FC = () => {
                 fontWeight: ctaSubtitleFontWeight as any
               }}
             >
-              {config?.ctaSubtitle || 'Join thousands of organizations using OneApp'}
+              {config?.ctaSubtitle || 'Join thousands of organizations using DQAi'}
             </p>
             <Link to="/login">
               <button className="bg-white text-blue-600 px-8 py-3 rounded-lg font-bold hover:bg-gray-100 transition text-lg">

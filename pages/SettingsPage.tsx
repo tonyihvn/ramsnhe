@@ -1344,7 +1344,7 @@ const SettingsPage: React.FC = () => {
                     <div className="mt-4">
                         <h4 className="font-medium">Preview</h4>
                         <div className="p-4 rounded" style={{ background: 'var(--sidebar-bg)', color: 'var(--app-text-color)' }}>
-                            <div style={{ color: 'var(--logo-color)', fontWeight: 700 }}>{settings.logoText || 'OneApp'}</div>
+                            <div style={{ color: 'var(--logo-color)', fontWeight: 700 }}>{settings.logoText || 'DQAi'}</div>
                             <p>Primary accent: <span style={{ color: 'var(--primary-color)' }}>{settings.primaryColor}</span></p>
                         </div>
                     </div>

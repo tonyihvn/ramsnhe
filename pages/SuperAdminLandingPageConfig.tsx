@@ -36,7 +36,7 @@ const SuperAdminLandingPageConfig: React.FC = () => {
       const data = await response.json();
       setConfig(data.config || data || {
         businessId: 'universal',
-        heroTitle: 'Welcome to OneApp',
+        heroTitle: 'Welcome to DQAi',
         heroTitleFontSize: '48px',
         heroTitleFontWeight: '700',
         heroSubtitle: 'Transform your data into insights',
@@ -90,7 +90,7 @@ const SuperAdminLandingPageConfig: React.FC = () => {
       // Set default config
       setConfig({
         businessId: 'universal',
-        heroTitle: 'Welcome to OneApp',
+        heroTitle: 'Welcome to DQAi',
         heroTitleFontSize: '48px',
         heroTitleFontWeight: '700',
         heroSubtitle: 'Transform your data into insights',
@@ -398,7 +398,7 @@ const SuperAdminLandingPageConfig: React.FC = () => {
                           value={config.heroTitle || ''}
                           onChange={(e) => handleChange('heroTitle', e.target.value)}
                           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="Welcome to OneApp"
+                          placeholder="Welcome to DQAi"
                         />
                       </div>
                       <div>
@@ -1137,10 +1137,10 @@ const SuperAdminLandingPageConfig: React.FC = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-1">Application Name</label>
                         <input
                           type="text"
-                          value={config.appName || 'OneApp'}
+                          value={config.appName || 'DQAi'}
                           onChange={(e) => handleChange('appName', e.target.value)}
                           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="OneApp"
+                          placeholder="DQAi"
                         />
                         <p className="text-xs text-gray-600 mt-1">This name will appear in the header and footer</p>
                       </div>

@@ -25,7 +25,7 @@ const DEFAULT: ThemeSettings = {
     fontFamily: 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial'
     , navbarBg: '#ffffff',
     logoDataUrl: null,
-    logoText: 'OneApp'
+    logoText: 'DQAi'
     , fontSize: '14px'
     , logoWidth: '100%'
     , organizationName: 'Federal Ministry of Health and Social Welfare (FMOH&SW)'

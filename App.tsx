@@ -146,7 +146,7 @@ const App: React.FC = () => {
         if (!resp.ok) return;
         const j = await resp.json();
         const cfg = j.config || j;
-        const name = cfg?.appName || cfg?.app_name || (cfg?.logoText) || 'OneApp';
+        const name = cfg?.appName || cfg?.app_name || (cfg?.logoText) || 'DQAi';
         if (name) document.title = name;
       } catch (e) {
         // ignore

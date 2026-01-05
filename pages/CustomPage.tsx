@@ -32,7 +32,7 @@ const CustomPage: React.FC = () => {
   const primaryColor = config?.primaryColor || '#2563eb';
   const navBackgroundColor = config?.navBackgroundColor || '#ffffff';
   const navTextColor = config?.navTextColor || '#374151';
-  const appName = config?.appName || 'OneApp';
+  const appName = config?.appName || 'DQAi';
 
   return (
     <div className="min-h-screen bg-white">
