@@ -17,6 +17,7 @@ const ReportViewPage: React.FC = () => {
   const [answers, setAnswers] = useState<any[]>([]);
   const [uploadedDocs, setUploadedDocs] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [activityTitle, setActivityTitle] = useState<string | null>(null);
   const [activityData, setActivityData] = useState<any>(null);
   const [powerbiConfig, setPowerbiConfig] = useState<any>(null);
@@ -36,6 +37,9 @@ const ReportViewPage: React.FC = () => {
   const [facilityName, setFacilityName] = useState<string | null>(null);
   const [powerbiExpanded, setPowerbiExpanded] = useState(false);
   const [conversationExpanded, setConversationExpanded] = useState(false);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingDocData, setEditingDocData] = useState<any[]>([]);
+  const [editedCells, setEditedCells] = useState<Set<string>>(new Set());
 
   const saveReview = async () => {
     if (!report) return;
@@ -113,10 +117,11 @@ const ReportViewPage: React.FC = () => {
         const jr = await r.json();
         setReport(jr);
         // fetch answers and questions so we can show labels, pages, sections
-        const [aRes, qRes, docs] = await Promise.all([
+        const [aRes, qRes, docs, uRes] = await Promise.all([
           apiFetch(`/api/answers?reportId=${reportId}`, { credentials: 'include' }),
           apiFetch(`/api/questions?activityId=${jr.activity_id}`, { credentials: 'include' }),
-          apiFetch(`/api/uploaded_docs?reportId=${jr.id}`, { credentials: 'include' })
+          apiFetch(`/api/uploaded_docs?reportId=${jr.id}`, { credentials: 'include' }),
+          apiFetch(`/api/users`, { credentials: 'include' })
         ]);
         if (aRes.ok) {
           const answersData = await aRes.json() || [];
@@ -127,9 +132,15 @@ const ReportViewPage: React.FC = () => {
             return aId - bId;
           });
           setAnswers(sortedAnswers);
+          console.log('Loaded answers:', sortedAnswers);
         }
         if (qRes.ok) setQuestions(await qRes.json() || []);
-        if (docs.ok) setUploadedDocs(await docs.json() || []);
+        if (docs.ok) {
+          const docsData = await docs.json() || [];
+          console.log('Loaded uploaded docs:', docsData);
+          setUploadedDocs(docsData);
+        }
+        if (uRes.ok) setUsers(await uRes.json() || []);
         // fetch activity (title + data)
         try {
           const actRes = await apiFetch(`/api/activities/${jr.activity_id}`, { credentials: 'include' });
@@ -541,8 +552,8 @@ const ReportViewPage: React.FC = () => {
       <Card>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold">Power BI</h2>
-          <Button 
-            variant="secondary" 
+          <Button
+            variant="secondary"
             size="sm"
             onClick={() => setPowerbiExpanded(!powerbiExpanded)}
           >
@@ -589,55 +600,10 @@ const ReportViewPage: React.FC = () => {
       </Card>
 
       <Card>
-        <h2 className="text-lg font-semibold mb-2">Submitted Answers</h2>
-        {/* DataTable with column-level filter */}
+        <h2 className="text-lg font-semibold mb-4">Submitted Answers</h2>
+
+        {/* Non-grouped questions in a DataTable */}
         {(() => {
-          const columns = [
-            { key: 'page', label: 'Page' },
-            { key: 'section', label: 'Section' },
-            { key: 'question', label: 'Question' },
-            {
-              key: 'answer', label: 'Answer', render: (row: any) => {
-                // row._raw contains the original answer object
-                const a = row._raw;
-                if (!a) return '—';
-                const v = a.answer_value;
-                const isString = typeof v === 'string';
-                const maybeUrl = (s?: any) => {
-                  if (!s) return null;
-                  if (typeof s !== 'string') return null;
-                  if (/^data:image\//i.test(s)) return s;
-                  if (/^https?:\/\//i.test(s)) return s;
-                  return null;
-                };
-                // If answer_value is an object, try common file keys
-                let url: string | null = null;
-                if (isString) url = maybeUrl(v as string) || String(v as string);
-                else if (v && typeof v === 'object') {
-                  url = (v.url || v.file_url || v.file || v.path || v.downloadUrl || v.download_url) || null;
-                }
-                // If it's an image, show thumbnail that opens modal
-                if (url && (/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url) || /^data:image\//i.test(url))) {
-                  return (
-                    <div className="flex items-center gap-2">
-                      <img src={url} alt="attachment" className="w-20 h-12 object-cover rounded cursor-pointer border" onClick={() => { setImageModalUrl(url); setImageModalOpen(true); }} />
-                      <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open / Download</a>
-                    </div>
-                  );
-                }
-                // If it's a remote URL (non-image), show a download/open link
-                if (url && typeof url === 'string' && /^https?:\/\//i.test(url)) {
-                  return <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open / Download</a>;
-                }
-                // If it's a JSON object that isn't a file URL, show a short preview
-                if (v && typeof v === 'object') return <pre className="whitespace-pre-wrap max-w-xs text-sm">{JSON.stringify(v)}</pre>;
-                if (isString && String(v).length > 200) return <div className="max-w-lg text-sm">{String(v).slice(0, 200)}…</div>;
-                return String(v ?? '—');
-              }
-            },
-            { key: 'reviewers_comment', label: 'Reviewer Comment' },
-            { key: 'quality_improvement_followup', label: 'Followup' },
-          ];
           // Build a quick lookup map for questions by several possible keys
           const qMap: Record<string, any> = {};
           for (const q of questions) {
@@ -648,28 +614,191 @@ const ReportViewPage: React.FC = () => {
             } catch (e) { /* ignore malformed question */ }
           }
 
-          const data = answers.map(a => {
+          // Separate grouped and non-grouped answers
+          const groupedAnswersMap: Record<string, any[]> = {};
+          const nonGroupedAnswers: any[] = [];
+
+          answers.forEach(a => {
             const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id)) || {};
-            const questionText = q.questionText || q.question_text || q.text || q.label || String(a.question_id);
-            return {
-              page: q.pageName || q.page_name || '',
-              section: q.sectionName || q.section_name || '',
-              question: questionText,
-              answer: typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value),
-              _raw: a,
-              reviewers_comment: a.reviewers_comment || '—',
-              quality_improvement_followup: a.quality_improvement_followup || '—',
-            };
+
+            if (q.questionGroup || q.question_group) {
+              const groupName = q.questionGroup || q.question_group;
+              if (!groupedAnswersMap[groupName]) groupedAnswersMap[groupName] = [];
+              groupedAnswersMap[groupName].push({ answer: a, question: q });
+            } else {
+              nonGroupedAnswers.push(a);
+            }
           });
-          return <DataTable columns={columns} data={data} />;
+
+          console.log('Grouped answers map:', groupedAnswersMap);
+
+          return (
+            <div className="space-y-6">
+              {/* Non-grouped answers table */}
+              {nonGroupedAnswers.length > 0 && (() => {
+                const columns = [
+                  { key: 'page', label: 'Page' },
+                  { key: 'section', label: 'Section' },
+                  { key: 'question', label: 'Question' },
+                  {
+                    key: 'answer', label: 'Answer', render: (row: any) => {
+                      const a = row._raw;
+                      if (!a) return '—';
+                      const v = a.answer_value;
+                      const isString = typeof v === 'string';
+                      const maybeUrl = (s?: any) => {
+                        if (!s) return null;
+                        if (typeof s !== 'string') return null;
+                        if (/^data:image\//i.test(s)) return s;
+                        if (/^https?:\/\//i.test(s)) return s;
+                        return null;
+                      };
+                      let url: string | null = null;
+                      if (isString) url = maybeUrl(v as string) || String(v as string);
+                      else if (v && typeof v === 'object') {
+                        url = (v.url || v.file_url || v.file || v.path || v.downloadUrl || v.download_url) || null;
+                      }
+                      if (url && (/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url) || /^data:image\//i.test(url))) {
+                        return (
+                          <div className="flex items-center gap-2">
+                            <img src={url} alt="attachment" className="w-20 h-12 object-cover rounded cursor-pointer border" onClick={() => { setImageModalUrl(url); setImageModalOpen(true); }} />
+                            <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open / Download</a>
+                          </div>
+                        );
+                      }
+                      if (url && typeof url === 'string' && /^https?:\/\//i.test(url)) {
+                        return <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open / Download</a>;
+                      }
+                      if (v && typeof v === 'object') return <pre className="whitespace-pre-wrap max-w-xs text-sm">{JSON.stringify(v)}</pre>;
+                      if (isString && String(v).length > 200) return <div className="max-w-lg text-sm">{String(v).slice(0, 200)}…</div>;
+                      return String(v ?? '—');
+                    }
+                  },
+                  { key: 'reviewers_comment', label: 'Reviewer Comment' },
+                  { key: 'quality_improvement_followup', label: 'Followup' },
+                  { key: 'recorded_by', label: 'Recorded By' },
+                  { key: 'score', label: 'Score' },
+                  { key: 'answer_datetime', label: 'Answer Date/Time' },
+                ];
+
+                const data = nonGroupedAnswers.map(a => {
+                  const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id)) || {};
+                  const questionText = q.questionText || q.question_text || q.text || q.label || String(a.question_id);
+                  const recordedByUser = users.find((u: any) => String(u.id) === String(a.recorded_by));
+                  const recordedByName = recordedByUser ? `${recordedByUser.first_name || ''} ${recordedByUser.last_name || ''}`.trim() || recordedByUser.email || String(recordedByUser.id) : String(a.recorded_by || '');
+                  return {
+                    page: q.pageName || q.page_name || '',
+                    section: q.sectionName || q.section_name || '',
+                    question: questionText,
+                    answer: typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value),
+                    _raw: a,
+                    reviewers_comment: a.reviewers_comment || '—',
+                    quality_improvement_followup: a.quality_improvement_followup || '—',
+                    recorded_by: recordedByName,
+                    score: a.score || '—',
+                    answer_datetime: a.answer_datetime || '—',
+                  };
+                });
+
+                return (
+                  <div>
+                    <h3 className="text-md font-semibold mb-3 text-gray-700">Questions</h3>
+                    <DataTable columns={columns} data={data} />
+                  </div>
+                );
+              })()}
+
+              {/* Grouped questions as sub-tables with filtering */}
+              {Object.entries(groupedAnswersMap).length > 0 && (
+                <div>
+                  <h3 className="text-md font-semibold mb-3 text-gray-700">More...</h3>
+                  {Object.entries(groupedAnswersMap).map(([groupName, groupAnswers]) => {
+                    // Organize answers by row_index, grouping by unique row_index values
+                    const rowMap: Record<number, Record<string, any>> = {};
+                    const columnsMap: Record<string, any> = {}; // Store column definitions by qKey
+
+                    groupAnswers.forEach(item => {
+                      const a = item.answer;
+                      const q = item.question;
+
+                      // answer_row_index is a top-level column in the answers table
+                      const rowIndex = a.answer_row_index !== null && a.answer_row_index !== undefined ? Number(a.answer_row_index) : 0;
+                      const questionId = String(a.question_id);
+
+                      if (!rowMap[rowIndex]) rowMap[rowIndex] = {};
+
+                      const questionText = q.questionText || q.question_text || q.text || q.label || questionId;
+                      const qKey = `q_${questionId}`;
+
+                      rowMap[rowIndex][qKey] = a.answer_value;
+                      columnsMap[qKey] = { text: questionText, qKey };
+                    });
+
+                    const sortedRowIndices = Object.keys(rowMap).map(Number).sort((a, b) => a - b);
+                    const columnDefs = Object.values(columnsMap);
+
+                    console.log(`Group "${groupName}" - rowMap:`, rowMap, 'sortedRowIndices:', sortedRowIndices, 'answers count:', groupAnswers.length);
+
+                    // Convert to DataTable format with filters
+                    const groupTableColumns = [
+                      { key: 'rowIndex', label: 'Row Index' },
+                      ...columnDefs.map((colDef: any) => ({ key: colDef.qKey, label: colDef.text })),
+                      { key: 'score', label: 'Score' },
+                      { key: 'recorded_by', label: 'Recorded By' },
+                      { key: 'answer_datetime', label: 'Answer Date/Time' },
+                      { key: 'reviewers_comment', label: 'Reviewer Comment' },
+                      { key: 'quality_improvement_followup', label: 'QI Followup' }
+                    ];
+
+                    const groupTableData = sortedRowIndices.map((rowIdx) => {
+                      const row: Record<string, any> = { rowIndex: String(rowIdx) };
+                      columnDefs.forEach((colDef: any) => {
+                        const value = rowMap[rowIdx][colDef.qKey];
+                        let displayValue = value !== undefined && value !== null ? String(value) : '—';
+                        if (typeof value === 'object') displayValue = JSON.stringify(value);
+                        row[colDef.qKey] = displayValue;
+                      });
+                      // Add additional fields from the answer
+                      const firstAnswer = groupAnswers.find(item => {
+                        const itemRowIndex = item.answer.answer_row_index !== null && item.answer.answer_row_index !== undefined ? Number(item.answer.answer_row_index) : 0;
+                        return itemRowIndex === rowIdx;
+                      });
+                      if (firstAnswer) {
+                        const a = firstAnswer.answer;
+                        const recordedByUser = users.find((u: any) => String(u.id) === String(a.recorded_by));
+                        const recordedByName = recordedByUser ? `${recordedByUser.first_name || ''} ${recordedByUser.last_name || ''}`.trim() || recordedByUser.email || String(recordedByUser.id) : String(a.recorded_by || '');
+                        row.score = a.score || '—';
+                        row.recorded_by = recordedByName;
+                        row.answer_datetime = a.answer_datetime || '—';
+                        row.reviewers_comment = a.reviewers_comment || '—';
+                        row.quality_improvement_followup = a.quality_improvement_followup || '—';
+                      }
+                      return row;
+                    });
+
+                    return (
+                      <div key={groupName} className="mt-6 p-4 bg-gray-50 rounded border border-gray-200">
+                        <h4 className="font-semibold text-sm text-gray-800 mb-3">{groupName.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase())}</h4>
+                        {groupTableData.length > 0 ? (
+                          <DataTable columns={groupTableColumns} data={groupTableData} pageSize={25} persistKey={`grouped_${groupName}`} />
+                        ) : (
+                          <div className="text-sm text-gray-500 text-center py-4">No data</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
         })()}
       </Card>
 
       <Card className="mt-6">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold">Conversation / Query Assistant</h2>
-          <Button 
-            variant="secondary" 
+          <Button
+            variant="secondary"
             size="sm"
             onClick={() => setConversationExpanded(!conversationExpanded)}
           >
@@ -764,126 +893,230 @@ const ReportViewPage: React.FC = () => {
       </Modal>
 
       <Card>
-        <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold mb-2">Uploaded Files</h2>
-          <input className="border p-2 rounded" placeholder="Search files/columns" value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Uploaded Files</h2>
+          <input className="border p-2 rounded text-sm" placeholder="Search files..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+
         {uploadedDocs.length === 0 && <div className="text-sm text-gray-500">No uploaded files.</div>}
-        {/* Only show uploaded files for this report's facility/user */}
+
+        {/* File list with action buttons */}
         {(() => {
           if (!report) return null;
-          const activityResponseType = (report.response_type || report.responseType || '').toLowerCase();
-          let filterKey = null, filterVal = null;
-          if (activityResponseType === 'facility') {
-            filterKey = 'facility_id'; filterVal = report.facility_id || report.facilityId;
-          } else if (activityResponseType === 'user') {
-            filterKey = 'user_id'; filterVal = report.user_id || report.userId;
-          }
-          // Only include uploaded docs that belong to this report and have non-empty content
+
+          console.log('Report ID:', report.id, 'All uploaded docs:', uploadedDocs);
+
           const filteredDocs = (uploadedDocs || []).filter(d => {
             if (!d) return false;
-            const rpt = (d.report_id ?? d.reportId ?? d.report) || null;
-            if (String(rpt) !== String(report.id)) return false;
-            const content = d.file_content || d.fileContent || d.data || null;
-            if (!content) return false;
-            if (Array.isArray(content) && content.length === 0) return false;
+            // Match by report_id
+            const docReportId = d.report_id ?? d.reportId ?? d.report;
+            const reportId = report.id;
+            console.log('Checking doc:', d.filename, 'docReportId:', docReportId, 'reportId:', reportId, 'Match:', String(docReportId) === String(reportId));
+            if (String(docReportId) !== String(reportId)) return false;
             return true;
           }).filter(d => {
             if (!search) return true;
             const s = search.toLowerCase();
             const fname = String(d.filename || d.fileName || '');
-            if (fname.toLowerCase().includes(s)) return true;
-            try {
-              const cont = JSON.stringify(d.file_content || d);
-              if (cont.toLowerCase().includes(s)) return true;
-            } catch (e) { }
-            return false;
+            return fname.toLowerCase().includes(s);
           });
 
-          return filteredDocs.map(d => {
-            const rows = Array.isArray(d.file_content) ? d.file_content : [];
-            const colsSet = new Set<string>();
-            rows.forEach((r: any) => { if (r && typeof r === 'object') Object.keys(r).forEach(k => colsSet.add(k)); });
-            const cols = Array.from(colsSet).map(c => ({ key: c, label: c, editable: true }));
-            const handleCellEdit = async (rowIndex: number, key: string, newValue: any) => {
-              try {
-                const res = await apiFetch(`/api/uploaded_docs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ rowIndex, colKey: key, newValue }) });
-                if (res.ok) {
-                  const json = await res.json();
-                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content } : x));
-                } else {
-                  console.error('Failed to save cell', await res.text());
-                }
-              } catch (e) { console.error(e); }
-            };
-            // Excel download handler
-            const handleDownloadExcel = async () => {
-              const ExcelJS = await import('exceljs');
-              const workbook = new ExcelJS.Workbook();
-              const worksheet = workbook.addWorksheet('Sheet1');
-              if (rows.length > 0) {
-                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
-                worksheet.addRows(rows);
-              }
-              const buffer = await workbook.xlsx.writeBuffer();
-              const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-              const url = window.URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = d.filename ? d.filename.replace(/\.[^.]+$/, '') + '.xlsx' : 'uploaded_file.xlsx';
-              document.body.appendChild(a);
-              a.click();
-              setTimeout(() => {
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-              }, 100);
-            };
-            // Add Row handler: infer types from first row or column names
-            const handleAddRow = () => {
-              const typeRow = rows[0] || {};
-              const newRow: Record<string, any> = {};
-              cols.forEach(col => {
-                const val = typeRow[col.key];
-                if (val === null || val === undefined || val === '') {
-                  newRow[col.key] = '';
-                } else if (typeof val === 'number') {
-                  newRow[col.key] = 0;
-                } else if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
-                  newRow[col.key] = new Date().toISOString().slice(0, 10);
-                } else {
-                  newRow[col.key] = '';
-                }
-              });
-              const updatedRows = [...rows, newRow];
-              setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: updatedRows } : x));
-              apiFetch(`/api/uploaded_docs/${d.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ file_content: updatedRows })
-              }).then(async res => {
-                if (res.ok) {
-                  const json = await res.json();
-                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content } : x));
-                }
-              });
-            };
-            return (
-              <div key={d.id} className="mt-4">
-                <div className="flex justify-between items-center mb-2">
-                  <div>
-                    <div className="font-medium">{d.filename || 'Uploaded file'}</div>
-                    <div className="text-xs text-gray-500">Uploaded: {new Date(d.created_at).toLocaleString()}</div>
+          if (filteredDocs.length === 0) {
+            return <div className="text-sm text-gray-500">No files uploaded for this report.</div>;
+          }
+
+          return (
+            <div className="space-y-3">
+              {filteredDocs.map(d => {
+                const isParsed = !d.isRawFile && (Array.isArray(d.file_content) || (d.file_content && typeof d.file_content === 'object'));
+                const isEditing = editingDocId === d.id;
+
+                return (
+                  <div key={d.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{d.filename || 'Uploaded file'}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          Uploaded: {new Date(d.created_at || d.createdAt).toLocaleString()}
+                        </div>
+                        {d.file_content && Array.isArray(d.file_content) && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            {d.file_content.length} row(s)
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        {isParsed && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setEditingDocId(d.id);
+                              setEditingDocData(Array.isArray(d.file_content) ? JSON.parse(JSON.stringify(d.file_content)) : []);
+                              setEditedCells(new Set());
+                            }}
+                          >
+                            {isEditing ? 'Done Editing' : 'Edit'}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={async () => {
+                            try {
+                              const ExcelJS = await import('exceljs');
+                              const workbook = new ExcelJS.Workbook();
+                              const worksheet = workbook.addWorksheet('Sheet1');
+                              const rows = Array.isArray(d.file_content) ? d.file_content : [];
+                              if (rows.length > 0) {
+                                worksheet.columns = Object.keys(rows[0]).map(key => ({ header: key, key }));
+                                worksheet.addRows(rows);
+                              }
+                              const buffer = await workbook.xlsx.writeBuffer();
+                              const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                              const url = window.URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = d.filename ? d.filename.replace(/\.[^.]+$/, '') + '.xlsx' : 'uploaded_file.xlsx';
+                              document.body.appendChild(a);
+                              a.click();
+                              setTimeout(() => {
+                                document.body.removeChild(a);
+                                window.URL.revokeObjectURL(url);
+                              }, 100);
+                            } catch (e) {
+                              console.error('Download failed:', e);
+                            }
+                          }}
+                        >
+                          Download
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={async () => {
+                            const ok = await swalConfirm({ title: 'Delete file?', text: `Delete "${d.filename || 'uploaded file'}"?` });
+                            if (!ok) return;
+                            try {
+                              const res = await apiFetch(`/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
+                              if (res.ok) {
+                                setUploadedDocs(prev => prev.filter(x => x.id !== d.id));
+                                try { swalSuccess('Deleted', 'File deleted successfully'); } catch (e) { }
+                              }
+                            } catch (e) {
+                              console.error('Delete failed:', e);
+                              try { swalError('Failed', 'Failed to delete file'); } catch (er) { }
+                            }
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Editable grid for parsed files */}
+                    {isEditing && isParsed && (
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <h4 className="font-medium text-sm mb-3 text-gray-700">Edit Data</h4>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm border-collapse">
+                            <thead>
+                              <tr className="bg-gray-100">
+                                {editingDocData.length > 0 && Object.keys(editingDocData[0]).map(key => (
+                                  <th key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700">
+                                    {key}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {editingDocData.map((row, rowIdx) => (
+                                <tr key={rowIdx}>
+                                  {Object.keys(row).map(key => {
+                                    const cellKey = `${rowIdx}_${key}`;
+                                    const isEdited = editedCells.has(cellKey);
+                                    return (
+                                      <td key={cellKey} className="border border-gray-300 px-3 py-2">
+                                        <input
+                                          type="text"
+                                          value={row[key] ?? ''}
+                                          onChange={(e) => {
+                                            const newData = [...editingDocData];
+                                            newData[rowIdx][key] = e.target.value;
+                                            setEditingDocData(newData);
+                                            setEditedCells(prev => new Set([...prev, cellKey]));
+                                          }}
+                                          className={`w-full px-2 py-1 border rounded text-sm ${isEdited ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
+                                            } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="flex gap-2 mt-4">
+                          <Button
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const changedRows: Record<number, Record<string, any>> = {};
+                                editedCells.forEach(cellKey => {
+                                  const parts = cellKey.split('_');
+                                  const rowIdx = Number(parts[0]);
+                                  const key = parts.slice(1).join('_');
+                                  if (!changedRows[rowIdx]) changedRows[rowIdx] = {};
+                                  changedRows[rowIdx][key] = editingDocData[rowIdx][key];
+                                });
+
+                                const res = await apiFetch(`/api/uploaded_docs/${d.id}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  credentials: 'include',
+                                  body: JSON.stringify({ partialUpdate: changedRows })
+                                });
+
+                                if (res.ok) {
+                                  const json = await res.json();
+                                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content || editingDocData } : x));
+                                  setEditingDocId(null);
+                                  setEditedCells(new Set());
+                                  try { swalSuccess('Saved', 'Changes saved successfully'); } catch (e) { }
+                                } else {
+                                  console.error('Save failed:', await res.text());
+                                  try { swalError('Failed', 'Failed to save changes'); } catch (e) { }
+                                }
+                              } catch (e) {
+                                console.error('Save error:', e);
+                                try { swalError('Failed', 'Failed to save changes'); } catch (er) { }
+                              }
+                            }}
+                          >
+                            Save Changes
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setEditingDocId(null);
+                              setEditedCells(new Set());
+                              setEditingDocData([]);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={handleAddRow}>Add Row</Button>
-                    <Button size="sm" variant="secondary" onClick={handleDownloadExcel}>Download to Excel</Button>
-                  </div>
-                </div>
-                <DataTable columns={cols} data={rows} onCellEdit={handleCellEdit} />
-              </div>
-            );
-          });
+                );
+              })}
+            </div>
+          );
         })()}
       </Card>
 

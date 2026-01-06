@@ -23,6 +23,7 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
   const [showControls, setShowControls] = useState(false);
   const [page, setPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState<number>(pageSize);
+  const [draggedCol, setDraggedCol] = useState<string | null>(null);
 
   // compute a stable storage key when not provided
   const computedKey = persistKey || `datatable_visible_${columns.map(c => c.key).join('__')}`;
@@ -37,6 +38,32 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
     return m;
   });
 
+  // Load column order from localStorage
+  const orderKey = `${computedKey}_order`;
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(orderKey);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    return columns.map(c => c.key);
+  });
+
+  // Handle column reordering
+  const handleDragStart = (key: string) => setDraggedCol(key);
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+  const handleDrop = (targetKey: string) => {
+    if (!draggedCol || draggedCol === targetKey) return;
+    const newOrder = [...columnOrder];
+    const draggedIdx = newOrder.indexOf(draggedCol);
+    const targetIdx = newOrder.indexOf(targetKey);
+    if (draggedIdx === -1 || targetIdx === -1) return;
+    newOrder.splice(draggedIdx, 1);
+    newOrder.splice(draggedIdx < targetIdx ? targetIdx - 1 : targetIdx, 0, draggedCol);
+    setColumnOrder(newOrder);
+    try { localStorage.setItem(orderKey, JSON.stringify(newOrder)); } catch (e) { }
+    setDraggedCol(null);
+  };
+
   useEffect(() => {
     // when columns change, ensure map includes them
     setVisibleMap(prev => {
@@ -49,7 +76,7 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
       return copy;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [columns.map(c => c.key).join(',' )]);
+  }, [columns.map(c => c.key).join(',')]);
 
   const setVisible = (key: string, v: boolean) => {
     setVisibleMap(prev => {
@@ -59,7 +86,10 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
     });
   };
 
-  const visibleColumns = columns.filter(c => visibleMap[c.key]);
+  const visibleColumns = columnOrder
+    .filter(key => columns.find(c => c.key === key))
+    .map(key => columns.find(c => c.key === key)!)
+    .filter(c => visibleMap[c.key]);
 
   const filtered = useMemo(() => {
     if (!data) return [] as T[];
@@ -99,8 +129,8 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
                 ))}
               </div>
               <div className="mt-2 text-right">
-                <button className="px-2 py-1 text-xs text-gray-600" onClick={() => { setVisibleMap(() => { const m: Record<string, boolean> = {}; columns.forEach(c => m[c.key] = true); try { localStorage.setItem(computedKey, JSON.stringify(m)); } catch (e) {} return m; }); }}>Show All</button>
-                <button className="ml-2 px-2 py-1 text-xs text-gray-600" onClick={() => { setVisibleMap(() => { const m: Record<string, boolean> = {}; columns.forEach(c => m[c.key] = false); try { localStorage.setItem(computedKey, JSON.stringify(m)); } catch (e) {} return m; }); }}>Hide All</button>
+                <button className="px-2 py-1 text-xs text-gray-600" onClick={() => { setVisibleMap(() => { const m: Record<string, boolean> = {}; columns.forEach(c => m[c.key] = true); try { localStorage.setItem(computedKey, JSON.stringify(m)); } catch (e) { } return m; }); }}>Show All</button>
+                <button className="ml-2 px-2 py-1 text-xs text-gray-600" onClick={() => { setVisibleMap(() => { const m: Record<string, boolean> = {}; columns.forEach(c => m[c.key] = false); try { localStorage.setItem(computedKey, JSON.stringify(m)); } catch (e) { } return m; }); }}>Hide All</button>
               </div>
             </div>
           )}
@@ -112,7 +142,7 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
           <thead className="bg-gray-50">
             <tr>
               {visibleColumns.map(col => (
-                <th key={col.key} style={{ width: col.width }} className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}>
+                <th key={col.key} draggable onDragStart={() => handleDragStart(col.key)} onDragOver={handleDragOver} onDrop={() => handleDrop(col.key)} style={{ width: col.width, cursor: 'move', opacity: draggedCol === col.key ? 0.5 : 1 }} className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}>
                   <div className="flex flex-col">
                     <span className="truncate">{col.label}</span>
                     <input
@@ -164,7 +194,7 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
           <div className="flex items-center gap-2">
             <label className="text-sm">Per page</label>
             <select value={localPageSize} onChange={e => { setLocalPageSize(Number(e.target.value || 50)); setPage(1); }} className="p-1 border rounded text-sm">
-              {[10,20,50,100,250].map(n => <option key={n} value={n}>{n}</option>)}
+              {[10, 20, 50, 100, 250].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
         </div>
