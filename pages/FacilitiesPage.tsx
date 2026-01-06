@@ -1,8 +1,8 @@
-
 import React, { useEffect, useState } from 'react';
 import Card from '../components/ui/Card';
 import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
+import DataTable from '../components/ui/DataTable';
 import Modal from '../components/ui/Modal';
 import DynamicFormRenderer from '../components/DynamicFormRenderer';
 import { PlusIcon, PencilIcon, TrashIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline';
@@ -271,45 +271,30 @@ const FacilitiesPage: React.FC = () => {
         )}
       </div>
       <Card>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
-              {facilitySchema?.fields?.filter(f => f.showInList).map((field) => (
-                <th key={field.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{field.label}</th>
-              ))}
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dashboard</th>
-              {canEdit && <th className="relative px-6 py-3"><span className="sr-only">Actions</span></th>}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {facilities.map((facility) => (
-              <tr key={facility.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{facility.name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.category}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.lga}, {facility.state}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{facility.address}</td>
-                {facilitySchema?.fields?.filter(f => f.showInList).map((field) => (
-                  <td key={field.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {String((facility as any)[field.name] || '-')}
-                  </td>
-                ))}
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <a href={`#/facilities/${facility.id}/dashboard`} className="text-primary-600 hover:underline">Open Dashboard</a>
-                </td>
-                {canEdit && (
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                    <button onClick={() => openModal(facility)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
-                    <button onClick={() => { if (confirm('Delete?')) deleteFacility(facility.id) }} className="text-red-600 hover:text-red-900"><TrashIcon className="h-5 w-5" /></button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable
+          columns={[
+            { key: 'name', label: 'Name' },
+            { key: 'category', label: 'Category' },
+            { key: 'location', label: 'Location', render: (row: any) => `${row.lga || ''}, ${row.state || ''}` },
+            { key: 'address', label: 'Address' },
+            {
+              key: 'dashboard', label: 'Dashboard', render: (row: any) => (
+                <a href={`#/facilities/${row.id}/dashboard`} className="text-primary-600 hover:underline">Open Dashboard</a>
+              )
+            },
+            {
+              key: 'actions', label: 'Actions', render: (row: any) => (
+                <div className="flex gap-2">
+                  <button onClick={() => openModal(row)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
+                  {canEdit && <button onClick={() => { if (confirm('Delete?')) deleteFacility(row.id) }} className="text-red-600 hover:text-red-900"><TrashIcon className="h-5 w-5" /></button>}
+                </div>
+              )
+            }
+          ]}
+          data={facilities}
+          pageSize={20}
+          persistKey="facilities_table"
+        />
       </Card>
 
       <Modal

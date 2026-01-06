@@ -262,7 +262,7 @@ const ActivityDashboardPage: React.FC = () => {
           {(selectedSchemas.length > 0 || selectedBusinessRules.length > 0) && (
             <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded">
               <div className="font-semibold text-amber-900 mb-2">📊 Selected RAG Schemas & Context</div>
-              
+
               {selectedSchemas.length > 0 && (
                 <div className="mb-2">
                   <div className="text-sm font-medium text-amber-900">Tables Used:</div>
@@ -480,20 +480,22 @@ const ActivityDashboardPage: React.FC = () => {
                     }
                     navigate(`${base}?${params.toString()}`);
                   }}>Edit</Button>
-                  <Button size="sm" variant="danger" onClick={async () => {
-                    const ok = await confirm({ title: 'Delete report?', text: `Permanently delete report ${row.id}?` });
-                    if (!ok) return;
-                    try {
-                      const resp = await fetch(`/api/reports/${row.__raw.id}`, { method: 'DELETE', credentials: 'include' });
-                      if (resp.ok) {
-                        const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
-                        if (r.ok) setData(await r.json());
-                        swalSuccess('Deleted', 'Report deleted');
-                      } else {
-                        const txt = await resp.text().catch(() => ''); swalError('Delete failed', txt || 'Unable to delete report');
-                      }
-                    } catch (e) { console.error(e); swalError('Delete failed', 'Unable to delete report'); }
-                  }}>Delete</Button>
+                  {isAdmin && (
+                    <Button size="sm" variant="danger" onClick={async () => {
+                      const ok = await confirm({ title: 'Delete report?', text: `Permanently delete report ${row.id}?` });
+                      if (!ok) return;
+                      try {
+                        const resp = await fetch(`/api/reports/${row.__raw.id}`, { method: 'DELETE', credentials: 'include' });
+                        if (resp.ok) {
+                          const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+                          if (r.ok) setData(await r.json());
+                          swalSuccess('Deleted', 'Report deleted');
+                        } else {
+                          const txt = await resp.text().catch(() => ''); swalError('Delete failed', txt || 'Unable to delete report');
+                        }
+                      } catch (e) { console.error(e); swalError('Delete failed', 'Unable to delete report'); }
+                    }}>Delete</Button>
+                  )}
                 </div>
               )
             },
@@ -520,6 +522,8 @@ const ActivityDashboardPage: React.FC = () => {
               <div>
                 <div className="font-medium">{d.filename || 'Uploaded file'}</div>
                 <div className="text-xs text-gray-500">Uploaded: {new Date(d.created_at).toLocaleString()}</div>
+                {d.facility_name && <div className="text-xs text-gray-600">Facility: {d.facility_name}</div>}
+                {d.user_first_name && <div className="text-xs text-gray-600">User: {d.user_first_name} {d.user_last_name}</div>}
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" onClick={() => { setSelectedDoc(d); setFileSearch(''); setFileModalOpen(true); }}>View</Button>
@@ -543,24 +547,26 @@ const ActivityDashboardPage: React.FC = () => {
                   a.click();
                   setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
                 }}>Download</Button>
-                <Button size="sm" variant="secondary" onClick={async () => {
-                  const ok = await confirm({ title: 'Delete uploaded file?', text: 'This will permanently remove the uploaded file.' });
-                  if (!ok) return;
-                  try {
-                    const res = await fetch(`/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
-                    if (res.ok) {
-                      // refresh dashboard data
-                      const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
-                      if (r.ok) {
-                        setData(await r.json());
-                        swalSuccess('Deleted', 'Uploaded file deleted');
+                {isAdmin && (
+                  <Button size="sm" variant="danger" onClick={async () => {
+                    const ok = await confirm({ title: 'Delete uploaded file?', text: 'This will permanently remove the uploaded file.' });
+                    if (!ok) return;
+                    try {
+                      const res = await fetch(`/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
+                      if (res.ok) {
+                        // refresh dashboard data
+                        const r = await fetch(`/api/activity_dashboard/${activityId}`, { credentials: 'include' });
+                        if (r.ok) {
+                          setData(await r.json());
+                          swalSuccess('Deleted', 'Uploaded file deleted');
+                        }
+                      } else {
+                        const txt = await res.text().catch(() => '');
+                        swalError('Delete failed', txt || 'Unable to delete the uploaded file');
                       }
-                    } else {
-                      const txt = await res.text().catch(() => '');
-                      swalError('Delete failed', txt || 'Unable to delete the uploaded file');
-                    }
-                  } catch (e) { console.error(e); swalError('Delete failed', 'Unable to delete the uploaded file'); }
-                }}>Delete</Button>
+                    } catch (e) { console.error(e); swalError('Delete failed', 'Unable to delete the uploaded file'); }
+                  }}>Delete</Button>
+                )}
               </div>
             </div>
           </div>

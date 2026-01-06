@@ -59,11 +59,11 @@ const LocationMapPicker = ({ value, onChange, onClose, facilities, users }: { va
                         const hereKey = (settings && (settings as any).hereApiKey) ? (settings as any).hereApiKey : null;
                         const googleKey = (settings && (settings as any).googleMapsApiKey) ? (settings as any).googleMapsApiKey : null;
                         const providers: any = {
-                            leaflet: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors', subdomains: ['a','b','c'] },
-                            osmand: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors (OsmAnd)', subdomains: ['a','b','c'] },
-                            organic: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors (Organic Maps)', subdomains: ['a','b','c'] },
-                            herewego: { url: hereKey ? `https://{s}.base.maps.ls.hereapi.com/maptile/2.1/maptile/newest/normal.day/{z}/{x}/{y}/256/png8?apiKey=${hereKey}` : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© HERE', subdomains: ['1','2','3','4'] },
-                            google: { url: googleKey ? `https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}&key=${googleKey}` : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© Google', subdomains: ['mt0','mt1','mt2','mt3'] }
+                            leaflet: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors', subdomains: ['a', 'b', 'c'] },
+                            osmand: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors (OsmAnd)', subdomains: ['a', 'b', 'c'] },
+                            organic: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors (Organic Maps)', subdomains: ['a', 'b', 'c'] },
+                            herewego: { url: hereKey ? `https://{s}.base.maps.ls.hereapi.com/maptile/2.1/maptile/newest/normal.day/{z}/{x}/{y}/256/png8?apiKey=${hereKey}` : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© HERE', subdomains: ['1', '2', '3', '4'] },
+                            google: { url: googleKey ? `https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}&key=${googleKey}` : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© Google', subdomains: ['mt0', 'mt1', 'mt2', 'mt3'] }
                         };
                         const cfg = providers[provider] || providers.leaflet;
                         return <TileLayer attribution={cfg.attribution} url={cfg.url} {...(cfg.subdomains ? { subdomains: cfg.subdomains } : {})} />;
@@ -161,196 +161,196 @@ const SearchableSelect: React.FC<{
     );
 };
 
-    const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any> }) => {
-        // Local state/hooks used by some input types (e.g. location picker)
-        const [showLocationMap, setShowLocationMap] = useState(false);
-        const handleLocationClick = () => setShowLocationMap(s => !s);
+const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any> }) => {
+    // Local state/hooks used by some input types (e.g. location picker)
+    const [showLocationMap, setShowLocationMap] = useState(false);
+    const handleLocationClick = () => setShowLocationMap(s => !s);
 
-        switch (question.answerType) {
-            case AnswerType.TEXT:
-                return <MInput label={question.questionText} type="text" value={value || ''} onChange={onChange} disabled={!!disabled} />;
-            case AnswerType.TEXTAREA:
-                return <MInput label={question.questionText} type="textarea" value={value || ''} onChange={onChange} rows={4} disabled={!!disabled} />;
-            case AnswerType.NUMBER:
-                return <MInput label={question.questionText} type="number" value={value || ''} onChange={onChange} disabled={!!disabled} />;
-            case AnswerType.DATE:
-                return <MInput label={question.questionText} type="date" value={value || ''} onChange={onChange} disabled={!!disabled} />;
-            case AnswerType.TIME:
-                return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} disabled={!!disabled} />;
-            case AnswerType.DROPDOWN:
-                const filteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
-                if (question.metadata && question.metadata.searchable) {
-                    return (
-                        <SearchableSelect
-                            options={filteredOptions.map(o => ({ value: o.value as any, label: o.label, score: o.score }))}
-                            value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
-                            onChange={(val: any) => {
-                                if (val && typeof val === 'object' && 'value' in val) onChange(val);
-                                else {
-                                    const sel = filteredOptions.find(o => String(o.value) === String(val));
-                                    if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
-                                    else onChange(val);
-                                }
-                            }}
-                            placeholder="Select..."
-                            disabled={!!disabled}
-                        />
-                    );
-                }
+    switch (question.answerType) {
+        case AnswerType.TEXT:
+            return <MInput label={question.questionText} type="text" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+        case AnswerType.TEXTAREA:
+            return <MInput label={question.questionText} type="textarea" value={value || ''} onChange={onChange} rows={4} disabled={!!disabled} />;
+        case AnswerType.NUMBER:
+            return <MInput label={question.questionText} type="number" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+        case AnswerType.DATE:
+            return <MInput label={question.questionText} type="date" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+        case AnswerType.TIME:
+            return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+        case AnswerType.DROPDOWN:
+            const filteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+            if (question.metadata && question.metadata.searchable) {
                 return (
-                    <MInput
-                        label={question.questionText}
-                        type="select"
+                    <SearchableSelect
+                        options={filteredOptions.map(o => ({ value: o.value as any, label: o.label, score: o.score }))}
                         value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
                         onChange={(val: any) => {
-                            const sel = filteredOptions.find(o => String(o.value) === String(val));
-                            if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
-                            else onChange(val);
+                            if (val && typeof val === 'object' && 'value' in val) onChange(val);
+                            else {
+                                const sel = filteredOptions.find(o => String(o.value) === String(val));
+                                if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
+                                else onChange(val);
+                            }
                         }}
-                        options={filteredOptions.map(o => ({ value: o.value as any, label: o.label }))}
                         placeholder="Select..."
                         disabled={!!disabled}
                     />
                 );
-            case AnswerType.RADIO:
-                const radioFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
-                return (
-                    <div>
-                        {radioFilteredOptions?.map((opt) => (
-                            <MInput
-                                key={`${question.id}-radio-${opt.value}`}
-                                type="radio"
-                                name={question.id}
-                                label={opt.label}
-                                value={(() => { if (value && typeof value === 'object' && 'value' in value) return String(value.value) === String(opt.value); return String(value) === String(opt.value); })()}
-                                onChange={(v) => {
-                                    if (opt && opt.score !== undefined) onChange({ value: opt.value, score: Number(opt.score) });
-                                    else onChange(opt.value);
-                                }}
-                                disabled={!!disabled}
-                            />
-                        ))}
-                    </div>
-                );
-            case AnswerType.CHECKBOX:
-                const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
-                const currentVals = Array.isArray(value) ? value : [];
-                const handleCheck = (val: string, checked: boolean) => {
-                    if (checked) onChange([...currentVals, val]);
-                    else onChange(currentVals.filter((v: string) => v !== val));
-                };
-                return (
-                    <div>
-                        {checkboxFilteredOptions?.map((opt) => (
-                            <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
-                        ))}
-                    </div>
-                );
-            case AnswerType.FILE:
-                const allowed = question.metadata && Array.isArray(question.metadata.allowedFileTypes) ? question.metadata.allowedFileTypes.join(',') : undefined;
-                const fileVal = value;
-                const handleFile = (files: FileList | null) => {
-                    const f = files?.[0] || null;
-                    if (!f) return onChange(null);
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                        const dataUrl = ev.target?.result as string;
-                        onChange({ filename: f.name, mimeType: f.type, dataUrl });
-                    };
-                    reader.readAsDataURL(f);
-                };
-                return (
-                    <div>
-                        <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} disabled={!!disabled} />
-                        {fileVal && fileVal.dataUrl && fileVal.dataUrl !== '' && (
-                            <div className="mt-2">
-                                <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
-                                {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && fileVal.dataUrl && (
-                                    <img src={fileVal.dataUrl} alt={fileVal.filename} className="mt-2 max-h-36 border rounded" />
-                                )}
-                            </div>
-                        )}
-                    </div>
-                );
-            case AnswerType.COMPUTED:
-                // Show computed/calculated value as read-only output.
-                // If a function is present, try to invoke it safely to get the result; otherwise display the value as a string.
-                let displayValue: any = value;
-                if (typeof displayValue === 'function') {
-                    try {
-                        const res = displayValue();
-                        displayValue = (res === undefined || res === null) ? String(displayValue) : res;
-                    } catch (e) {
-                        displayValue = String(displayValue);
-                    }
-                }
-                if (typeof displayValue === 'string' && /=>|function\s*\(/.test(displayValue)) {
-                    const after = displayValue.replace(/^[\s\S]*}\s*/, '').trim();
-                    if (after) {
-                        if (/^-?\d+(?:\.\d+)?$/.test(after)) displayValue = Number(after);
-                        else {
-                            try { displayValue = JSON.parse(after); } catch (e) { displayValue = after; }
-                        }
-                    } else {
-                        displayValue = null;
-                    }
-                }
-                const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
-                return (
-                    <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
-                        <span className="font-semibold">{question.questionText}:</span>{' '}
-                        <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(displayValue)}</span>
-                    </div>
-                );
-            case AnswerType.PARAGRAPH:
-                return (
-                    <div className="py-4 px-4 bg-blue-50 border border-blue-200 rounded-md prose prose-sm max-w-none">
-                        <div
-                            dangerouslySetInnerHTML={{ __html: question.metadata?.content || '' }}
-                            className="text-gray-700 text-sm prose-headings:font-semibold prose-headings:text-gray-900 prose-p:text-gray-700 prose-a:text-blue-600 prose-strong:font-bold prose-em:italic prose-li:text-gray-700"
+            }
+            return (
+                <MInput
+                    label={question.questionText}
+                    type="select"
+                    value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
+                    onChange={(val: any) => {
+                        const sel = filteredOptions.find(o => String(o.value) === String(val));
+                        if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
+                        else onChange(val);
+                    }}
+                    options={filteredOptions.map(o => ({ value: o.value as any, label: o.label }))}
+                    placeholder="Select..."
+                    disabled={!!disabled}
+                />
+            );
+        case AnswerType.RADIO:
+            const radioFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+            return (
+                <div>
+                    {radioFilteredOptions?.map((opt) => (
+                        <MInput
+                            key={`${question.id}-radio-${opt.value}`}
+                            type="radio"
+                            name={question.id}
+                            label={opt.label}
+                            value={(() => { if (value && typeof value === 'object' && 'value' in value) return String(value.value) === String(opt.value); return String(value) === String(opt.value); })()}
+                            onChange={(v) => {
+                                if (opt && opt.score !== undefined) onChange({ value: opt.value, score: Number(opt.score) });
+                                else onChange(opt.value);
+                            }}
+                            disabled={!!disabled}
                         />
-                    </div>
-                );
-            case AnswerType.LOCATION:
-                return (
-                    <div>
-                        <div className="flex gap-2 items-end">
-                            <MInput
-                                label={question.questionText}
-                                type="text"
-                                value={value || ''}
-                                onChange={onChange}
-                                placeholder="Click 'Pick on Map' to select location"
-                                disabled={!!disabled}
-                            />
-                            <button
-                                type="button"
-                                onClick={handleLocationClick}
-                                className="px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-                            >
-                                Pick on Map
-                            </button>
+                    ))}
+                </div>
+            );
+        case AnswerType.CHECKBOX:
+            const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+            const currentVals = Array.isArray(value) ? value : [];
+            const handleCheck = (val: string, checked: boolean) => {
+                if (checked) onChange([...currentVals, val]);
+                else onChange(currentVals.filter((v: string) => v !== val));
+            };
+            return (
+                <div>
+                    {checkboxFilteredOptions?.map((opt) => (
+                        <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
+                    ))}
+                </div>
+            );
+        case AnswerType.FILE:
+            const allowed = question.metadata && Array.isArray(question.metadata.allowedFileTypes) ? question.metadata.allowedFileTypes.join(',') : undefined;
+            const fileVal = value;
+            const handleFile = (files: FileList | null) => {
+                const f = files?.[0] || null;
+                if (!f) return onChange(null);
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const dataUrl = ev.target?.result as string;
+                    onChange({ filename: f.name, mimeType: f.type, dataUrl });
+                };
+                reader.readAsDataURL(f);
+            };
+            return (
+                <div>
+                    <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} disabled={!!disabled} />
+                    {fileVal && fileVal.dataUrl && fileVal.dataUrl !== '' && (
+                        <div className="mt-2">
+                            <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
+                            {fileVal.mimeType && fileVal.mimeType.startsWith('image/') && fileVal.dataUrl && (
+                                <img src={fileVal.dataUrl} alt={fileVal.filename} className="mt-2 max-h-36 border rounded" />
+                            )}
                         </div>
-                        {showLocationMap && (
-                            <div className="mt-4 border border-gray-300 rounded overflow-hidden">
-                                <LocationMapPicker
-                                    value={value}
-                                    onChange={(lat, lng) => {
-                                        onChange(`${lat.toString()},${lng.toString()}`);
-                                        setShowLocationMap(false);
-                                    }}
-                                    onClose={() => setShowLocationMap(false)}
-                                    facilities={facilities}
-                                    users={users}
-                                />
-                            </div>
-                        )}
+                    )}
+                </div>
+            );
+        case AnswerType.COMPUTED:
+            // Show computed/calculated value as read-only output.
+            // If a function is present, try to invoke it safely to get the result; otherwise display the value as a string.
+            let displayValue: any = value;
+            if (typeof displayValue === 'function') {
+                try {
+                    const res = displayValue();
+                    displayValue = (res === undefined || res === null) ? String(displayValue) : res;
+                } catch (e) {
+                    displayValue = String(displayValue);
+                }
+            }
+            if (typeof displayValue === 'string' && /=>|function\s*\(/.test(displayValue)) {
+                const after = displayValue.replace(/^[\s\S]*}\s*/, '').trim();
+                if (after) {
+                    if (/^-?\d+(?:\.\d+)?$/.test(after)) displayValue = Number(after);
+                    else {
+                        try { displayValue = JSON.parse(after); } catch (e) { displayValue = after; }
+                    }
+                } else {
+                    displayValue = null;
+                }
+            }
+            const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
+            return (
+                <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
+                    <span className="font-semibold">{question.questionText}:</span>{' '}
+                    <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(displayValue)}</span>
+                </div>
+            );
+        case AnswerType.PARAGRAPH:
+            return (
+                <div className="py-4 px-4 bg-blue-50 border border-blue-200 rounded-md prose prose-sm max-w-none">
+                    <div
+                        dangerouslySetInnerHTML={{ __html: question.metadata?.content || '' }}
+                        className="text-gray-700 text-sm prose-headings:font-semibold prose-headings:text-gray-900 prose-p:text-gray-700 prose-a:text-blue-600 prose-strong:font-bold prose-em:italic prose-li:text-gray-700"
+                    />
+                </div>
+            );
+        case AnswerType.LOCATION:
+            return (
+                <div>
+                    <div className="flex gap-2 items-end">
+                        <MInput
+                            label={question.questionText}
+                            type="text"
+                            value={value || ''}
+                            onChange={onChange}
+                            placeholder="Click 'Pick on Map' to select location"
+                            disabled={!!disabled}
+                        />
+                        <button
+                            type="button"
+                            onClick={handleLocationClick}
+                            className="px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                        >
+                            Pick on Map
+                        </button>
                     </div>
-                );
-            default:
-                return <p className="text-sm text-gray-500">Not supported</p>;
-        }
-    };
+                    {showLocationMap && (
+                        <div className="mt-4 border border-gray-300 rounded overflow-hidden">
+                            <LocationMapPicker
+                                value={value}
+                                onChange={(lat, lng) => {
+                                    onChange(`${lat.toString()},${lng.toString()}`);
+                                    setShowLocationMap(false);
+                                }}
+                                onClose={() => setShowLocationMap(false)}
+                                facilities={facilities}
+                                users={users}
+                            />
+                        </div>
+                    )}
+                </div>
+            );
+        default:
+            return <p className="text-sm text-gray-500">Not supported</p>;
+    }
+};
 import DataTable from '../components/ui/DataTable';
 
 const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (updatedFile: UploadedFile) => void }) => {
@@ -363,7 +363,7 @@ const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (upda
             </div>
         );
     }
-    
+
     if (!file.data || file.data.length === 0) {
         return <p className="text-gray-500">No data to display for {file.fileName}.</p>;
     }
@@ -600,7 +600,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 const j = await resp.json();
                 console.log('[PERM-LOAD] ✓ Loaded permissions:', j);
                 if (!cancelled) setPagePerms(j);
-            } catch (e) { 
+            } catch (e) {
                 console.error('[PERM-LOAD] Error:', e);
             }
         })();
@@ -613,32 +613,32 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         return k;
     };
 
-    const hasPermissionFlag = (flag: 'can_view'|'can_create'|'can_edit'|'can_delete', pageKey: string, sectionKey?: string) => {
+    const hasPermissionFlag = (flag: 'can_view' | 'can_create' | 'can_edit' | 'can_delete', pageKey: string, sectionKey?: string) => {
         try {
             // Admins and super admins always see everything in the UI
             const role = currentUser && String(currentUser.role || '').toLowerCase();
             if (role === 'admin' || role === 'super-admin' || role === 'super_admin') return true;
-            
+
             // If no permissions are configured, allow all access (default behavior)
             if (!pagePerms || pagePerms.length === 0) {
                 console.log('[PERM] No PAGE_PERMISSIONS configured for this role, allowing all access');
                 return true;
             }
-            
+
             // Normalize the input section key to null if undefined
             const checkSectionKey = sectionKey ? String(sectionKey).trim() : null;
             const checkPageKey = pageKey ? String(pageKey).trim() : '';
-            
+
             console.log(`[PERM] Checking ${flag} for pageKey="${checkPageKey}", sectionKey="${checkSectionKey}"`);
-            
+
             // Find matching permission record
             for (const p of pagePerms) {
                 const dbPageKey = String(p.page_key || '').trim();
                 const dbSectionKey = p.section_key ? String(p.section_key).trim() : null;
-                
+
                 const pageKeyMatch = (dbPageKey === checkPageKey);
                 const sectionKeyMatch = (dbSectionKey === checkSectionKey);
-                
+
                 if (pageKeyMatch && sectionKeyMatch) {
                     // Found a matching permission record - use its flag value
                     const hasFlag = !!p[flag];
@@ -646,12 +646,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     return hasFlag;
                 }
             }
-            
+
             // No matching record found - default to ALLOW
             // (only deny if a record exists with can_view=false)
             console.log(`[PERM]   ✗ No record found - defaulting to ALLOW`);
             return true;
-        } catch (e) { 
+        } catch (e) {
             console.error('[PERM] Exception:', e);
             return true;
         }
@@ -845,7 +845,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             const reader = new FileReader();
             // also read a dataURL of the original file so we can upload raw file if requested
             const readerDataUrl = new FileReader();
-            
+
             if (uploadToFolder) {
                 // If uploading to folder (not parsing), just read as data URL
                 readerDataUrl.onload = (ev2) => {
@@ -982,11 +982,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     // Filter pages and sections by permission at the top level
     const getPageKey = (pageId: string) => `/activities/fill/${activityId || ''}:page:${pageId}`;
     const visiblePages = formDef.pages.filter(page => {
-      const pageKey = getPageKey(page.id);
-      console.log(`[VISIBILITY] Page "${page.name}" (id=${page.id}), pageKey="${pageKey}", pagePerms=${pagePerms ? pagePerms.length : 0} records`);
-      const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
-      console.log(`[VISIBILITY]   → can_view=${viewAllowed}`);
-      return viewAllowed;
+        const pageKey = getPageKey(page.id);
+        console.log(`[VISIBILITY] Page "${page.name}" (id=${page.id}), pageKey="${pageKey}", pagePerms=${pagePerms ? pagePerms.length : 0} records`);
+        const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
+        console.log(`[VISIBILITY]   → can_view=${viewAllowed}`);
+        return viewAllowed;
     });
 
     // If user has no visible pages, show access message
@@ -1027,11 +1027,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     <form onSubmit={handleSubmit}>
                         <div className="border-b border-gray-200">
                             <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
-                                        {visiblePages.map((page, index) => (
-                                            <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === safeActivePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
-                                                {page.name}
-                                            </button>
-                                        ))}
+                                {visiblePages.map((page, index) => (
+                                    <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === safeActivePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
+                                        {page.name}
+                                    </button>
+                                ))}
                             </nav>
                         </div>
 
@@ -1231,7 +1231,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                 <EditableTable file={file} onUpdate={handleFileUpdate} />
                                             </div>
                                             <div className="ml-4">
-                                                <button onClick={() => { if (confirm('Delete this uploaded file?')) setUploadedFiles(prev => prev.filter(f => f.id !== file.id)); }} className="text-red-600 hover:text-red-900 text-sm">Delete File</button>
+                                                {isAdmin && <button onClick={() => { if (confirm('Delete this uploaded file?')) setUploadedFiles(prev => prev.filter(f => f.id !== file.id)); }} className="text-red-600 hover:text-red-900 text-sm">Delete File</button>}
                                             </div>
                                         </div>
                                     </Card>

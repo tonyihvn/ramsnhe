@@ -8,10 +8,12 @@ import Modal from '../components/ui/Modal';
 import { confirm as swalConfirm, success as swalSuccess, error as swalError } from '../components/ui/swal';
 import RichTextEditor from '../components/ui/RichTextEditor';
 import { apiFetch, getApiBase } from '../utils/api';
+import { useMockData } from '../hooks/useMockData';
 
 const ReportViewPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
+  const { currentUser } = useMockData();
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<any>(null);
   const [answers, setAnswers] = useState<any[]>([]);
@@ -40,6 +42,9 @@ const ReportViewPage: React.FC = () => {
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editingDocData, setEditingDocData] = useState<any[]>([]);
   const [editedCells, setEditedCells] = useState<Set<string>>(new Set());
+
+  // Authorization checks
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
 
   const saveReview = async () => {
     if (!report) return;
@@ -1092,6 +1097,8 @@ const ReportViewPage: React.FC = () => {
                         <div className="text-xs text-gray-500 mt-1">
                           Uploaded: {new Date(d.created_at || d.createdAt).toLocaleString()}
                         </div>
+                        {d.facility_name && <div className="text-xs text-gray-600 mt-1">Facility: {d.facility_name}</div>}
+                        {d.user_first_name && <div className="text-xs text-gray-600">User: {d.user_first_name} {d.user_last_name}</div>}
                         {d.file_content && Array.isArray(d.file_content) && (
                           <div className="text-xs text-gray-500 mt-1">
                             {d.file_content.length} row(s)
@@ -1145,26 +1152,28 @@ const ReportViewPage: React.FC = () => {
                         >
                           Download
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={async () => {
-                            const ok = await swalConfirm({ title: 'Delete file?', text: `Delete "${d.filename || 'uploaded file'}"?` });
-                            if (!ok) return;
-                            try {
-                              const res = await apiFetch(`/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
-                              if (res.ok) {
-                                setUploadedDocs(prev => prev.filter(x => x.id !== d.id));
-                                try { swalSuccess('Deleted', 'File deleted successfully'); } catch (e) { }
+                        {isAdmin && (
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={async () => {
+                              const ok = await swalConfirm({ title: 'Delete file?', text: `Delete "${d.filename || 'uploaded file'}"?` });
+                              if (!ok) return;
+                              try {
+                                const res = await apiFetch(`/api/uploaded_docs/${d.id}`, { method: 'DELETE', credentials: 'include' });
+                                if (res.ok) {
+                                  setUploadedDocs(prev => prev.filter(x => x.id !== d.id));
+                                  try { swalSuccess('Deleted', 'File deleted successfully'); } catch (e) { }
+                                }
+                              } catch (e) {
+                                console.error('Delete failed:', e);
+                                try { swalError('Failed', 'Failed to delete file'); } catch (er) { }
                               }
-                            } catch (e) {
-                              console.error('Delete failed:', e);
-                              try { swalError('Failed', 'Failed to delete file'); } catch (er) { }
-                            }
-                          }}
-                        >
-                          Delete
-                        </Button>
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        )}
                       </div>
                     </div>
 
@@ -1285,15 +1294,17 @@ const ReportViewPage: React.FC = () => {
             <div className="flex flex-col gap-2">
               <div className="flex gap-2 mb-2">
                 <div className="flex-1" />
-                <Button className="text-red-600" onClick={async () => {
-                  try {
-                    const ok = await swalConfirm({ title: 'Delete this report?', text: 'This will remove associated uploaded files.' });
-                    if (!ok) return;
-                    const res = await apiFetch(`/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
-                    if (res.ok) { try { swalSuccess('Deleted', 'Report deleted'); } catch (e) { } navigate('/reports'); }
-                    else { try { swalError('Failed', 'Failed to delete report'); } catch (e) { } }
-                  } catch (e) { console.error(e); try { swalError('Failed', 'Failed to delete report'); } catch (er) { } }
-                }}>Delete</Button>
+                {isAdmin && (
+                  <Button className="text-red-600" onClick={async () => {
+                    try {
+                      const ok = await swalConfirm({ title: 'Delete this report?', text: 'This will remove associated uploaded files.' });
+                      if (!ok) return;
+                      const res = await apiFetch(`/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
+                      if (res.ok) { try { swalSuccess('Deleted', 'Report deleted'); } catch (e) { } navigate('/reports'); }
+                      else { try { swalError('Failed', 'Failed to delete report'); } catch (e) { } }
+                    } catch (e) { console.error(e); try { swalError('Failed', 'Failed to delete report'); } catch (er) { } }
+                  }}>Delete</Button>
+                )}
               </div>
 
               <div className="flex gap-2 mb-2 items-center">

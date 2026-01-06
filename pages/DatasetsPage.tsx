@@ -3,8 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DataTable from '../components/ui/DataTable';
+import { useMockData } from '../hooks/useMockData';
 
 const DatasetsPage: React.FC = () => {
+  const { currentUser } = useMockData();
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
   const [datasets, setDatasets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -96,7 +99,7 @@ const DatasetsPage: React.FC = () => {
                   <div className="flex gap-2">
                     <button onClick={() => { setEditing(row); setIsEditModalOpen(true); }} className="text-sm text-primary-600">Edit</button>
                     <button onClick={() => viewContent(row.id)} className="text-sm text-gray-600">Content</button>
-                    <button onClick={() => deleteDataset(row.id)} className="text-sm text-red-600">Delete</button>
+                    {isAdmin && <button onClick={() => deleteDataset(row.id)} className="text-sm text-red-600">Delete</button>}
                   </div>
                 )
               }
@@ -176,20 +179,22 @@ const DatasetsPage: React.FC = () => {
                 columns={(() => {
                   const keys = Object.keys(contentRows[0] || {}).filter(k => k !== '__dc_id' && k !== '__roles');
                   const sample = contentRows[0] || {};
-                  const cols = keys.map(k => ({ key: k, label: k, editable: !(typeof sample[k] === 'object' && sample[k] !== null), render: (row: any) => {
-                    const v = row[k];
-                    if (v === null || typeof v === 'undefined') return '';
-                    if (typeof v === 'object') {
-                      const preview = Array.isArray(v) ? `[${v.length}]` : JSON.stringify(v).slice(0, 200);
-                      return (
-                        <div className="flex items-center gap-2">
-                          <span className="truncate" style={{ maxWidth: 400 }}>{preview}</span>
-                          <button className="text-xs text-blue-600" onClick={() => { setJsonViewerContent(v); setJsonViewerOpen(true); }}>View</button>
-                        </div>
-                      );
+                  const cols = keys.map(k => ({
+                    key: k, label: k, editable: !(typeof sample[k] === 'object' && sample[k] !== null), render: (row: any) => {
+                      const v = row[k];
+                      if (v === null || typeof v === 'undefined') return '';
+                      if (typeof v === 'object') {
+                        const preview = Array.isArray(v) ? `[${v.length}]` : JSON.stringify(v).slice(0, 200);
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span className="truncate" style={{ maxWidth: 400 }}>{preview}</span>
+                            <button className="text-xs text-blue-600" onClick={() => { setJsonViewerContent(v); setJsonViewerOpen(true); }}>View</button>
+                          </div>
+                        );
+                      }
+                      return String(v);
                     }
-                    return String(v);
-                  } }));
+                  }));
                   cols.push({
                     key: '__actions', label: 'Actions', render: (row: any) => (
                       <div className="flex gap-2">
@@ -208,10 +213,10 @@ const DatasetsPage: React.FC = () => {
                             }
                           } catch (err) { console.error(err); alert('Failed to update roles'); }
                         }}>Roles</button>
-                        <button className="text-xs text-gray-600" onClick={async () => {
+                        {isAdmin && <button className="text-xs text-gray-600" onClick={async () => {
                           if (!confirm('Delete this row?')) return;
                           try { const res = await fetch(`/api/admin/datasets/${contentDatasetId}/content/${row.__dc_id}`, { method: 'DELETE' }); if (res.ok) await viewContent(contentDatasetId!); else alert('Delete failed'); } catch (err) { console.error(err); alert('Delete failed'); }
-                        }}>Delete</button>
+                        }}>Delete</button>}
                       </div>
                     )
                   });

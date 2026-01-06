@@ -63,7 +63,7 @@ const ActivityActionButtonsComponent: React.FC<{
           })()}
           {isAdmin && <Button size="sm" variant="secondary" onClick={onBuildReport} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Build Report</Button>}
           <Button size="sm" variant="secondary" onClick={onEdit} leftIcon={<PencilIcon className="h-4 w-4" />}>Edit</Button>
-          <Button size="sm" variant="danger" onClick={onDelete} leftIcon={<TrashIcon className="h-4 w-4" />}>Delete</Button>
+          {isAdmin && <Button size="sm" variant="danger" onClick={onDelete} leftIcon={<TrashIcon className="h-4 w-4" />}>Delete</Button>}
         </>
       )}
       {canViewDashboard && (

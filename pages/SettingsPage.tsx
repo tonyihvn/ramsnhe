@@ -8,6 +8,7 @@ import DatasetsPage from './DatasetsPage';
 import FormBuilder, { FormSchema } from '../components/FormBuilder';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
+import { useMockData } from '../hooks/useMockData';
 
 const LLMSettingsForm: React.FC = () => {
     const { settings, setSettings } = useTheme();
@@ -186,7 +187,7 @@ const DBMSTab: React.FC = () => {
     const [sql, setSql] = React.useState('');
     const [rows, setRows] = React.useState<any[]>([]);
     const [columns, setColumns] = React.useState<string[]>([]);
-    const [columnFilters, setColumnFilters] = React.useState<Record<string,string>>({});
+    const [columnFilters, setColumnFilters] = React.useState<Record<string, string>>({});
     const [sortColumn, setSortColumn] = React.useState<string | null>(null);
     const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc' | null>(null);
     const [limit, setLimit] = React.useState(50);
@@ -278,23 +279,23 @@ const DBMSTab: React.FC = () => {
             <div className="col-span-1">
                 <div className="font-medium mb-2">Tables</div>
                 <div className="border rounded max-h-[60vh] overflow-auto bg-white">
-                    {tables.map(t => <div key={t} className={`p-2 cursor-pointer hover:bg-gray-50 ${t===selectedTable?'bg-gray-50 font-medium':''}`} onClick={() => setSelectedTable(t)}>{t}</div>)}
+                    {tables.map(t => <div key={t} className={`p-2 cursor-pointer hover:bg-gray-50 ${t === selectedTable ? 'bg-gray-50 font-medium' : ''}`} onClick={() => setSelectedTable(t)}>{t}</div>)}
                 </div>
             </div>
             <div className="col-span-3">
                 <div className="grid grid-cols-1 gap-2">
                     <div className="flex gap-2">
-                        <input className="flex-1 p-2 border rounded" value={sql} onChange={e=>setSql(e.target.value)} placeholder="Enter SELECT SQL or use table preview" />
+                        <input className="flex-1 p-2 border rounded" value={sql} onChange={e => setSql(e.target.value)} placeholder="Enter SELECT SQL or use table preview" />
                         <Button onClick={() => runQuery()}>Run</Button>
                         <Button variant="secondary" onClick={() => { setOffset(0); runQuery(); }}>Run (from start)</Button>
                     </div>
                     <div className="flex items-center gap-2">
                         <label className="text-sm">Search</label>
-                        <input className="p-2 border rounded" value={search} onChange={e=>setSearch(e.target.value)} placeholder="text search across text columns" />
+                        <input className="p-2 border rounded" value={search} onChange={e => setSearch(e.target.value)} placeholder="text search across text columns" />
                         <label className="text-sm">Limit</label>
-                        <input type="number" className="p-2 border rounded w-28" value={limit} onChange={e=>setLimit(Number(e.target.value||50))} />
+                        <input type="number" className="p-2 border rounded w-28" value={limit} onChange={e => setLimit(Number(e.target.value || 50))} />
                         <label className="text-sm">Offset</label>
-                        <input type="number" className="p-2 border rounded w-28" value={offset} onChange={e=>setOffset(Number(e.target.value||0))} />
+                        <input type="number" className="p-2 border rounded w-28" value={offset} onChange={e => setOffset(Number(e.target.value || 0))} />
                     </div>
 
                     <div className="mt-2">
@@ -338,7 +339,7 @@ const DBMSTab: React.FC = () => {
                                         <tbody>
                                             {rows.map((r, i) => (
                                                 <tr key={i} className="border-t">
-                                                    {columns.map(c => <td key={c} className="p-2 align-top">{typeof r[c] === 'object' ? JSON.stringify(r[c]).slice(0,200) : String(r[c])}</td>)}
+                                                    {columns.map(c => <td key={c} className="p-2 align-top">{typeof r[c] === 'object' ? JSON.stringify(r[c]).slice(0, 200) : String(r[c])}</td>)}
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -354,7 +355,7 @@ const DBMSTab: React.FC = () => {
                         <div className="mt-3 p-2 border rounded bg-gray-50">
                             <div className="font-medium">Table Info</div>
                             <div className="text-sm">Primary Keys: {(info.primaryKeys || []).join(', ') || '—'}</div>
-                            <div className="text-sm">Foreign Keys: {(info.foreignKeys || []).map((fk:any)=> `${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`).join('; ') || '—'}</div>
+                            <div className="text-sm">Foreign Keys: {(info.foreignKeys || []).map((fk: any) => `${fk.column_name} → ${fk.foreign_table_name}.${fk.foreign_column_name}`).join('; ') || '—'}</div>
                         </div>
                     )}
                 </div>
@@ -798,6 +799,8 @@ const RolesList: React.FC = () => {
 };
 
 const UsersList: React.FC = () => {
+    const { currentUser } = useMockData();
+    const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
     const [users, setUsers] = useState<any[]>([]);
     const [roles, setRoles] = useState<any[]>([]);
     const [editing, setEditing] = useState<any | null>(null);
@@ -877,7 +880,7 @@ const UsersList: React.FC = () => {
                         <div className="flex gap-2">
                             <button onClick={() => { setEditing(u); }} className="text-sm p-1 border rounded">Edit</button>
                             <button onClick={() => openManage(u)} className="text-sm p-1 border rounded">Manage Roles</button>
-                            <button onClick={() => deleteUser(u.id)} className="text-sm p-1 border rounded text-red-600">Delete</button>
+                            {isAdmin && <button onClick={() => deleteUser(u.id)} className="text-sm p-1 border rounded text-red-600">Delete</button>}
                         </div>
                     </div>
                 ))}
@@ -1366,31 +1369,31 @@ const SettingsPage: React.FC = () => {
                                 <option value="/reports">Reports</option>
                             </select>
                         </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">Default Map Provider</label>
-                                    <select value={(settings as any).defaultMapProvider || 'leaflet'} onChange={e => setSettings({ ...(settings as any), defaultMapProvider: e.target.value })} className="mt-1 block p-2 border rounded">
-                                        <option value="leaflet">Leaflet / OpenStreetMap</option>
-                                        <option value="osmand">OsmAnd</option>
-                                        <option value="organic">Organic Maps</option>
-                                        <option value="herewego">HERE WeGo (requires API key)</option>
-                                        <option value="google">Google Maps (requires API key)</option>
-                                    </select>
-                                    <p className="text-xs text-gray-500 mt-1">Choose the default map implementation used when picking locations or viewing dashboards.</p>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Default Map Provider</label>
+                            <select value={(settings as any).defaultMapProvider || 'leaflet'} onChange={e => setSettings({ ...(settings as any), defaultMapProvider: e.target.value })} className="mt-1 block p-2 border rounded">
+                                <option value="leaflet">Leaflet / OpenStreetMap</option>
+                                <option value="osmand">OsmAnd</option>
+                                <option value="organic">Organic Maps</option>
+                                <option value="herewego">HERE WeGo (requires API key)</option>
+                                <option value="google">Google Maps (requires API key)</option>
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">Choose the default map implementation used when picking locations or viewing dashboards.</p>
 
-                                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700">HERE Maps API Key</label>
-                                            <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).hereApiKey || ''} onChange={e => setSettings({ ...(settings as any), hereApiKey: e.target.value })} placeholder="Paste HERE API key (optional)" />
-                                            <p className="text-xs text-gray-400 mt-1">Required only if you select HERE WeGo as the default provider.</p>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700">Google Maps API Key</label>
-                                            <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).googleMapsApiKey || ''} onChange={e => setSettings({ ...(settings as any), googleMapsApiKey: e.target.value })} placeholder="Paste Google Maps API key (optional)" />
-                                            <p className="text-xs text-gray-400 mt-1">Required only if you select Google Maps as the default provider.</p>
-                                        </div>
-                                    </div>
-                                <p className="text-xs text-gray-500 mt-1">Choose the default map implementation used when picking locations or viewing dashboards.</p>
+                            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">HERE Maps API Key</label>
+                                    <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).hereApiKey || ''} onChange={e => setSettings({ ...(settings as any), hereApiKey: e.target.value })} placeholder="Paste HERE API key (optional)" />
+                                    <p className="text-xs text-gray-400 mt-1">Required only if you select HERE WeGo as the default provider.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Google Maps API Key</label>
+                                    <input className="mt-1 block w-full p-2 border rounded" value={(settings as any).googleMapsApiKey || ''} onChange={e => setSettings({ ...(settings as any), googleMapsApiKey: e.target.value })} placeholder="Paste Google Maps API key (optional)" />
+                                    <p className="text-xs text-gray-400 mt-1">Required only if you select Google Maps as the default provider.</p>
+                                </div>
                             </div>
+                            <p className="text-xs text-gray-500 mt-1">Choose the default map implementation used when picking locations or viewing dashboards.</p>
+                        </div>
                     </div>
                     <div className="mt-6">
                         <label className="block text-sm font-medium text-gray-700">Organization Name (shown on map header)</label>
@@ -1660,7 +1663,7 @@ const FormsBuildersSection: React.FC = () => {
             });
 
             console.log('Save response status:', response.status);
-            
+
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error('Save error response:', errorText);
@@ -1693,25 +1696,23 @@ const FormsBuildersSection: React.FC = () => {
     return (
         <Card>
             <h3 className="text-lg font-medium mb-4">Form Field Builders</h3>
-            
+
             <div className="flex gap-2 mb-4">
                 <button
                     onClick={() => setActiveForm('facility')}
-                    className={`px-4 py-2 rounded ${
-                        activeForm === 'facility'
+                    className={`px-4 py-2 rounded ${activeForm === 'facility'
                             ? 'bg-primary-700 text-white'
                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                        }`}
                 >
                     Facility Form
                 </button>
                 <button
                     onClick={() => setActiveForm('user')}
-                    className={`px-4 py-2 rounded ${
-                        activeForm === 'user'
+                    className={`px-4 py-2 rounded ${activeForm === 'user'
                             ? 'bg-primary-700 text-white'
                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                        }`}
                 >
                     User Form
                 </button>
@@ -1875,7 +1876,7 @@ const AuditTrails: React.FC = () => {
                             </div>
                             <div>
                                 <label className="block text-sm font-medium">Preview (first 5 rows)</label>
-                                <pre className="whitespace-pre-wrap text-sm bg-gray-50 p-3 rounded" style={{ maxHeight: 200, overflow: 'auto' }}>{datasetPreview ? JSON.stringify(datasetPreview.slice(0,5), null, 2) : 'No preview'}</pre>
+                                <pre className="whitespace-pre-wrap text-sm bg-gray-50 p-3 rounded" style={{ maxHeight: 200, overflow: 'auto' }}>{datasetPreview ? JSON.stringify(datasetPreview.slice(0, 5), null, 2) : 'No preview'}</pre>
                             </div>
                             <div className="flex justify-end gap-2">
                                 <Button variant="secondary" onClick={() => setDatasetModalOpen(false)}>Cancel</Button>

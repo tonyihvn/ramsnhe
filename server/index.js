@@ -7037,7 +7037,17 @@ app.get('/api/activity_dashboard/:activityId', async (req, res) => {
         const answersRes = await pool.query(`SELECT * FROM ${tables.ANSWERS} WHERE activity_id = $1 ORDER BY created_at DESC`, [activityId]);
         const answers = answersRes.rows;
 
-        const docsRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE activity_id = $1 ORDER BY created_at DESC`, [activityId]);
+        const docsRes = await pool.query(`
+            SELECT ud.*, 
+                   f.name as facility_name,
+                   u.first_name as user_first_name,
+                   u.last_name as user_last_name
+            FROM ${tables.UPLOADED_DOCS} ud
+            LEFT JOIN ${tables.FACILITIES} f ON ud.facility_id = f.id
+            LEFT JOIN ${tables.USERS} u ON ud.user_id = u.id
+            WHERE ud.activity_id = $1 
+            ORDER BY ud.created_at DESC
+        `, [activityId]);
         const uploadedDocs = docsRes.rows;
 
         // Simple aggregation: counts per question id

@@ -367,6 +367,11 @@ const BuildFormPage: React.FC = () => {
   const [isSaved, setIsSaved] = useState<boolean>(false);
   const [activePageIndex, setActivePageIndex] = useState(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  // Check if current user is the creator of this activity or is an admin
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
+  const isCreator = activity && currentUser && (activity.createdBy === currentUser.id || activity.created_by === currentUser.id);
+  const canEditForm = isAdmin || isCreator;
   const [isGuideModalOpen, setIsGuideModalOpen] = useState(false);
   const [isDatasetModalOpen, setIsDatasetModalOpen] = useState(false);
   const [datasetsList, setDatasetsList] = useState<any[]>([]);
@@ -1128,6 +1133,19 @@ const BuildFormPage: React.FC = () => {
 
 
   if (!activity || !formDef) return <div>Loading...</div>;
+
+  // Only allow the creator or admin to edit the form
+  if (!canEditForm) {
+    return (
+      <div className="p-6 bg-red-50 border border-red-200 rounded">
+        <h2 className="text-lg font-bold text-red-800 mb-2">Access Denied</h2>
+        <p className="text-red-700 mb-4">Only the creator of this activity or an administrator can edit the form.</p>
+        <button onClick={() => navigate('/activities')} className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700">
+          Back to Activities
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-0">

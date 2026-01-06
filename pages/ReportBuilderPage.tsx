@@ -10,8 +10,11 @@ import CanvasEditor from '../components/ui/CanvasEditor';
 import ImageCropper from '../components/ui/ImageCropper';
 import ShapeStyleEditor from '../components/ui/ShapeStyleEditor';
 import { apiFetch, getApiBase } from '../utils/api';
+import { useMockData } from '../hooks/useMockData';
 
 const ReportBuilderPage: React.FC = () => {
+  const { currentUser } = useMockData();
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
   const [templates, setTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -150,7 +153,7 @@ const ReportBuilderPage: React.FC = () => {
         try {
           const ares = await apiFetch(`/api/answers?activityId=${activityId}`);
           if (ares.ok) {
-            const ja = await ares.json(); 
+            const ja = await ares.json();
             console.log('Loaded answers for activity:', activityId, ja);
             setAnswersList(Array.isArray(ja) ? ja : []);
           } else {
@@ -310,7 +313,7 @@ const ReportBuilderPage: React.FC = () => {
         let answerVal = ans.answer_value || {};
         let answerObj = typeof answerVal === 'string' ? JSON.parse(answerVal) : answerVal;
         const rowIdx = answerObj && answerObj.answer_row_index !== null && answerObj.answer_row_index !== undefined ? String(answerObj.answer_row_index) : 'null';
-        
+
         if (!answersByRowIndex[rowIdx]) {
           answersByRowIndex[rowIdx] = {};
         }
@@ -326,7 +329,7 @@ const ReportBuilderPage: React.FC = () => {
 
       // Build HTML table with questions as columns and rows as answer_row_index
       let html = `<table style="border-collapse: collapse; width:100%; border:2px solid #2e7d32; margin-top:8px; cursor:move;" class="tpl-question-group-table"><thead><tr style="background:#c8e6c9;">`;
-      
+
       // Add header row with question field names
       for (const q of visibleQuestions) {
         const qid = String(q.id || q.qid);
@@ -334,7 +337,7 @@ const ReportBuilderPage: React.FC = () => {
         html += `<th style="border:2px solid #2e7d32;padding:10px;background:#4CAF50;text-align:left;font-weight:bold;color:white;" data-col-qid="${qid}">${qLabel}</th>`;
       }
       html += `</tr></thead><tbody>`;
-      
+
       // Add data rows based on answer_row_index
       for (const rowIdx of rowIndices) {
         const rowAnswers = answersByRowIndex[rowIdx];
@@ -371,9 +374,9 @@ const ReportBuilderPage: React.FC = () => {
 
       html += `</tbody></table>`;
       return html;
-    } catch (e) { 
+    } catch (e) {
       console.error('Error in buildAnswerGroupHtml:', e);
-      return `<div style="padding:12px; color:red;">Failed to render question group table</div>`; 
+      return `<div style="padding:12px; color:red;">Failed to render question group table</div>`;
     }
   };
 
@@ -385,32 +388,32 @@ const ReportBuilderPage: React.FC = () => {
       const questionPattern = /\{([^}]+)\}/g;
       result = result.replace(questionPattern, (match, questionRef) => {
         // Try to find question by label first
-        const question = questionsList.find(q => 
-          (q.fieldName || q.field_name) === questionRef || 
+        const question = questionsList.find(q =>
+          (q.fieldName || q.field_name) === questionRef ||
           (q.questionText || q.question_text) === questionRef ||
           String(q.id) === questionRef ||
           String(q.qid) === questionRef
         );
-        
+
         if (!question) return '0'; // Return 0 if question not found
-        
+
         const qid = String(question.id);
         const answer = answersList.find(a => String(a.question_id || a.qid) === qid);
         const value = answer?.answer_value;
-        
+
         // Return numeric value or 0
         const numValue = typeof value === 'number' ? value : (value ? parseFloat(String(value)) : 0);
         return isNaN(numValue) ? '0' : String(numValue);
       });
-      
+
       // Evaluate the mathematical expression safely
       // Remove any non-math characters
       result = result.replace(/[^0-9+\-*/.()]/g, '');
-      
+
       // Use Function constructor to safely evaluate (alternative to eval)
       const func = new Function('return ' + result);
       const computed = func();
-      
+
       return isNaN(computed) ? 'Error' : (typeof computed === 'number' ? computed.toString() : String(computed));
     } catch (e) {
       return 'Error in formula';
@@ -690,7 +693,7 @@ const ReportBuilderPage: React.FC = () => {
                           setIframeLoading(false);
                         } finally { setBuilding(false); }
                       }}>Preview</Button>
-                      <Button size="sm" variant="danger" onClick={() => remove(t.id)}>Delete</Button>
+                      {isAdmin && <Button size="sm" variant="danger" onClick={() => remove(t.id)}>Delete</Button>}
                     </div>
                   </div>
                 ))}
@@ -1128,16 +1131,16 @@ const ReportBuilderPage: React.FC = () => {
                     <div key={qid} className="p-2 border rounded bg-gray-50 hover:bg-gray-100 text-xs flex items-center justify-between">
                       <div draggable onDragStart={e => {
                         const label = (q.fieldName || q.field_name) ? `${q.fieldName || q.field_name}` : (q.questionText || q.question_text || `Question ${qid}`);
-                        
+
                         // If question has a question_group, add marker for group handling
                         let html = `<span class="tpl-question" contenteditable="true" data-qid="${qid}" data-gramm="false"${hasQuestionGroup ? ` data-group="${hasQuestionGroup}"` : ''}>${label}</span>`;
                         let jsonData: any = { type: 'question', id: qid, label };
-                        
+
                         if (hasQuestionGroup) {
                           jsonData.question_group = hasQuestionGroup;
                           html = html.replace('<span class="tpl-question"', `<span class="tpl-question tpl-question-group"`);
                         }
-                        
+
                         try { e.dataTransfer.setData('application/json', JSON.stringify(jsonData)); } catch (err) { /* ignore */ }
                         e.dataTransfer.setData('text/plain', `{{question_${qid}}}`);
                         e.dataTransfer.setData('text/html', html);
@@ -1163,7 +1166,7 @@ const ReportBuilderPage: React.FC = () => {
                     if (group) uniqueGroups.add(String(group));
                   }
                   const groupsArray = Array.from(uniqueGroups).sort();
-                  
+
                   if (groupsArray.length === 0) {
                     return <div className="text-xs text-gray-400">No question groups for selected activity.</div>;
                   }

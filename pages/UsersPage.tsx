@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import Card from '../components/ui/Card';
 import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
+import DataTable from '../components/ui/DataTable';
 import Modal from '../components/ui/Modal';
 import MInput from '../components/ui/MInput';
 import DynamicFormRenderer from '../components/DynamicFormRenderer';
@@ -18,7 +18,7 @@ const UsersPage: React.FC = () => {
   useEffect(() => {
     // Load user form schema
     loadUserSchema();
-    
+
     // Fetch roles and permissions from backend
     fetch('/api/admin/roles', { credentials: 'include' })
       .then(async (r) => { if (!r.ok) { setAllRoles([]); return; } const j = await r.json(); setAllRoles(Array.isArray(j) ? j : []); })
@@ -62,21 +62,21 @@ const UsersPage: React.FC = () => {
     setCurrentUserEdit(
       u
         ? {
-            ...u,
-            assignedRoles: (u as any).assignedRoles || [],
-            assignedPermissions: (u as any).assignedPermissions || [],
-          }
+          ...u,
+          assignedRoles: (u as any).assignedRoles || [],
+          assignedPermissions: (u as any).assignedPermissions || [],
+        }
         : {
-            firstName: '',
-            lastName: '',
-            email: '',
-            role: 'Data Collector',
-            status: 'Active',
-            password: '',
-            facilityId: undefined,
-            assignedRoles: [],
-            assignedPermissions: [],
-          }
+          firstName: '',
+          lastName: '',
+          email: '',
+          role: 'Data Collector',
+          status: 'Active',
+          password: '',
+          facilityId: undefined,
+          assignedRoles: [],
+          assignedPermissions: [],
+        }
     );
     setIsModalOpen(true);
   };
@@ -138,63 +138,59 @@ const UsersPage: React.FC = () => {
         {canEdit && <Button onClick={() => openModal()} leftIcon={<PlusIcon className="h-5 w-5" />}>New User</Button>}
       </div>
       <Card>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              {userSchema?.fields?.filter(f => f.showInList).map((field) => (
-                <th key={field.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{field.label}</th>
-              ))}
-              {canEdit && <th className="relative px-6 py-3"><span className="sr-only">Actions</span></th>}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0 h-10 w-10">
-                      {user.profileImage ? (
-                        <img className="h-10 w-10 rounded-full object-cover" src={user.profileImage} alt="avatar" />
-                      ) : (
-                        <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">No</div>
-                      )}
-                    </div>
-                    <div className="ml-3">
-                      <div className="text-sm font-medium text-gray-900">{user.firstName} {user.lastName}</div>
-                      <div className="text-sm text-gray-500">{user.email}</div>
-                    </div>
+        <DataTable
+          columns={[
+            {
+              key: 'name', label: 'Name', render: (row: any) => (
+                <div className="flex items-center">
+                  <div className="flex-shrink-0 h-10 w-10">
+                    {row.profileImage ? (
+                      <img className="h-10 w-10 rounded-full object-cover" src={row.profileImage} alt="avatar" />
+                    ) : (
+                      <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">No</div>
+                    )}
                   </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.role}</td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  {user.status === 'Active' && (
+                  <div className="ml-3">
+                    <div className="text-sm font-medium text-gray-900">{row.firstName} {row.lastName}</div>
+                    <div className="text-sm text-gray-500">{row.email}</div>
+                  </div>
+                </div>
+              )
+            },
+            { key: 'role', label: 'Role' },
+            {
+              key: 'status', label: 'Status', render: (row: any) => (
+                <>
+                  {row.status === 'Active' && (
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
                   )}
-                  {user.status === 'Inactive' && (
+                  {row.status === 'Inactive' && (
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">Inactive</span>
                   )}
-                  {user.status === 'Suspended' && (
+                  {row.status === 'Suspended' && (
                     <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-100 text-amber-800">Suspended</span>
                   )}
-                </td>
-                {userSchema?.fields?.filter(f => f.showInList).map((field) => (
-                  <td key={field.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {String((user as any)[field.name] || '-')}
-                  </td>
-                ))}
-                {canEdit && (
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                    <button onClick={() => openModal(user)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
-                    <button onClick={() => { if (confirm('Delete user?')) deleteUser(user.id) }} className="text-red-600 hover:text-red-900"><TrashIcon className="h-5 w-5" /></button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </>
+              )
+            },
+            {
+              key: 'actions', label: 'Actions', render: (row: any) => {
+                const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
+                return (
+                  <div className="flex gap-2">
+                    <button onClick={() => openModal(row)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
+                    {isAdmin && (
+                      <button onClick={() => { if (confirm('Delete user?')) deleteUser(row.id) }} className="text-red-600 hover:text-red-900"><TrashIcon className="h-5 w-5" /></button>
+                    )}
+                  </div>
+                );
+              }
+            }
+          ]}
+          data={users}
+          pageSize={20}
+          persistKey="users_table"
+        />
       </Card>
 
       <Modal

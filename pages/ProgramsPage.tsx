@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 const ProgramsPage: React.FC = () => {
   const { programs, saveProgram, deleteProgram, currentUser } = useMockData();
   const { settings } = useTheme();
+  const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentProgram, setCurrentProgram] = useState<Partial<Program>>({});
 
@@ -62,7 +63,9 @@ const ProgramsPage: React.FC = () => {
                   {canEdit && (
                     <>
                       <button onClick={() => openModal(program)} className="text-indigo-600 hover:text-indigo-900 ml-2"><PencilIcon className="h-5 w-5" /></button>
-                      <button onClick={() => { if (confirm('Delete program?')) deleteProgram(program.id) }} className="text-red-600 hover:text-red-900 ml-2"><TrashIcon className="h-5 w-5" /></button>
+                      {isAdmin && (
+                        <button onClick={() => { if (confirm('Delete program?')) deleteProgram(program.id) }} className="text-red-600 hover:text-red-900 ml-2"><TrashIcon className="h-5 w-5" /></button>
+                      )}
                     </>
                   )}
                 </td>
