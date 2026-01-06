@@ -3242,7 +3242,7 @@ app.post('/api/admin/switch-db', requireAdmin, async (req, res) => {
 app.get('/api/admin/smtp', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
-        const r = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
+        const r = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
         if (r.rows.length === 0) return res.json(null);
         return res.json(r.rows[0].value);
     } catch (e) { console.error('Failed to get smtp settings', e); res.status(500).json({ error: String(e) }); }
@@ -3252,7 +3252,7 @@ app.post('/api/admin/smtp', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
         const payload = req.body || {};
-        await pool.query("INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ('smtp',$1,$2) ON CONFLICT (key, business_id) DO UPDATE SET value = $1", [payload, businessId]);
+        await pool.query(`INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ('smtp',$1,$2) ON CONFLICT (key, business_id) DO UPDATE SET value = $1`, [payload, businessId]);
         res.json({ ok: true });
     } catch (e) { console.error('Failed to save smtp settings', e); res.status(500).json({ ok: false, error: String(e) }); }
 });
@@ -3264,7 +3264,7 @@ app.post('/api/admin/test-smtp', requireAdmin, async (req, res) => {
         if (!to) return res.status(400).json({ ok: false, error: 'Missing to' });
         // load smtp settings
         const businessId = req.session?.businessId || null;
-        const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
+        const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
         const smtp = sres.rows[0] ? sres.rows[0].value : null;
         if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
         // dynamic import nodemailer
@@ -3294,7 +3294,7 @@ app.post('/auth/request-password-reset', async (req, res) => {
         const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
         await pool.query(`INSERT INTO ${tables.PASSWORD_RESETS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [user.id, token, expires]);
         // load smtp
-        const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp'");
+        const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp'`);
         const smtp = sres.rows[0] ? sres.rows[0].value : null;
         if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
         const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -3519,7 +3519,7 @@ app.post('/api/admin/seed-roles', requireAdmin, async (req, res) => {
         try {
             const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
             const ures = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [adminEmail]);
-            const rres = await pool.query("SELECT id FROM ${tables.ROLES} WHERE name = 'Admin'");
+            const rres = await pool.query(`SELECT id FROM ${tables.ROLES} WHERE name = 'Admin'`);
             if (ures.rows.length > 0 && rres.rows.length > 0) {
                 const userId = ures.rows[0].id;
                 const roleId = rres.rows[0].id;
@@ -4281,9 +4281,9 @@ app.post('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => 
         if (!id) return res.status(400).json({ error: 'Invalid id' });
         if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
         // Ensure columns exist (safe idempotent migration)
-        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`); } catch (e) { /* ignore */ }
         const u = await pool.query(`UPDATE ${tables.ACTIVITIES} SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *`, [powerbi_link, link_type || null, mode || null, id]);
         if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
         res.json({ ok: true, activity: u.rows[0] });
@@ -4301,9 +4301,9 @@ app.put('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) => {
         if (!id) return res.status(400).json({ error: 'Invalid id' });
         if (!powerbi_link) return res.status(400).json({ error: 'Missing powerbi_link' });
         // Ensure columns exist (safe idempotent migration)
-        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT"); } catch (e) { /* ignore */ }
-        try { await pool.query("ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT"); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`); } catch (e) { /* ignore */ }
         const u = await pool.query(`UPDATE ${tables.ACTIVITIES} SET powerbi_url = $1, powerbi_link_type = $2, powerbi_mode = $3 WHERE id = $4 RETURNING *`, [powerbi_link, link_type || null, mode || null, id]);
         if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
         res.json({ ok: true, activity: u.rows[0] });
@@ -4708,7 +4708,7 @@ app.post('/auth/login', async (req, res) => {
             user = result.rows[0];
         } else {
             // ensure a demo business exists
-            let busRes = await pool.query("SELECT id FROM ${tables.BUSINESSES} WHERE name = 'Demo' LIMIT 1");
+            let busRes = await pool.query(`SELECT id FROM ${tables.BUSINESSES} WHERE name = 'Demo' LIMIT 1`);
             let busId = busRes.rows[0] ? busRes.rows[0].id : null;
             if (!busId) {
                 const br = await pool.query(`INSERT INTO ${tables.BUSINESSES} (name, phone) VALUES ($1,$2) RETURNING id`, ['Demo', null]);
@@ -4789,7 +4789,7 @@ app.post('/auth/register', async (req, res) => {
                 await pool.query(`INSERT INTO ${tables.EMAIL_VERIFICATIONS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [u.id, token, expires]);
 
                 // load smtp
-                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
+                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
                 const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
@@ -5576,7 +5576,7 @@ app.post('/api/users', async (req, res) => {
             // send notification email if smtp configured
             try {
                 const businessId = req.session?.businessId || null;
-                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
+                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 if (smtp) {
                     try {
@@ -5611,7 +5611,7 @@ app.post('/api/users', async (req, res) => {
             const u = result.rows[0];
             // send welcome email if smtp configured
             try {
-                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessIdForNewUser]);
+                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessIdForNewUser]);
                 const smtp = sres.rows[0] ? sres.rows[0].value : null;
                 if (smtp) {
                     try {
@@ -6677,12 +6677,12 @@ app.delete('/api/reports/:id', requireAdmin, async (req, res) => {
         // Some installations may not have migrated ${tables.UPLOADED_DOCS}.report_id; in that case
         // attempt a best-effort deletion by checking file_content->>'reportId' JSON field.
         try {
-            const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'");
+            const colRes = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'`);
             if (colRes.rowCount > 0) {
                 await pool.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE report_id = $1`, [id]);
             } else {
                 try {
-                    await pool.query("DELETE FROM ${tables.UPLOADED_DOCS} WHERE (file_content->>'reportId') = $1", [String(id)]);
+                    await pool.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE (file_content->>'reportId') = $1`, [String(id)]);
                 } catch (e) {
                     console.warn('Could not delete uploaded_docs by JSON field, skipping:', e.message || e);
                 }
@@ -6717,7 +6717,7 @@ app.get('/api/uploaded_docs', async (req, res) => {
         if (reportId) {
             // Some DBs may not have a physical report_id column. Detect and fallback to JSONB file_content->>'reportId'
             try {
-                const colRes = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'");
+                const colRes = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_name='${tables.UPLOADED_DOCS}' AND column_name='report_id'`);
                 if (colRes.rowCount > 0) {
                     clauses.push(`report_id = $${idx++}`);
                     params.push(reportId);

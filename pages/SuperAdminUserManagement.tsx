@@ -91,8 +91,8 @@ const SuperAdminUserManagement: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <SuperAdminNav 
-        title="User Account Management" 
+      <SuperAdminNav
+        title="User Account Management"
         subtitle="Manage, approve, activate, and deactivate user accounts"
       />
 
@@ -117,7 +117,7 @@ const SuperAdminUserManagement: React.FC = () => {
 
         {/* New User Form */}
         {showForm && (
-          <CreateUserForm 
+          <CreateUserForm
             onSuccess={() => {
               setShowForm(false);
               loadUsers();
@@ -138,11 +138,10 @@ const SuperAdminUserManagement: React.FC = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded font-medium ${
-                  activeTab === tab.id
+                className={`px-4 py-2 rounded font-medium ${activeTab === tab.id
                     ? 'bg-purple-100 text-purple-700'
                     : 'text-gray-600 hover:bg-gray-100'
-                }`}
+                  }`}
               >
                 {tab.label} <span className="ml-2 font-bold">({tab.count})</span>
               </button>
@@ -219,13 +218,12 @@ const SuperAdminUserManagement: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            user.status === 'Active'
+                          className={`px-3 py-1 rounded-full text-xs font-medium ${user.status === 'Active'
                               ? 'bg-green-100 text-green-800'
                               : user.status === 'Pending'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}
                         >
                           {user.status}
                         </span>
@@ -292,8 +290,7 @@ const CreateUserForm: React.FC<{ onSuccess: () => void; onCancel: () => void }> 
     lastName: '',
     email: '',
     role: 'user',
-    businessId: '',
-    sendInvitation: true
+    businessId: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -374,16 +371,9 @@ const CreateUserForm: React.FC<{ onSuccess: () => void; onCancel: () => void }> 
           </select>
         </div>
 
-        <label className="flex items-center mb-4">
-          <input
-            type="checkbox"
-            name="sendInvitation"
-            checked={formData.sendInvitation}
-            onChange={handleChange}
-            className="mr-2"
-          />
-          <span className="text-gray-700">Send invitation email</span>
-        </label>
+        <p className="text-gray-600 text-sm mb-4 bg-blue-50 p-3 rounded border border-blue-200">
+          <strong>Note:</strong> A welcome email with login credentials will automatically be sent to the user.
+        </p>
 
         <div className="flex gap-2">
           <button
@@ -436,7 +426,7 @@ const UserDetailsModal: React.FC<{ user: any; onClose: () => void; onUpdate: () 
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
         <h3 className="text-lg font-bold mb-4">User Details</h3>
-        
+
         <div className="space-y-4 mb-6">
           <div>
             <label className="text-sm text-gray-600">Name</label>

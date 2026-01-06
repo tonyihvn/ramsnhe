@@ -56,7 +56,7 @@ const FacilityDashboardPage: React.FC = () => {
     (async () => {
       try {
         if (!facility) return;
-        
+
         // Get all reports for this facility
         const facilityReports = (reports || []).filter(r => String(r.facility_id) === String(facility.id));
         if (facilityReports.length === 0) {
@@ -66,17 +66,17 @@ const FacilityDashboardPage: React.FC = () => {
 
         // For each report, fetch its answers to extract file attachments
         const allDocuments: any[] = [];
-        
+
         for (const report of facilityReports) {
           try {
             const resp = await fetch(`/api/reports/${report.id}`);
             if (!resp.ok) continue;
             const reportData = await resp.json();
-            
+
             // Get the activity name
             const activity = activities.find((a: any) => String(a.id) === String(report.activity_id));
             const activityName = activity?.title || activity?.name || `Activity ${report.activity_id}`;
-            
+
             // Fetch answers for this report to find file uploads
             const answersResp = await fetch(`/api/reports/${report.id}/answers`);
             if (answersResp.ok) {
@@ -86,7 +86,7 @@ const FacilityDashboardPage: React.FC = () => {
                 if (answer.answer_value) {
                   try {
                     const parsed = typeof answer.answer_value === 'string' ? JSON.parse(answer.answer_value) : answer.answer_value;
-                    
+
                     // Check if it's a file or array of files
                     if (parsed && typeof parsed === 'object') {
                       let files = [];
@@ -95,7 +95,7 @@ const FacilityDashboardPage: React.FC = () => {
                       } else if (parsed.fileName) {
                         files = [parsed];
                       }
-                      
+
                       files.forEach((file: any) => {
                         allDocuments.push({
                           fileName: file.fileName,
@@ -116,7 +116,7 @@ const FacilityDashboardPage: React.FC = () => {
             console.error('Failed to fetch documents for report', report.id, e);
           }
         }
-        
+
         setDocuments(allDocuments);
       } catch (e) { console.error('Failed to load documents', e); }
     })();
@@ -137,11 +137,13 @@ const FacilityDashboardPage: React.FC = () => {
     { key: 'submitted', label: 'Submitted' },
     { key: 'user', label: 'User' },
     { key: 'status', label: 'Status' },
-    { key: 'actions', label: 'Actions', render: (row: any) => (
-      <div className="flex gap-2">
-        <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/${row.__raw.id}`)}>View</Button>
-      </div>
-    ) }
+    {
+      key: 'actions', label: 'Actions', render: (row: any) => (
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" onClick={() => navigate(`/reports/${row.__raw.id}`)}>View</Button>
+        </div>
+      )
+    }
   ];
 
   return (
@@ -201,7 +203,7 @@ const FacilityDashboardPage: React.FC = () => {
       </Card>
 
       <Card>
-        <h2 className="text-lg font-semibold">Collected Reports</h2>
+        <h2 className="text-lg font-semibold">Saved Data</h2>
         <div className="mt-3">
           <DataTable columns={columns} data={rows} />
         </div>

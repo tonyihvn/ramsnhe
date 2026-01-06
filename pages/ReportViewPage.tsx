@@ -216,135 +216,253 @@ const ReportViewPage: React.FC = () => {
 
   const handlePrint = () => window.print();
 
-  const handlePrintFormatted = async () => {
-    // Build a sanitized HTML summary client-side and open in a new window for printing.
+  const handleGeneratePDF = async () => {
+    // Generate PDF server-side and download it
     try {
-      const escapeHtml = (s: any) => {
-        if (s === null || s === undefined) return '';
-        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      };
-
-      const sanitizeHtml = (html: any) => {
-        if (!html) return '';
-        let out = String(html || '');
-        // strip dangerous / heavy elements
-        out = out.replace(/<video[\s\S]*?<\/video>/gi, '');
-        out = out.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
-        out = out.replace(/<object[\s\S]*?<\/object>/gi, '');
-        out = out.replace(/<embed[\s\S]*?<\/embed>/gi, '');
-        out = out.replace(/<script[\s\S]*?<\/script>/gi, '');
-        // remove very large data URLs in src attributes to avoid viewer failures
-        out = out.replace(/src=(\"|\')(data:[^\"']{5000,})(\"|\')/gi, '');
-        return out;
-      };
-
-      // Build answers HTML
-      const qMap: Record<string, any> = {};
-      for (const q of questions || []) {
-        try {
-          if (q && (q.id !== undefined)) qMap[String(q.id)] = q;
-          if (q && (q.qid !== undefined)) qMap[String(q.qid)] = q;
-          if (q && (q.question_id !== undefined)) qMap[String(q.question_id)] = q;
-        } catch (e) { }
+      const htmlDoc = buildReportHtml();
+      const res = await fetch('/api/build_report', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: htmlDoc,
+          format: 'pdf',
+          filename: `report_${report.id}`,
+          paperSize: 'A4',
+          orientation: 'portrait'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          // Download the PDF
+          const link = document.createElement('a');
+          link.href = data.url;
+          link.download = `report_${report.id}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } else {
+        alert('Failed to generate PDF');
       }
+    } catch (e) { console.error('PDF generation failed:', e); alert('Failed to generate PDF'); }
+  };
 
-      const answersHtmlParts: string[] = [];
-      for (const a of answers || []) {
+  const buildReportHtml = () => {
+    // Build a sanitized HTML summary client-side
+    const escapeHtml = (s: any) => {
+      if (s === null || s === undefined) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
+
+    const sanitizeHtml = (html: any) => {
+      if (!html) return '';
+      let out = String(html || '');
+      out = out.replace(/<video[\s\S]*?<\/video>/gi, '');
+      out = out.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+      out = out.replace(/<object[\s\S]*?<\/object>/gi, '');
+      out = out.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+      out = out.replace(/<script[\s\S]*?<\/script>/gi, '');
+      out = out.replace(/src=(\"|\')(data:[^\"']{5000,})(\"|\')/gi, '');
+      return out;
+    };
+
+    // Build questions map
+    const qMap: Record<string, any> = {};
+    for (const q of questions || []) {
+      try {
+        if (q && q.id !== undefined) qMap[String(q.id)] = q;
+        if (q && q.qid !== undefined) qMap[String(q.qid)] = q;
+        if (q && q.question_id !== undefined) qMap[String(q.question_id)] = q;
+      } catch (e) { }
+    }
+
+    // Build non-grouped answers HTML
+    const groupedAnswersMap: Record<string, any[]> = {};
+    const nonGroupedAnswers: any[] = [];
+    answers.forEach(a => {
+      const q = qMap[String(a.question_id)] || {};
+      if (q.questionGroup || q.question_group) {
+        const groupName = q.questionGroup || q.question_group;
+        if (!groupedAnswersMap[groupName]) groupedAnswersMap[groupName] = [];
+        groupedAnswersMap[groupName].push({ answer: a, question: q });
+      } else {
+        nonGroupedAnswers.push(a);
+      }
+    });
+
+    const answersHtmlParts: string[] = [];
+    for (const a of nonGroupedAnswers || []) {
+      try {
+        const qid = String(a.question_id || a.qid || a.questionId || '');
+        const q = qMap[qid] || {};
+        const questionText = q.questionText || q.question_text || q.text || q.label || q.title || q.name || qid;
+        let val: any = a.answer_value;
+        if (val === null || val === undefined) val = '';
         try {
-          const qid = String(a.question_id || a.qid || a.questionId || '');
-          const q = qMap[qid] || {};
-          const questionText = q.questionText || q.question_text || q.text || q.label || q.title || q.name || qid;
-          let val: any = a.answer_value;
-          if (val === null || val === undefined) val = '';
-          try {
-            // If stored as an object (old format) prefer the primitive `value` field
-            if (typeof val === 'object') {
-              if ('value' in val) val = val.value ?? '';
-              else val = JSON.stringify(val);
-            } else if (typeof val === 'string' && val.trim().startsWith('{')) {
-              // Might be a stringified JSON from older records - try to parse and extract `value`
-              const parsed = JSON.parse(val);
-              if (parsed && typeof parsed === 'object' && 'value' in parsed) {
-                val = parsed.value ?? '';
-              } else {
-                val = String(val);
-              }
+          if (typeof val === 'object') {
+            if ('value' in val) val = val.value ?? '';
+            else val = JSON.stringify(val);
+          } else if (typeof val === 'string' && val.trim().startsWith('{')) {
+            const parsed = JSON.parse(val);
+            if (parsed && typeof parsed === 'object' && 'value' in parsed) {
+              val = parsed.value ?? '';
             } else {
               val = String(val);
             }
-          } catch (e) {
-            val = String(a.answer_value ?? '');
+          } else {
+            val = String(val);
           }
-          answersHtmlParts.push(`<tr><td style="vertical-align:top;padding:6px;border:1px solid #ddd;width:40%"><strong>${escapeHtml(questionText)}</strong></td><td style="padding:6px;border:1px solid #ddd">${escapeHtml(val)}</td></tr>`);
-        } catch (e) { }
-      }
-
-      // Build uploaded docs tables (only include JSON/array content rows; sanitize cell values)
-      const renderUploadedTables = () => {
-        const parts: string[] = [];
-        for (const d of uploadedDocs || []) {
-          try {
-            // ensure doc belongs to this report
-            const rpt = (d.report_id ?? d.reportId ?? d.report) || null;
-            if (String(rpt) !== String(report.id)) continue;
-            const rows = Array.isArray(d.file_content) ? d.file_content : (Array.isArray(d.dataset_data) ? d.dataset_data : []);
-            if (!rows || rows.length === 0) continue;
-            const keys = Object.keys(rows[0] || {});
-            let html = `<div style="margin-top:18px"><div style="font-weight:600;margin-bottom:6px">${escapeHtml(d.filename || 'Uploaded file')}</div><table style="border-collapse:collapse;width:100%"><thead><tr>`;
-            for (const k of keys) html += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(k)}</th>`;
-            html += '</tr></thead><tbody>';
-            for (const r of rows) {
-              html += '<tr>';
-              for (const k of keys) {
-                const val = r && typeof r === 'object' && (r[k] !== undefined && r[k] !== null) ? String(r[k]) : '';
-                html += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(val)}</td>`;
-              }
-              html += '</tr>';
-            }
-            html += '</tbody></table></div>';
-            parts.push(html);
-          } catch (e) { }
+        } catch (e) {
+          val = String(a.answer_value ?? '');
         }
-        return parts.join('\n');
-      };
 
-      const reviewers = sanitizeHtml(report.reviewersReport || report.reviewers_report || '');
+        // Get metadata fields
+        const score = a.score !== undefined && a.score !== null ? String(a.score) : '';
+        const reviewersComment = a.reviewers_comment || a.reviewers_report || '';
+        const followup = a.quality_improvement_followup || '';
 
-      // Power BI: show only a link if present (do not embed iframe)
-      let powerbiHtml = '';
-      try {
-        const pb = powerbiConfig && (powerbiConfig.powerbi_link || powerbiConfig.powerbi_url || powerbiConfig.powerbiLink);
-        if (pb) {
-          powerbiHtml = `<div><strong>Power BI:</strong> <a href="${escapeHtml(pb)}" target="_blank" rel="noreferrer">Open Power BI report</a></div>`;
+        // Build answer row with metadata below
+        let answerRow = `<tr><td style="vertical-align:top;padding:6px;border:1px solid #ddd;width:40%"><strong style="font-size:12px">${escapeHtml(questionText)}</strong></td><td style="padding:6px;border:1px solid #ddd;font-size:12px">${escapeHtml(val)}</td></tr>`;
+
+        // Add metadata row if any metadata exists
+        if (score || reviewersComment || followup) {
+          answerRow += `<tr><td colspan="2" style="padding:4px 6px;border:1px solid #ddd;background-color:#f9f9f9;font-size:10px">`;
+          if (score) answerRow += `<div><strong>Score:</strong> ${escapeHtml(score)}</div>`;
+          if (reviewersComment) answerRow += `<div><strong>Reviewer's Comment:</strong> ${escapeHtml(reviewersComment)}</div>`;
+          if (followup) answerRow += `<div><strong>Follow-up:</strong> ${escapeHtml(followup)}</div>`;
+          answerRow += `</td></tr>`;
         }
+
+        answersHtmlParts.push(answerRow);
       } catch (e) { }
+    }
 
-      // Build final HTML doc
-      const title = `Report ${escapeHtml(String(report.id || ''))}`;
-      const facility = escapeHtml(report.facility || report.facility_name || report.facilityName || '');
-      const activityName = escapeHtml(activityTitle || (activityData && (activityData.title || activityData.name)) || '');
-      const submissionDate = escapeHtml(String(report.submission_date || ''));
-      const reportedBy = escapeHtml(report.reported_by || report.reported_by_name || report.reportedBy || report.user_name || '');
-      const status = escapeHtml(report.status || '');
-      const overallScore = escapeHtml(String(report.overallScore ?? report.overall_score ?? ''));
+    // Build grouped questions tables
+    const groupedQuestionsHtml = Object.entries(groupedAnswersMap).map(([groupName, groupAnswers]) => {
+      const rowMap: Record<number, Record<string, any>> = {};
+      const columnsMap: Record<string, any> = {};
 
-      const htmlDoc = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.4;padding:20px}h1{font-size:20px;margin-bottom:8px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border:1px solid #ddd}thead th{background:#f7f7f7}</style></head><body>` +
-        `<h1>${title}</h1>` +
-        `<div style="margin-bottom:12px"><strong>Facility Name:</strong> ${facility || '—'}</div>` +
-        `<div style="margin-bottom:12px"><strong>Activity Name:</strong> ${activityName || '—'}</div>` +
-        `<div style="margin-bottom:12px"><strong>Submission Date:</strong> ${submissionDate || '—'}</div>` +
-        `<div style="margin-bottom:12px"><strong>Reported By:</strong> ${reportedBy || '—'}</div>` +
-        `<div style="margin-bottom:12px"><strong>Status:</strong> ${status || '—'}</div>` +
-        `<div style="margin-bottom:12px"><strong>Overall Score:</strong> ${overallScore || '—'}</div>` +
-        `<div style="margin-top:16px;margin-bottom:6px"><strong>Reviewer's Report</strong></div>` +
-        `<div style="border:1px solid #eee;padding:10px;margin-bottom:12px">${reviewers || '<em>No review yet</em>'}</div>` +
-        `${powerbiHtml}` +
-        `<div style="margin-top:16px;margin-bottom:6px"><strong>Submitted Answers</strong></div>` +
-        (answersHtmlParts.length === 0 ? '<div><em>No answers submitted</em></div>' : `<table><tbody>${answersHtmlParts.join('')}</tbody></table>`) +
-        `<div style="margin-top:16px;margin-bottom:6px"><strong>Uploaded Files</strong></div>` +
-        (renderUploadedTables() || '<div><em>No uploaded files</em></div>') +
-        `</body></html>`;
+      groupAnswers.forEach(item => {
+        const a = item.answer;
+        const q = item.question;
+        const rowIndex = a.answer_row_index !== null && a.answer_row_index !== undefined ? Number(a.answer_row_index) : 0;
+        const questionId = String(a.question_id);
+        if (!rowMap[rowIndex]) rowMap[rowIndex] = {};
+        const questionText = q.questionText || q.question_text || q.text || q.label || questionId;
+        const qKey = `q_${questionId}`;
+        rowMap[rowIndex][qKey] = a.answer_value;
+        columnsMap[qKey] = { text: questionText, qKey };
+      });
 
+      const sortedRowIndices = Object.keys(rowMap).map(Number).sort((a, b) => a - b);
+      const columnDefs = Object.values(columnsMap);
+
+      let tableHtml = `<div style="margin-top:16px;page-break-inside:avoid"><strong>${escapeHtml(groupName.replace(/_/g, ' '))}</strong><table style="border-collapse:collapse;width:100%;margin-top:8px"><thead><tr>`;
+      tableHtml += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">Row</th>`;
+      columnDefs.forEach((colDef: any) => {
+        tableHtml += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(colDef.text)}</th>`;
+      });
+      tableHtml += '</tr></thead><tbody>';
+
+      sortedRowIndices.forEach((rowIdx) => {
+        tableHtml += '<tr>';
+        tableHtml += `<td style="border:1px solid #ddd;padding:6px">${rowIdx}</td>`;
+        columnDefs.forEach((colDef: any) => {
+          const value = rowMap[rowIdx][colDef.qKey];
+          let displayValue = value !== undefined && value !== null ? String(value) : '—';
+          if (typeof value === 'object') displayValue = JSON.stringify(value);
+          if (displayValue.length > 100) displayValue = displayValue.slice(0, 100) + '…';
+          tableHtml += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(displayValue)}</td>`;
+        });
+        tableHtml += '</tr>';
+      });
+
+      tableHtml += '</tbody></table></div>';
+      return tableHtml;
+    }).join('');
+
+    // Build uploaded docs tables
+    const renderUploadedTables = () => {
+      const parts: string[] = [];
+      for (const d of uploadedDocs || []) {
+        try {
+          const rpt = (d.report_id ?? d.reportId ?? d.report) || null;
+          if (String(rpt) !== String(report.id)) continue;
+
+          // Parse file_content if it's a string
+          let rows = d.file_content;
+          if (typeof rows === 'string') {
+            try {
+              rows = JSON.parse(rows);
+            } catch (e) {
+              rows = null;
+            }
+          }
+
+          rows = Array.isArray(rows) ? rows : (Array.isArray(d.dataset_data) ? d.dataset_data : []);
+          if (!rows || rows.length === 0) continue;
+          const keys = Object.keys(rows[0] || {});
+          let html = `<div style="margin-top:8px"><div style="font-weight:600;margin-bottom:6px">${escapeHtml(d.filename || 'Uploaded file')}</div><table style="border-collapse:collapse;width:100%"><thead><tr>`;
+          for (const k of keys) html += `<th style="border:1px solid #ddd;padding:6px;background:#f7f7f7;text-align:left">${escapeHtml(k)}</th>`;
+          html += '</tr></thead><tbody>';
+          for (const r of rows) {
+            html += '<tr>';
+            for (const k of keys) {
+              const val = r && typeof r === 'object' && (r[k] !== undefined && r[k] !== null) ? String(r[k]) : '';
+              html += `<td style="border:1px solid #ddd;padding:6px">${escapeHtml(val)}</td>`;
+            }
+            html += '</tr>';
+          }
+          html += '</tbody></table></div>';
+          parts.push(html);
+        } catch (e) { console.error('Error rendering uploaded file:', e); }
+      }
+      return parts.join('\n');
+    };
+
+    const reviewers = sanitizeHtml(report.reviewersReport || report.reviewers_report || '');
+    let powerbiHtml = '';
+    try {
+      const pb = powerbiConfig && (powerbiConfig.powerbi_link || powerbiConfig.powerbi_url || powerbiConfig.powerbiLink);
+      if (pb) {
+        powerbiHtml = `<div style="margin-top:8px"><strong>Power BI:</strong> <a href="${escapeHtml(pb)}" target="_blank" rel="noreferrer">Open Power BI report</a></div>`;
+      }
+    } catch (e) { }
+
+    const title = `Report ${escapeHtml(String(report.id || ''))}`;
+    const facility = escapeHtml(facilityName || report.facility || report.facility_name || report.facilityName || '');
+    const activityName = escapeHtml(activityTitle || (activityData && (activityData.title || activityData.name)) || '');
+    const submissionDate = escapeHtml(String(report.submission_date || ''));
+    const reportedBy = escapeHtml(report.reported_by || report.reported_by_name || report.reportedBy || report.user_name || '');
+    const status = escapeHtml(report.status || '');
+    const overallScore = escapeHtml(String(report.overallScore ?? report.overall_score ?? ''));
+
+    const htmlDoc = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.2;padding:15px;font-size:12px}h1{font-size:14px;margin-bottom:4px}h2{font-size:12px;margin-top:8px;margin-bottom:4px}p{margin:2px 0;font-size:11px}div{font-size:11px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:3px;border:1px solid #ddd}thead th{background:#f7f7f7;font-size:10px}.section-title{font-weight:600;margin-top:8px;margin-bottom:4px;font-size:11px}</style></head><body>` +
+      `<div style="margin-bottom:8px"><strong style="font-size:12px">Facility Name:</strong> <span style="font-size:11px">${facility || '—'}</span></div>` +
+      `<div style="margin-bottom:8px"><strong style="font-size:12px">Activity Name:</strong> <span style="font-size:11px">${activityName || '—'}</span></div>` +
+      `<div style="margin-bottom:8px"><strong style="font-size:12px">Submission Date:</strong> <span style="font-size:11px">${submissionDate || '—'}</span></div>` +
+      `<div style="margin-bottom:8px"><strong style="font-size:12px">Reported By:</strong> <span style="font-size:11px">${reportedBy || '—'}</span></div>` +
+      `<div style="margin-bottom:8px"><strong style="font-size:12px">Status:</strong> <span style="font-size:11px">${status || '—'}</span></div>` +
+      `<div style="margin-bottom:8px"><strong style="font-size:12px">Overall Score:</strong> <span style="font-size:11px">${overallScore || '—'}</span></div>` +
+      `<div class="section-title">Reviewer's Report</div>` +
+      `<div style="border:1px solid #eee;padding:6px;margin-bottom:8px;font-size:10px">${reviewers || '<em>No review yet</em>'}</div>` +
+      `${powerbiHtml}` +
+      `<div class="section-title">Regular Questions & Answers</div>` +
+      (answersHtmlParts.length === 0 ? '<div><em>No regular answers submitted</em></div>' : `<table><tbody>${answersHtmlParts.join('')}</tbody></table>`) +
+      (groupedQuestionsHtml ? `<div class="section-title">Question Groups</div>${groupedQuestionsHtml}` : '') +
+      `<div class="section-title">Uploaded Files</div>` +
+      (renderUploadedTables() || '<div><em>No uploaded files</em></div>') +
+      `</body></html>`;
+
+    return htmlDoc;
+  };
+
+  const handlePrintFormatted = async () => {
+    // Build a sanitized HTML summary client-side and open in a new window for printing.
+    try {
+      const htmlDoc = buildReportHtml();
       const w = window.open('about:blank');
       if (w && w.document) {
         w.document.write(htmlDoc);
@@ -381,10 +499,45 @@ const ReportViewPage: React.FC = () => {
     return { widthMm: dims.w, heightMm: dims.h };
   };
 
-  const handleEmail = () => {
-    const subject = encodeURIComponent(`Report ${report.id} from ${report.submission_date}`);
-    const body = encodeURIComponent(`Please see report ${report.id} for activity ${report.activity_id}.`);
-    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  const handleEmail = async () => {
+    try {
+      // Generate PDF and send via email
+      const htmlDoc = buildReportHtml();
+      const res = await fetch('/api/build_report', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: htmlDoc,
+          format: 'pdf',
+          filename: `report_${report.id}`,
+          paperSize: 'A4',
+          orientation: 'portrait'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          // Open email with subject/body (user can attach the PDF manually for now)
+          // Note: mailto: cannot attach files, so we'll open email and ask user to attach
+          const subject = encodeURIComponent(`Report ${report.id} from ${report.submission_date}`);
+          const body = encodeURIComponent(`Please see the attached PDF for report ${report.id} for activity ${report.activity_id}.\n\nPDF: ${data.url}`);
+          window.open(`mailto:?subject=${subject}&body=${body}`);
+          // Download the PDF as well
+          const link = document.createElement('a');
+          link.href = data.url;
+          link.download = `report_${report.id}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } else {
+        alert('Failed to generate PDF for email');
+      }
+    } catch (e) {
+      console.error('Email with PDF failed:', e);
+      alert('Failed to generate PDF for email');
+    }
   };
 
   const savePowerBi = async (payload: any) => {
@@ -422,7 +575,7 @@ const ReportViewPage: React.FC = () => {
           <h1 className="text-2xl font-bold">{activityTitle ? `${activityTitle} — ${subjectLabel}` : subjectLabel}</h1>
           <p className="text-sm text-gray-500">Submitted: {new Date(report.submission_date).toLocaleString()}</p>
           <div className="inline-flex items-center gap-2">
-            <Button onClick={handlePrintFormatted}>Download PDF</Button>
+            <Button onClick={handleGeneratePDF}>Download PDF</Button>
             {/* Replace single 'Preview PDF' with one button per template for this activity */}
             {(templatesForActivity || []).map((tpl: any) => (
               <Button key={tpl.id} variant="secondary" onClick={async () => {

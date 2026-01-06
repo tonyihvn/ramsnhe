@@ -51,7 +51,7 @@ async function createAuditLog(pool, businessId, userId, action, entityType, enti
     try {
         const ipAddress = req?.ip || req?.connection?.remoteAddress || 'unknown';
         const userAgent = req?.headers['user-agent'] || 'unknown';
-        
+
         await pool.query(
             `INSERT INTO ${tables.AUDIT_LOGS} (business_id, user_id, action, entity_type, entity_id, old_values, new_values, ip_address, user_agent)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -80,11 +80,11 @@ function isAdminRole(role) {
  * Register super-admin routes
  */
 export function registerSuperAdminRoutes(app, pool) {
-    
+
     // ============================================
     // BUSINESS MANAGEMENT ROUTES
     // ============================================
-    
+
     /**
      * GET /api/super-admin/businesses
      * Get all businesses (super-admin only)
@@ -124,7 +124,7 @@ export function registerSuperAdminRoutes(app, pool) {
             }
 
             const { name, phone, email, address, website, settings } = req.body;
-            
+
             const result = await pool.query(
                 `INSERT INTO ${tables.BUSINESSES} (name, phone, email, address, website, settings)
                  VALUES ($1, $2, $3, $4, $5, $6)
@@ -161,7 +161,7 @@ export function registerSuperAdminRoutes(app, pool) {
             const { name, phone, email, address, website, status, settings } = req.body;
 
             const old = await pool.query(`SELECT * FROM ${tables.BUSINESSES} WHERE id = $1`, [businessId]);
-            
+
             const result = await pool.query(
                 `UPDATE ${tables.BUSINESSES} 
                  SET name = $1, phone = $2, email = $3, address = $4, website = $5, status = $6, settings = $7, updated_at = NOW()
@@ -236,7 +236,7 @@ export function registerSuperAdminRoutes(app, pool) {
 
             const { userId } = req.params;
             const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
-            
+
             if (currentUser.rows.length === 0 || !isSuperAdminRole(currentUser.rows[0].role)) {
                 return res.status(403).json({ error: 'Not authorized' });
             }
@@ -301,18 +301,72 @@ export function registerSuperAdminRoutes(app, pool) {
                 [firstName, lastName, email, hashedPassword, normalizedRole, 'Pending', assignedBusinessId, 'user']
             );
 
-            // Send invitation email if requested
-            if (sendInvitation) {
-                await sendEmail(
-                    email,
-                    'Welcome to DQAi - Account Invitation',
-                    `<p>Hello ${firstName},</p>
-                     <p>Your account has been created on DQAi. Please log in with your email and set your password.</p>
-                     <p><strong>Email:</strong> ${email}</p>
-                     <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-                     <p><a href="${process.env.FRONTEND_HOST}/login">Click here to log in</a></p>`
-                );
-            }
+            // Send welcome email with credentials (always send for new users)
+            const emailContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body { font-family: Arial, sans-serif; color: #333; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                    .content { background-color: #f5f5f5; padding: 20px; border: 1px solid #ddd; }
+                    .credentials { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #3498db; }
+                    .credentials p { margin: 8px 0; }
+                    .button { display: inline-block; background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 15px 0; }
+                    .footer { background-color: #34495e; color: white; padding: 15px; text-align: center; border-radius: 0 0 5px 5px; font-size: 12px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>Welcome to DQAi Platform</h1>
+                    </div>
+                    <div class="content">
+                        <p>Dear <strong>${firstName} ${lastName}</strong>,</p>
+                        
+                        <p>Welcome to the <strong>DQAi Data Collection Platform</strong>! Your account has been successfully created by your administrator.</p>
+                        
+                        <p>You can now log in to the platform using the credentials below:</p>
+                        
+                        <div class="credentials">
+                            <p><strong>Platform:</strong> DQAi Data Collection Platform</p>
+                            <p><strong>Email:</strong> <code>${email}</code></p>
+                            <p><strong>Temporary Password:</strong> <code>${tempPassword}</code></p>
+                        </div>
+                        
+                        <p><strong>Getting Started:</strong></p>
+                        <ol>
+                            <li>Click the login button below or go to the login page</li>
+                            <li>Enter your email and temporary password</li>
+                            <li>You will be prompted to set a new password</li>
+                            <li>Start using the platform to collect and manage data</li>
+                        </ol>
+                        
+                        <p style="text-align: center;">
+                            <a href="${process.env.FRONTEND_HOST || 'https://app.dqai.org'}/login" class="button">Log In Now</a>
+                        </p>
+                        
+                        <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                            <strong>For security:</strong> Please keep your password confidential and change it upon first login. If you did not request this account or have any questions, please contact your administrator immediately.
+                        </p>
+                    </div>
+                    <div class="footer">
+                        <p><strong>DQAi Platform</strong></p>
+                        <p>Data Quality Assessment Initiative - Data Collection Platform</p>
+                        <p style="margin-top: 10px; color: #bbb;">This is an automated email from the DQAi Platform. Please do not reply directly to this email.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            `;
+
+            await sendEmail(
+                email,
+                'Welcome to DQAi Platform - Your Account Credentials',
+                emailContent,
+                `Hello ${firstName},\n\nWelcome to DQAi Platform!\n\nYour account has been created. Log in with:\nEmail: ${email}\nPassword: ${tempPassword}\n\nPlease visit: ${process.env.FRONTEND_HOST || 'https://app.dqai.org'}/login\n\nBest regards,\nDQAi Platform`
+            );
 
             await createAuditLog(pool, assignedBusinessId, req.session.userId, 'Created', 'User', result.rows[0].id, null, result.rows[0], req);
 
@@ -917,7 +971,7 @@ export function registerSuperAdminRoutes(app, pool) {
             }
 
             const businessId = parseInt(req.params.businessId);
-            
+
             // Verify business exists
             const business = await pool.query(`SELECT id FROM ${tables.BUSINESSES} WHERE id = $1`, [businessId]);
             if (business.rows.length === 0) {
