@@ -5,15 +5,19 @@ import { useMockData } from '../hooks/useMockData';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DynamicFormRenderer from '../components/DynamicFormRenderer';
-import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, PencilIcon, TrashIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline';
 import { Facility } from '../types';
 import { FormSchema } from '../components/FormBuilder';
+import * as ExcelJS from 'exceljs';
 
 const FacilitiesPage: React.FC = () => {
   const { facilities, saveFacility, deleteFacility, currentUser } = useMockData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentFacility, setCurrentFacility] = useState<Partial<Facility>>({});
   const [facilitySchema, setFacilitySchema] = useState<FormSchema | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importedData, setImportedData] = useState<Partial<Facility>[]>([]);
+  const [importError, setImportError] = useState<string>('');
 
   const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
 
@@ -39,7 +43,7 @@ const FacilitiesPage: React.FC = () => {
   useEffect(() => {
     // Load facility form schema
     loadFacilitySchema();
-    
+
     // load states list
     fetch('/metadata/nigerian-states.json')
       .then(r => r.ok ? r.json() : [])
@@ -50,7 +54,7 @@ const FacilitiesPage: React.FC = () => {
         }
       })
       .catch((e) => console.error('Failed to load states:', e));
-    
+
     // load small lgas map (optional file)
     fetch('/metadata/lgas_by_state.json')
       .then(r => r.ok ? r.json() : {})
@@ -95,11 +99,176 @@ const FacilitiesPage: React.FC = () => {
     }
   };
 
+  // Generate Excel template for facilities
+  const downloadTemplate = async () => {
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Facilities');
+
+      // Set headers
+      ws.columns = [
+        { header: 'Name', key: 'name', width: 25 },
+        { header: 'Category', key: 'category', width: 20 },
+        { header: 'State', key: 'state', width: 20 },
+        { header: 'LGA', key: 'lga', width: 20 },
+        { header: 'Address', key: 'address', width: 30 },
+        { header: 'Contact Person', key: 'contactPerson', width: 20 },
+        { header: 'Location (lat,lng)', key: 'location', width: 25 },
+        { header: 'Remarks', key: 'remarks', width: 30 }
+      ];
+
+      // Add example row
+      ws.addRow({
+        name: 'Example Health Center',
+        category: 'Primary Health Center',
+        state: 'Lagos',
+        lga: 'Ikoyi',
+        address: '123 Health Street, Lagos',
+        contactPerson: 'Dr. John Doe',
+        location: '6.4628,3.3197',
+        remarks: 'Sample facility'
+      });
+
+      // Style header row
+      ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'facility_import_template.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Error generating template:', e);
+      alert('Failed to generate template');
+    }
+  };
+
+  // Handle Excel file import
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        setImportError('');
+        const buffer = evt.target?.result;
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer as ArrayBuffer);
+
+        const worksheet = workbook.worksheets[0];
+        const facilities: Partial<Facility>[] = [];
+
+        // Get headers from first row
+        const headers: string[] = [];
+        worksheet.getRow(1).eachCell((cell) => {
+          headers.push((cell.value as string)?.toLowerCase().trim() || '');
+        });
+
+        // Parse data rows
+        let rowCount = 0;
+        worksheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return; // Skip header
+
+          const facility: Partial<Facility> = {
+            // Don't set ID - let server generate it
+          };
+
+          row.eachCell((cell, colNumber) => {
+            const header = headers[colNumber - 1];
+            const value = cell.value;
+
+            if (header === 'name') facility.name = String(value || '');
+            else if (header === 'category') facility.category = String(value || '');
+            else if (header === 'state') facility.state = String(value || '');
+            else if (header === 'lga') facility.lga = String(value || '');
+            else if (header === 'address') facility.address = String(value || '');
+            else if (header === 'contact person') facility.contactPerson = String(value || '');
+            else if (header === 'location (lat,lng)' || header === 'location') facility.location = String(value || '');
+            else if (header === 'remarks') facility.remarks = String(value || '');
+          });
+
+          // Validate required fields
+          if (facility.name && facility.state) {
+            facilities.push(facility);
+            rowCount++;
+          }
+        });
+
+        if (facilities.length === 0) {
+          setImportError('No valid facilities found. Please ensure each row has at least a Name and State.');
+        } else {
+          setImportedData(facilities);
+          setIsImportModalOpen(true);
+        }
+      } catch (err) {
+        console.error('Error parsing file:', err);
+        setImportError('Failed to parse Excel file. Please check the format.');
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Import facilities
+  const handleImportConfirm = () => {
+    let successCount = 0;
+    const errors: string[] = [];
+
+    importedData.forEach((facility, idx) => {
+      try {
+        saveFacility(facility as Facility);
+        successCount++;
+      } catch (e) {
+        errors.push(`Row ${idx + 2}: ${String(e)}`);
+      }
+    });
+
+    setIsImportModalOpen(false);
+    setImportedData([]);
+
+    if (errors.length > 0) {
+      alert(`Imported ${successCount} facilities successfully.\nErrors:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n... and ${errors.length - 5} more` : ''}`);
+    } else {
+      alert(`Successfully imported ${successCount} facilities!`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-800">Facilities</h1>
-        {canEdit && <Button onClick={() => openModal()} leftIcon={<PlusIcon className="h-5 w-5" />}>New Facility</Button>}
+        {canEdit && (
+          <div className="flex items-center gap-2">
+            <Button onClick={() => openModal()} leftIcon={<PlusIcon className="h-5 w-5" />}>New Facility</Button>
+            <Button variant="secondary" onClick={downloadTemplate} leftIcon={<ArrowUpTrayIcon className="h-5 w-5" />}>Download Template</Button>
+            <div className="relative inline-block">
+              <input
+                id="facility-import-input"
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleFileImport}
+                className="hidden"
+              />
+              <label htmlFor="facility-import-input">
+                <button
+                  type="button"
+                  onClick={() => document.getElementById('facility-import-input')?.click()}
+                  className="inline-flex items-center border border-transparent font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 bg-primary-100 text-primary-700 hover:bg-primary-200 focus:ring-primary-500 px-4 py-2 text-sm"
+                >
+                  <ArrowUpTrayIcon className="h-5 w-5 mr-2 -ml-1" />
+                  Import from Excel
+                </button>
+              </label>
+            </div>
+          </div>
+        )}
       </div>
       <Card>
         <table className="min-w-full divide-y divide-gray-200">
@@ -173,11 +342,11 @@ const FacilitiesPage: React.FC = () => {
                 console.log('State selected:', st);
                 console.log('Available lgasMap keys:', Object.keys(lgasMap));
                 setCurrentFacility({ ...currentFacility, state: st, lga: '' });
-                
+
                 // load LGAs from in-memory map if available
                 const mapped = (lgasMap && (lgasMap as any)[st]) || [];
                 console.log('LGAs for state:', st, '=', mapped);
-                
+
                 if (mapped && mapped.length) {
                   console.log('Setting availableLgas:', mapped);
                   setAvailableLgas(mapped);
@@ -246,6 +415,74 @@ const FacilitiesPage: React.FC = () => {
               setCurrentFacility({ ...currentFacility, [fieldName]: value });
             }}
           />
+        </div>
+      </Modal>
+
+      {/* Import Preview Modal */}
+      <Modal
+        isOpen={isImportModalOpen}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setImportedData([]);
+          setImportError('');
+        }}
+        title={`Import Facilities (${importedData.length} records)`}
+        size="3xl"
+        footer={
+          <>
+            <Button onClick={handleImportConfirm} className="ml-3">Confirm Import</Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setIsImportModalOpen(false);
+                setImportedData([]);
+                setImportError('');
+              }}
+            >
+              Cancel
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {importError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+              {importError}
+            </div>
+          )}
+
+          {importedData.length > 0 && (
+            <div>
+              <p className="text-sm text-gray-600 mb-3">Preview of facilities to be imported:</p>
+              <div className="overflow-x-auto border border-gray-200 rounded">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Name</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Category</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">State</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">LGA</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Address</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {importedData.slice(0, 10).map((facility, idx) => (
+                      <tr key={idx}>
+                        <td className="px-4 py-2 text-sm text-gray-900">{facility.name}</td>
+                        <td className="px-4 py-2 text-sm text-gray-500">{facility.category || '-'}</td>
+                        <td className="px-4 py-2 text-sm text-gray-500">{facility.state}</td>
+                        <td className="px-4 py-2 text-sm text-gray-500">{facility.lga || '-'}</td>
+                        <td className="px-4 py-2 text-sm text-gray-500 truncate">{facility.address || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {importedData.length > 10 && (
+                <p className="text-xs text-gray-500 mt-2">... and {importedData.length - 10} more facilities</p>
+              )}
+            </div>
+          )}
         </div>
       </Modal>
     </div>
