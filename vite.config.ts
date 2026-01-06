@@ -26,6 +26,14 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) => path,
         }
       }
+    },
+    optimizeDeps: {
+      include: ['summernote']
+    },
+    build: {
+      commonjsOptions: {
+        include: [/summernote/]
+      }
     }
   };
 });
