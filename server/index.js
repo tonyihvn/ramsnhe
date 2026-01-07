@@ -7120,13 +7120,35 @@ app.put('/api/answers/:id', async (req, res) => {
 // Update a single cell in an uploaded_docs file_content JSONB (rowIndex, colKey, newValue)
 app.put('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
-    const { rowIndex, colKey, newValue } = req.body;
+    const { rowIndex, colKey, newValue, partialUpdate } = req.body || {};
     try {
         const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
         const doc = docRes.rows[0];
-        const content = doc.file_content || [];
+        let content = doc.file_content || [];
+        // If stored as string, try to parse
+        if (typeof content === 'string') {
+            try { content = JSON.parse(content); } catch (e) { /* leave as-is */ }
+        }
         if (!Array.isArray(content)) return res.status(400).json({ error: 'file_content must be an array of rows' });
+
+        // Batch partial update: { partialUpdate: { [rowIndex]: { colKey: value, ... }, ... } }
+        if (partialUpdate && typeof partialUpdate === 'object') {
+            for (const rawIdx of Object.keys(partialUpdate)) {
+                const idx = Number(rawIdx);
+                if (isNaN(idx) || idx < 0 || idx >= content.length) return res.status(400).json({ error: `rowIndex out of range` });
+                const changes = partialUpdate[rawIdx] || {};
+                const row = content[idx] || {};
+                for (const [k, v] of Object.entries(changes)) {
+                    row[k] = v;
+                }
+                content[idx] = row;
+            }
+            await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1 WHERE id = $2`, [JSON.stringify(content), id]);
+            return res.json({ success: true, file_content: content });
+        }
+
+        // Single cell update fallback
         if (typeof rowIndex !== 'number' || rowIndex < 0 || rowIndex >= content.length) return res.status(400).json({ error: 'rowIndex out of range' });
         const row = content[rowIndex] || {};
         row[colKey] = newValue;

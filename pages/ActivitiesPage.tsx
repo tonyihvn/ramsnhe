@@ -24,8 +24,9 @@ const ActivityActionButtonsComponent: React.FC<{
   onCopyLink: () => void;
   onQRCode: () => void;
   onEmbed: () => void;
+  onDuplicate?: () => void;
   isMobile?: boolean;
-}> = ({ activity, currentUser, canEdit, canViewDashboard, onEdit, onDelete, onViewData, onBuildForm, onBuildReport, onCopyLink, onQRCode, onEmbed, isMobile = false }) => {
+}> = ({ activity, currentUser, canEdit, canViewDashboard, onEdit, onDelete, onViewData, onBuildForm, onBuildReport, onCopyLink, onQRCode, onEmbed, onDuplicate, isMobile = false }) => {
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
 
   if (isMobile) {
@@ -37,6 +38,7 @@ const ActivityActionButtonsComponent: React.FC<{
             {isAdmin && <div className="text-sm"><button className="w-full text-left p-2" onClick={onBuildReport}>Build Report</button></div>}
             <div className="text-sm"><button className="w-full text-left p-2" onClick={onEdit}>Edit Activity</button></div>
             <div className="text-sm"><button className="w-full text-left p-2 text-red-600" onClick={onDelete}>Delete</button></div>
+            <div className="text-sm"><button className="w-full text-left p-2" onClick={onDuplicate}>Duplicate</button></div>
             <div className="border-t my-1"></div>
           </>
         )}
@@ -64,6 +66,7 @@ const ActivityActionButtonsComponent: React.FC<{
           {isAdmin && <Button size="sm" variant="secondary" onClick={onBuildReport} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Build Report</Button>}
           <Button size="sm" variant="secondary" onClick={onEdit} leftIcon={<PencilIcon className="h-4 w-4" />}>Edit</Button>
           {isAdmin && <Button size="sm" variant="danger" onClick={onDelete} leftIcon={<TrashIcon className="h-4 w-4" />}>Delete</Button>}
+          <Button size="sm" variant="secondary" onClick={onDuplicate} leftIcon={<DocumentTextIcon className="h-4 w-4" />}>Duplicate</Button>
         </>
       )}
       {canViewDashboard && (
@@ -83,6 +86,7 @@ const ActivityActionButtonsWrapper: React.FC<{
   activity: Activity;
   currentUser: any;
   canEdit: boolean;
+  onDuplicate?: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onViewData: () => void;
@@ -163,6 +167,46 @@ const ActivitiesPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  const duplicateActivity = async (activityId: number | string) => {
+    try {
+      const ok = await confirm({ title: 'Duplicate activity?', text: 'This will create a duplicate activity with the same form elements.' });
+      if (!ok) return;
+      const res = await fetch(`/api/activities/${activityId}`, { credentials: 'include' });
+      if (!res.ok) return swalError('Failed', 'Could not fetch activity to duplicate');
+      const act = await res.json();
+      // Build questions array from formDefinition if present
+      const questionsArray: any[] = [];
+      const fd = act.formDefinition || act.form_definition || null;
+      if (fd && Array.isArray(fd.pages)) {
+        for (const p of fd.pages || []) {
+          for (const s of p.sections || []) {
+            for (const q of s.questions || []) {
+              questionsArray.push({ ...q, pageName: p.name, sectionName: s.name, questionGroup: q.questionGroup || s.groupName || null });
+            }
+          }
+        }
+      }
+
+      const payload: any = {
+        title: `${act.title} (Copy)`,
+        subtitle: act.subtitle || null,
+        programId: act.programId || act.program_id,
+        details: act.details || null,
+        startDate: act.startDate || act.start_date || null,
+        endDate: act.endDate || act.end_date || null,
+        responseType: act.responseType || act.response_type || null,
+        category: act.category || null,
+        status: 'Draft',
+        createdBy: currentUser?.id || 'system',
+        questions: questionsArray
+      };
+
+      // Use saveActivity helper which posts to /api/activities and updates state
+      saveActivity(payload as Activity);
+      swalToast('Activity duplicated', 'success');
+    } catch (e) { console.error(e); swalError('Error', 'Failed to duplicate activity'); }
+  };
+
   const handleSave = () => {
     if (currentActivity.title && currentActivity.programId) {
       saveActivity({
@@ -218,6 +262,7 @@ const ActivitiesPage: React.FC = () => {
                           const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' });
                           if (ok) deleteActivity(activity.id);
                         }}
+                        onDuplicate={() => duplicateActivity(activity.id)}
                         onViewData={() => navigate(`/activities/dashboard/${activity.id}`)}
                         onBuildForm={() => navigate(`/activities/build/${activity.id}`)}
                         onBuildReport={() => navigate(`/reports/builder?activityId=${activity.id}`)}
@@ -260,6 +305,7 @@ const ActivitiesPage: React.FC = () => {
                               setOpenActionsId(null);
                             }
                           }}
+                          onDuplicate={() => { duplicateActivity(activity.id); setOpenActionsId(null); }}
                           onViewData={() => {
                             navigate(`/activities/dashboard/${activity.id}`);
                             setOpenActionsId(null);
