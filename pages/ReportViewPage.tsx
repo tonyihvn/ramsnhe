@@ -42,9 +42,92 @@ const ReportViewPage: React.FC = () => {
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editingDocData, setEditingDocData] = useState<any[]>([]);
   const [editedCells, setEditedCells] = useState<Set<string>>(new Set());
+  const [editingNewRows, setEditingNewRows] = useState<Set<number>>(new Set());
+  const [cellFormulas, setCellFormulas] = useState<Record<string, string>>({}); // Maps cellRef to formula
+  const [selectedCellForFormula, setSelectedCellForFormula] = useState<string | null>(null);
+  const [formulaInput, setFormulaInput] = useState<string>('');
+  const formulaInputRef = useRef<HTMLInputElement>(null); // Ref for formula input field
 
   // Authorization checks
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
+
+  // Helper: Generate unique cell names based on Excel convention
+  const generateCellName = (docId: number, filename: string, colIndex: number, rowIndex: number): string => {
+    // Abbreviate filename: take first letter of each word
+    const abbr = filename
+      .split(/\s+/)
+      .map(word => word.charAt(0).toUpperCase())
+      .join('')
+      .substring(0, 3); // Limit to 3 chars
+
+    // Convert column index to letter(s): 0->A, 1->B, ..., 26->AA, etc.
+    let colLetter = '';
+    let col = colIndex;
+    while (col >= 0) {
+      colLetter = String.fromCharCode(65 + (col % 26)) + colLetter;
+      col = Math.floor(col / 26) - 1;
+      if (col < 0) break;
+    }
+
+    return `report${report?.id || 0}_${abbr}_${colLetter}${rowIndex + 1}`;
+  };
+
+  // Helper: Parse cell reference to find value
+  const resolveCellReference = (cellRef: string): any => {
+    // Format: report1_PL_A1
+    const parts = cellRef.split('_');
+    if (parts.length < 3) return undefined;
+
+    const colLetter = parts[parts.length - 2] + parts[parts.length - 1];
+    const match = colLetter.match(/^([A-Z]+)(\d+)$/);
+    if (!match) return undefined;
+
+    const [, letters, rowStr] = match;
+    const rowIndex = Number(rowStr) - 1;
+
+    // Find column index from letters
+    let colIndex = 0;
+    for (let i = 0; i < letters.length; i++) {
+      colIndex = colIndex * 26 + (letters.charCodeAt(i) - 64);
+    }
+    colIndex--;
+
+    // Find the document
+    for (const doc of uploadedDocs) {
+      if (editingDocId === doc.id) {
+        const rows = Array.isArray(editingDocData) ? editingDocData : [];
+        if (rowIndex >= 0 && rowIndex < rows.length) {
+          const row = rows[rowIndex];
+          const keys = Object.keys(row || {});
+          if (colIndex >= 0 && colIndex < keys.length) {
+            return row[keys[colIndex]];
+          }
+        }
+      }
+    }
+    return undefined;
+  };
+
+  // Helper: Evaluate JavaScript expression with cell references
+  const evaluateExpression = (expression: string): any => {
+    try {
+      // Create a safe context with cell reference resolution
+      const context: Record<string, any> = {};
+      const cellRefPattern = /report\d+_[A-Z]{1,3}_[A-Z]+\d+/g;
+      const matches = expression.match(cellRefPattern) || [];
+
+      for (const cellRef of matches) {
+        context[cellRef] = resolveCellReference(cellRef);
+      }
+
+      // Use Function constructor for evaluation (safer than eval)
+      const func = new Function(...Object.keys(context), `return ${expression}`);
+      return func(...Object.values(context));
+    } catch (e) {
+      console.error('Expression evaluation error:', e);
+      return null;
+    }
+  };
 
   const saveReview = async () => {
     if (!report) return;
@@ -139,7 +222,24 @@ const ReportViewPage: React.FC = () => {
           setAnswers(sortedAnswers);
           console.log('Loaded answers:', sortedAnswers);
         }
-        if (qRes.ok) setQuestions(await qRes.json() || []);
+        if (qRes.ok) {
+          const questionsData = await qRes.json() || [];
+          console.log('Loaded questions:', questionsData);
+          console.log('Questions count:', questionsData.length);
+          console.log('📊 IMPORTANT: Loaded questions for activity_id:', jr.activity_id);
+          if (questionsData.length === 0) {
+            console.warn(`⚠️ NO QUESTIONS FOUND for activity_id=${jr.activity_id}. This means either:
+1. Questions don't exist in the database for this activity
+2. The activity_id is wrong
+3. Questions were deleted`);
+          }
+          if (questionsData.length > 0) {
+            console.log('Sample question structure:', questionsData[0]);
+          }
+          setQuestions(questionsData);
+        } else {
+          console.error('❌ Questions API failed:', qRes.status, await qRes.text());
+        }
         if (docs.ok) {
           const docsData = await docs.json() || [];
           console.log('Loaded uploaded docs:', docsData);
@@ -764,6 +864,16 @@ const ReportViewPage: React.FC = () => {
         {(() => {
           // Build a quick lookup map for questions by several possible keys
           const qMap: Record<string, any> = {};
+          console.log('DEBUG: questions array length =', questions?.length || 0);
+          console.log('DEBUG: Sample questions (first 5):', questions?.slice(0, 5).map((q: any) => ({
+            id: q?.id,
+            qid: q?.qid,
+            question_id: q?.question_id,
+            questionText: q?.questionText,
+            question_text: q?.question_text,
+            activity_id: q?.activity_id
+          })) || []);
+
           for (const q of questions) {
             try {
               if (q && (q.id !== undefined)) qMap[String(q.id)] = q;
@@ -771,15 +881,35 @@ const ReportViewPage: React.FC = () => {
               if (q && (q.question_id !== undefined)) qMap[String(q.question_id)] = q;
             } catch (e) { /* ignore malformed question */ }
           }
+          console.log('DEBUG: Built qMap with', Object.keys(qMap).length, 'questions.');
+          console.log('DEBUG: qMap keys:', Object.keys(qMap).slice(0, 20)); // First 20 keys
+
+          console.log('DEBUG: answers array length =', answers?.length || 0);
+          console.log('DEBUG: Sample answers (first 5):', answers?.slice(0, 5).map((a: any) => ({
+            id: a?.id,
+            question_id: a?.question_id,
+            questionId: a?.questionId,
+            qid: a?.qid,
+            answer_value: typeof a?.answer_value === 'string' ? a.answer_value.slice(0, 50) : a?.answer_value
+          })) || []);
 
           // Separate grouped and non-grouped answers
           const groupedAnswersMap: Record<string, any[]> = {};
           const nonGroupedAnswers: any[] = [];
 
           answers.forEach(a => {
-            const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id)) || {};
+            const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id));
 
-            if (q.questionGroup || q.question_group) {
+            // Log every answer lookup for debugging
+            if (!q) {
+              console.warn(`❌ Answer ID ${a.id}: question_id="${a.question_id}" NOT FOUND. Checked:`, {
+                in_qMap: !!qMap[String(a.question_id)],
+                qMap_keys_sample: Object.keys(qMap).slice(0, 10),
+                answer_keys: { id: a.id, question_id: a.question_id, questionId: a.questionId, qid: a.qid }
+              });
+            }
+
+            if (q && (q.questionGroup || q.question_group)) {
               const groupName = q.questionGroup || q.question_group;
               if (!groupedAnswersMap[groupName]) groupedAnswersMap[groupName] = [];
               groupedAnswersMap[groupName].push({ answer: a, question: q });
@@ -840,13 +970,14 @@ const ReportViewPage: React.FC = () => {
                 ];
 
                 const data = nonGroupedAnswers.map(a => {
-                  const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id)) || {};
-                  const questionText = q.questionText || q.question_text || q.text || q.label || String(a.question_id);
+                  const q = qMap[String(a.question_id)] || questions.find((x: any) => String(x.id) === String(a.question_id) || String(x.qid) === String(a.question_id) || String(x.question_id) === String(a.question_id));
+                  const questionText = q ? (q.questionText || q.question_text || q.text || q.label || q.title || q.name || '(untitled question)') : `Question ${String(a.question_id)}`;
+                  if (!q) console.warn(`Question ${a.question_id} not found in questions array`);
                   const recordedByUser = users.find((u: any) => String(u.id) === String(a.recorded_by));
                   const recordedByName = recordedByUser ? `${recordedByUser.first_name || ''} ${recordedByUser.last_name || ''}`.trim() || recordedByUser.email || String(recordedByUser.id) : String(a.recorded_by || '');
                   return {
-                    page: q.pageName || q.page_name || '',
-                    section: q.sectionName || q.section_name || '',
+                    page: (q && (q.pageName || q.page_name)) || '',
+                    section: (q && (q.sectionName || q.section_name)) || '',
                     question: questionText,
                     answer: typeof a.answer_value === 'object' ? JSON.stringify(a.answer_value) : String(a.answer_value),
                     _raw: a,
@@ -885,7 +1016,7 @@ const ReportViewPage: React.FC = () => {
 
                       if (!rowMap[rowIndex]) rowMap[rowIndex] = {};
 
-                      const questionText = q.questionText || q.question_text || q.text || q.label || questionId;
+                      const questionText = q ? (q.questionText || q.question_text || q.text || q.label || q.title || q.name || '(untitled question)') : `Question ${questionId}`;
                       const qKey = `q_${questionId}`;
 
                       rowMap[rowIndex][qKey] = a.answer_value;
@@ -1115,6 +1246,8 @@ const ReportViewPage: React.FC = () => {
                               setEditingDocId(d.id);
                               setEditingDocData(Array.isArray(d.file_content) ? JSON.parse(JSON.stringify(d.file_content)) : []);
                               setEditedCells(new Set());
+                              setEditingNewRows(new Set());
+                              setCellFormulas((d.formulas && typeof d.formulas === 'object') ? d.formulas : {});
                             }}
                           >
                             {isEditing ? 'Done Editing' : 'Edit'}
@@ -1181,44 +1314,307 @@ const ReportViewPage: React.FC = () => {
                     {isEditing && isParsed && (
                       <div className="mt-4 pt-4 border-t border-gray-200">
                         <h4 className="font-medium text-sm mb-3 text-gray-700">Edit Data</h4>
+
+                        {/* File upload section during edit */}
+                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                          <label className="block text-xs font-medium text-gray-700 mb-2">Upload additional Excel files</label>
+                          <label className="px-2 py-1 border rounded cursor-pointer inline-block text-sm text-blue-600 hover:bg-blue-100">
+                            Choose file
+                            <input
+                              type="file"
+                              accept=".xlsx,.xls,.csv"
+                              className="hidden"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                try {
+                                  const reader = new FileReader();
+                                  reader.onload = async (ev) => {
+                                    try {
+                                      const ExcelJS = await import('exceljs');
+                                      const arrayBuffer = ev.target?.result as ArrayBuffer;
+                                      const workbook = new ExcelJS.Workbook();
+                                      await workbook.xlsx.load(arrayBuffer);
+                                      const worksheet = workbook.worksheets[0];
+
+                                      if (!worksheet) {
+                                        try { swalError('Error', 'No data found in file'); } catch (err) { }
+                                        return;
+                                      }
+
+                                      const rows: any[] = [];
+                                      worksheet.eachRow((row, idx) => {
+                                        if (idx === 1) return; // Skip header
+                                        const rowData: Record<string, any> = {};
+                                        row.eachCell((cell, colNumber) => {
+                                          const header = worksheet.getRow(1).getCell(colNumber).value;
+                                          if (header) {
+                                            rowData[String(header)] = cell.value || '';
+                                          }
+                                        });
+                                        rows.push(rowData);
+                                      });
+
+                                      // Create new uploaded_docs entry
+                                      const res = await apiFetch(`/api/uploaded_docs`, {
+                                        method: 'POST',
+                                        credentials: 'include',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          reportId: report.id,
+                                          filename: file.name,
+                                          fileContent: rows,
+                                          activityId: report.activity_id,
+                                          facilityId: report.facility_id
+                                        })
+                                      });
+
+                                      if (res.ok) {
+                                        const newDoc = await res.json();
+                                        setUploadedDocs(prev => [...prev, newDoc]);
+                                        try { swalSuccess('Success', 'File uploaded successfully'); } catch (err) { }
+                                      } else {
+                                        try { swalError('Error', 'Failed to upload file'); } catch (err) { }
+                                      }
+                                    } catch (err) {
+                                      console.error('Upload processing error:', err);
+                                      try { swalError('Error', 'Failed to process file'); } catch (e) { }
+                                    }
+                                  };
+                                  reader.readAsArrayBuffer(file);
+                                } catch (err) {
+                                  console.error('Upload error:', err);
+                                  try { swalError('Error', 'Upload failed'); } catch (e) { }
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm border-collapse">
                             <thead>
                               <tr className="bg-gray-100">
-                                {editingDocData.length > 0 && Object.keys(editingDocData[0]).map(key => (
+                                <th className="border border-gray-300 px-2 py-2 text-left font-medium text-gray-700 w-12">
+                                  #
+                                </th>
+                                {editingDocData.length > 0 && Object.keys(editingDocData[0]).map((key, colIdx) => (
                                   <th key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700">
-                                    {key}
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div>
+                                        <div className="font-medium">{key}</div>
+                                        <div className="text-xs text-gray-500">
+                                          {generateCellName(d.id, d.filename, colIdx, 0).split('_').slice(1).join('_')}
+                                        </div>
+                                      </div>
+                                    </div>
                                   </th>
                                 ))}
+                                <th className="border border-gray-300 px-2 py-2 w-12">
+                                  <button
+                                    onClick={() => {
+                                      const newRow: Record<string, any> = {};
+                                      if (editingDocData.length > 0) {
+                                        Object.keys(editingDocData[0]).forEach(key => {
+                                          newRow[key] = '';
+                                        });
+                                      }
+                                      setEditingDocData(prev => [...prev, newRow]);
+                                      setEditingNewRows(prev => new Set([...prev, editingDocData.length]));
+                                    }}
+                                    className="text-green-600 hover:text-green-800 font-bold text-lg"
+                                    title="Add new row"
+                                  >
+                                    +
+                                  </button>
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
                               {editingDocData.map((row, rowIdx) => (
-                                <tr key={rowIdx}>
-                                  {Object.keys(row).map(key => {
+                                <tr key={rowIdx} className={editingNewRows.has(rowIdx) ? 'bg-green-50' : ''}>
+                                  <td className="border border-gray-300 px-2 py-2 text-center text-gray-600 font-medium">
+                                    {rowIdx + 1}
+                                  </td>
+                                  {Object.keys(row).map((key, colIdx) => {
                                     const cellKey = `${rowIdx}_${key}`;
                                     const isEdited = editedCells.has(cellKey);
+                                    const cellRef = generateCellName(d.id, d.filename, colIdx, rowIdx);
+                                    const isSelected = selectedCellForFormula === cellRef;
+                                    const hasFormula = cellFormulas[cellRef];
+
                                     return (
-                                      <td key={cellKey} className="border border-gray-300 px-3 py-2">
+                                      <td key={cellKey} className="border border-gray-300 px-3 py-2 relative group">
                                         <input
                                           type="text"
                                           value={row[key] ?? ''}
+                                          onClick={() => {
+                                            setSelectedCellForFormula(cellRef);
+                                            // Insert cell reference at cursor position in formula input
+                                            const currentFormula = formulaInput;
+                                            const inputEl = formulaInputRef.current;
+                                            if (inputEl) {
+                                              const cursorPos = inputEl.selectionStart || 0;
+                                              const newFormula = currentFormula.slice(0, cursorPos) + cellRef + currentFormula.slice(cursorPos);
+                                              setFormulaInput(newFormula);
+                                              // Move cursor after the inserted cell reference
+                                              setTimeout(() => {
+                                                if (inputEl) {
+                                                  inputEl.selectionStart = inputEl.selectionEnd = cursorPos + cellRef.length;
+                                                  inputEl.focus();
+                                                }
+                                              }, 0);
+                                            }
+                                          }}
                                           onChange={(e) => {
                                             const newData = [...editingDocData];
                                             newData[rowIdx][key] = e.target.value;
                                             setEditingDocData(newData);
                                             setEditedCells(prev => new Set([...prev, cellKey]));
                                           }}
-                                          className={`w-full px-2 py-1 border rounded text-sm ${isEdited ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
+                                          className={`w-full px-2 py-1 border rounded text-sm cursor-pointer ${isSelected ? 'border-purple-500 bg-purple-100 ring-2 ring-purple-300' :
+                                            hasFormula ? 'border-blue-400 bg-blue-50' :
+                                              isEdited ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                                             } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                                          title={hasFormula ? `Formula: ${cellFormulas[cellRef]}` : 'Click to add to formula'}
                                         />
+                                        <div className="hidden group-hover:block absolute bottom-full left-0 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap mb-1 z-10">
+                                          <div>{cellRef}</div>
+                                          {hasFormula && <div className="text-yellow-300">Formula: {cellFormulas[cellRef]}</div>}
+                                        </div>
                                       </td>
                                     );
                                   })}
+                                  <td className="border border-gray-300 px-2 py-2 text-center">
+                                    <button
+                                      onClick={() => {
+                                        setEditingDocData(prev => prev.filter((_, i) => i !== rowIdx));
+                                        setEditingNewRows(prev => {
+                                          const newSet = new Set(prev);
+                                          newSet.delete(rowIdx);
+                                          return newSet;
+                                        });
+                                      }}
+                                      className="text-red-600 hover:text-red-800 font-bold text-lg"
+                                      title="Delete row"
+                                    >
+                                      ×
+                                    </button>
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
+                        </div>
+
+                        {/* Computed Cells Section */}
+                        <div className="mt-4 p-3 bg-purple-50 border border-purple-200 rounded">
+                          <h5 className="font-medium text-sm text-gray-800 mb-2">🧮 Computed Cell Formula</h5>
+                          <p className="text-xs text-gray-600 mb-2">
+                            Click on any cell to insert its reference into the formula. Type operators (+, -, *, /, etc.) and functions to create your expression.
+                          </p>
+                          <div className="flex gap-2 mb-2 flex-wrap">
+                            <input
+                              type="text"
+                              placeholder="Cell Name (e.g., 'report1_PL_B6')"
+                              className="flex-1 border rounded px-2 py-1 text-sm min-w-48"
+                              value={selectedCellForFormula || ''}
+                              readOnly
+                              title="Currently selected cell for formula"
+                            />
+                            <input
+                              ref={formulaInputRef}
+                              type="text"
+                              placeholder={`Formula (e.g., '${generateCellName(d.id, d.filename, 0, 0)}*${generateCellName(d.id, d.filename, 1, 0)}')`}
+                              className="flex-1 border rounded px-2 py-1 text-sm min-w-48 font-mono"
+                              value={formulaInput}
+                              onChange={(e) => setFormulaInput(e.target.value)}
+                              title="Type formula here or click cells to insert their references"
+                            />
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                if (!selectedCellForFormula) {
+                                  try { swalError('Error', 'Please select a cell first by clicking on it in the table'); } catch (e) { }
+                                  return;
+                                }
+                                if (!formulaInput.trim()) {
+                                  try { swalError('Error', 'Please enter a formula'); } catch (e) { }
+                                  return;
+                                }
+
+                                // Parse the cell reference to find row and column
+                                const cellRef = selectedCellForFormula;
+                                const cellRefPattern = /report\d+_[A-Z]{1,3}_([A-Z]+)(\d+)$/;
+                                const match = cellRef.match(cellRefPattern);
+
+                                if (!match) {
+                                  try { swalError('Error', 'Invalid cell reference format'); } catch (e) { }
+                                  return;
+                                }
+
+                                const [, letters, rowStr] = match;
+                                const rowIndex = Number(rowStr) - 1;
+
+                                // Convert letter(s) to column index
+                                let colIndex = 0;
+                                for (let i = 0; i < letters.length; i++) {
+                                  colIndex = colIndex * 26 + (letters.charCodeAt(i) - 64);
+                                }
+                                colIndex--;
+
+                                // Check bounds
+                                if (rowIndex < 0 || rowIndex >= editingDocData.length) {
+                                  try { swalError('Error', 'Row index out of bounds'); } catch (e) { }
+                                  return;
+                                }
+
+                                const row = editingDocData[rowIndex];
+                                const keys = Object.keys(row);
+                                if (colIndex < 0 || colIndex >= keys.length) {
+                                  try { swalError('Error', 'Column index out of bounds'); } catch (e) { }
+                                  return;
+                                }
+
+                                // Evaluate formula and update cell
+                                const result = evaluateExpression(formulaInput);
+                                const colKey = keys[colIndex];
+
+                                const newData = [...editingDocData];
+                                newData[rowIndex][colKey] = result !== null ? result : '';
+                                setEditingDocData(newData);
+
+                                // Store formula for this cell
+                                setCellFormulas(prev => ({
+                                  ...prev,
+                                  [cellRef]: formulaInput
+                                }));
+
+                                // Mark cell as edited
+                                setEditedCells(prev => new Set([...prev, `${rowIndex}_${colKey}`]));
+
+                                setFormulaInput('');
+                                setSelectedCellForFormula(null);
+                                try { swalSuccess('Success', `Cell updated with formula result`); } catch (e) { }
+                              }}
+                              disabled={!selectedCellForFormula}
+                            >
+                              Set Formula
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setSelectedCellForFormula(null);
+                                setFormulaInput('');
+                              }}
+                            >
+                              Clear
+                            </Button>
+                          </div>
+                          <p className="text-xs text-gray-600">
+                            <strong>How to use:</strong> Click a cell in the table to select it, enter your formula, then click "Set Formula" to apply.
+                          </p>
                         </div>
 
                         <div className="flex gap-2 mt-4">
@@ -1239,14 +1635,22 @@ const ReportViewPage: React.FC = () => {
                                   method: 'PUT',
                                   headers: { 'Content-Type': 'application/json' },
                                   credentials: 'include',
-                                  body: JSON.stringify({ partialUpdate: changedRows })
+                                  body: JSON.stringify({
+                                    partialUpdate: changedRows,
+                                    newRows: Array.from(editingNewRows).map(idx => editingDocData[idx]),
+                                    cellFormulas: Object.keys(cellFormulas).length > 0 ? cellFormulas : null
+                                  })
                                 });
 
                                 if (res.ok) {
                                   const json = await res.json();
-                                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content || editingDocData } : x));
+                                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content || editingDocData, formulas: json.formulas || cellFormulas } : x));
                                   setEditingDocId(null);
                                   setEditedCells(new Set());
+                                  setEditingNewRows(new Set());
+                                  setCellFormulas({});
+                                  setSelectedCellForFormula(null);
+                                  setFormulaInput('');
                                   try { swalSuccess('Saved', 'Changes saved successfully'); } catch (e) { }
                                 } else {
                                   console.error('Save failed:', await res.text());
@@ -1267,6 +1671,10 @@ const ReportViewPage: React.FC = () => {
                               setEditingDocId(null);
                               setEditedCells(new Set());
                               setEditingDocData([]);
+                              setEditingNewRows(new Set());
+                              setCellFormulas({});
+                              setSelectedCellForFormula(null);
+                              setFormulaInput('');
                             }}
                           >
                             Cancel

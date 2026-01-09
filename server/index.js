@@ -1850,6 +1850,7 @@ async function initDb() {
             uploaded_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
                 report_id INTEGER REFERENCES ${tables.ACTIVITY_REPORTS}(id) ON DELETE CASCADE,
                 file_content JSONB,
+            cell_formulas JSONB,
             filename TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`
@@ -6737,7 +6738,34 @@ app.get('/api/uploaded_docs', async (req, res) => {
         const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
         const sql = `SELECT * FROM ${tables.UPLOADED_DOCS} ${where} ORDER BY created_at DESC`;
         const result = await pool.query(sql, params);
-        res.json(result.rows);
+
+        // Transform cell_formulas to formulas for frontend compatibility
+        const docs = result.rows.map(doc => {
+            if (doc.cell_formulas) {
+                if (typeof doc.cell_formulas === 'string') {
+                    try {
+                        doc.formulas = JSON.parse(doc.cell_formulas);
+                    } catch (e) {
+                        doc.formulas = {};
+                    }
+                } else {
+                    doc.formulas = doc.cell_formulas;
+                }
+                delete doc.cell_formulas;
+            } else {
+                doc.formulas = {};
+            }
+            // Also ensure file_content is parsed if needed
+            if (typeof doc.file_content === 'string') {
+                try {
+                    doc.file_content = JSON.parse(doc.file_content);
+                } catch (e) {
+                    // Keep as string if parsing fails
+                }
+            }
+            return doc;
+        });
+        res.json(docs);
     } catch (e) { res.status(500).send(e.message); }
 });
 
@@ -6746,8 +6774,178 @@ app.get('/api/questions', async (req, res) => {
     const { activityId } = req.query;
     try {
         if (!activityId) return res.status(400).send('Missing activityId');
+
+        console.log(`\n🔍 [GET /api/questions] Fetching questions for activity_id=${activityId}`);
+
+        // First, try to get questions from the questions table
         const result = await pool.query(`SELECT * FROM ${tables.QUESTIONS} WHERE activity_id = $1 ORDER BY created_at ASC`, [activityId]);
-        res.json(result.rows.map(q => ({
+        console.log(`📊 Questions table check: found ${result.rows.length} questions`);
+
+        // If no questions in table, sync from form_definition in activities table
+        if (result.rows.length === 0) {
+            console.log(`📋 No questions in table. Checking form_definition in activities...`);
+            const actRes = await pool.query(`SELECT id, form_definition FROM ${tables.ACTIVITIES} WHERE id = $1`, [activityId]);
+
+            console.log(`📋 Activity query result: ${actRes.rows.length} row(s) found`);
+
+            if (actRes.rows.length > 0) {
+                const activity = actRes.rows[0];
+                console.log(`📋 Activity ID: ${activity.id}, form_definition exists: ${!!activity.form_definition}`);
+
+                if (activity.form_definition) {
+                    try {
+                        const formDef = activity.form_definition;
+                        const parsedForm = typeof formDef === 'string' ? JSON.parse(formDef) : formDef;
+                        console.log(`✅ Parsed form_definition. Type: ${typeof parsedForm}, has pages: ${!!parsedForm.pages}`);
+
+                        const questions = [];
+
+                        // Extract questions from the nested form structure
+                        if (parsedForm && parsedForm.pages && Array.isArray(parsedForm.pages)) {
+                            console.log(`📄 Found ${parsedForm.pages.length} pages`);
+                            for (const page of parsedForm.pages) {
+                                if (page.sections && Array.isArray(page.sections)) {
+                                    console.log(`  📌 Page "${page.name}": ${page.sections.length} sections`);
+                                    for (const section of page.sections) {
+                                        if (section.questions && Array.isArray(section.questions)) {
+                                            console.log(`    ❓ Section "${section.name}": ${section.questions.length} questions`);
+                                            for (const q of section.questions) {
+                                                questions.push({
+                                                    id: q.id,
+                                                    activity_id: activityId,
+                                                    page_name: q.pageName || page.name,
+                                                    section_name: q.sectionName || section.name,
+                                                    question_text: q.questionText,
+                                                    question_helper: q.questionHelper,
+                                                    correct_answer: q.correctAnswer,
+                                                    answer_type: q.answerType,
+                                                    category: q.category,
+                                                    question_group: q.questionGroup,
+                                                    column_size: q.columnSize,
+                                                    status: q.status,
+                                                    options: q.options,
+                                                    metadata: q.metadata,
+                                                    created_by: q.createdBy
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            console.warn(`⚠️ form_definition structure invalid: pages=${!!parsedForm?.pages}, isArray=${Array.isArray(parsedForm?.pages)}`);
+                        }
+
+                        console.log(`🎯 Total questions extracted: ${questions.length}`);
+
+                        // Batch insert questions into database
+                        if (questions.length > 0) {
+                            console.log(`💾 Inserting ${questions.length} questions into database...`);
+                            let insertedCount = 0;
+                            let failedQuestions = [];
+
+                            // Prepare all values for batch insert
+                            const values = [];
+                            const placeholders = [];
+                            let paramIndex = 1;
+
+                            for (const q of questions) {
+                                try {
+                                    placeholders.push(
+                                        `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, ` +
+                                        `$${paramIndex + 6}, $${paramIndex + 7}, $${paramIndex + 8}, $${paramIndex + 9}, $${paramIndex + 10}, $${paramIndex + 11}, ` +
+                                        `$${paramIndex + 12}::jsonb, $${paramIndex + 13}::jsonb, $${paramIndex + 14})`
+                                    );
+
+                                    values.push(
+                                        q.id, q.activity_id, q.page_name, q.section_name, q.question_text, q.question_helper,
+                                        q.correct_answer, q.answer_type, q.category, q.question_group, q.column_size, q.status,
+                                        JSON.stringify(q.options || null), JSON.stringify(q.metadata || null), q.created_by
+                                    );
+                                    paramIndex += 15;
+                                } catch (prepErr) {
+                                    failedQuestions.push({ id: q.id, error: prepErr.message });
+                                    console.warn(`⚠️ Failed to prepare question ${q.id}:`, prepErr.message);
+                                }
+                            }
+
+                            // Execute batch insert if we have any prepared questions
+                            if (placeholders.length > 0) {
+                                const batchQuery = `
+                                    INSERT INTO ${tables.QUESTIONS} 
+                                    (id, activity_id, page_name, section_name, question_text, question_helper, correct_answer, 
+                                     answer_type, category, question_group, column_size, status, options, metadata, created_by) 
+                                    VALUES ${placeholders.join(', ')}
+                                    ON CONFLICT (id) DO UPDATE SET
+                                        activity_id = EXCLUDED.activity_id,
+                                        page_name = EXCLUDED.page_name,
+                                        section_name = EXCLUDED.section_name,
+                                        question_text = EXCLUDED.question_text,
+                                        question_helper = EXCLUDED.question_helper,
+                                        correct_answer = EXCLUDED.correct_answer,
+                                        answer_type = EXCLUDED.answer_type,
+                                        category = EXCLUDED.category,
+                                        question_group = EXCLUDED.question_group,
+                                        column_size = EXCLUDED.column_size,
+                                        status = EXCLUDED.status,
+                                        options = EXCLUDED.options,
+                                        metadata = EXCLUDED.metadata,
+                                        created_by = EXCLUDED.created_by
+                                `;
+
+                                try {
+                                    const batchResult = await pool.query(batchQuery, values);
+                                    insertedCount = batchResult.rowCount || 0;
+                                    console.log(`✅ Batch insert successful: ${insertedCount} questions inserted/updated`);
+                                } catch (batchErr) {
+                                    console.error(`❌ Batch insert failed:`, batchErr.message);
+                                    console.error(`Query length: ${batchQuery.length}, Values length: ${values.length}`);
+                                    failedQuestions.push({ error: `Batch insert failed: ${batchErr.message}` });
+                                }
+                            }
+
+                            if (failedQuestions.length > 0) {
+                                console.warn(`⚠️ ${failedQuestions.length} questions failed to prepare or insert:`);
+                                failedQuestions.forEach(f => console.warn(`  - ${f.id || 'unknown'}: ${f.error}`));
+                            }
+                            console.log(`📊 Database sync summary: ${insertedCount} inserted/updated, ${failedQuestions.length} failed`);
+                        }
+
+                        // Return the extracted questions
+                        return res.json(questions.map(q => ({
+                            id: q.id,
+                            activityId: q.activity_id,
+                            pageName: q.page_name,
+                            sectionName: q.section_name,
+                            questionText: q.question_text,
+                            questionHelper: q.question_helper,
+                            correctAnswer: q.correct_answer,
+                            answerType: q.answer_type,
+                            category: q.category,
+                            questionGroup: q.question_group,
+                            columnSize: q.column_size,
+                            status: q.status,
+                            options: q.options,
+                            metadata: q.metadata,
+                            createdBy: q.created_by
+                        })));
+                    } catch (parseErr) {
+                        console.error(`❌ Error parsing form_definition:`, parseErr.message);
+                        return res.json([]); // Return empty array on parse error
+                    }
+                } else {
+                    console.warn(`⚠️ Activity ${activityId} has no form_definition`);
+                    return res.json([]); // Return empty array if no form_definition
+                }
+            } else {
+                console.warn(`⚠️ Activity ${activityId} not found`);
+                return res.json([]); // Return empty array if activity not found
+            }
+        }
+
+        // Return questions from database table
+        console.log(`✅ Returning ${result.rows.length} questions from database`);
+        return res.json(result.rows.map(q => ({
             id: q.id,
             activityId: q.activity_id,
             pageName: q.page_name,
@@ -6764,7 +6962,10 @@ app.get('/api/questions', async (req, res) => {
             metadata: q.metadata,
             createdBy: q.created_by
         })));
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        console.error(`❌ [GET /api/questions] Error:`, e.message);
+        return res.status(500).send(e.message);
+    }
 });
 
 // Answer Groups endpoint: get unique answer_group values for an activity
@@ -7118,19 +7319,86 @@ app.put('/api/answers/:id', async (req, res) => {
 });
 
 // Update a single cell in an uploaded_docs file_content JSONB (rowIndex, colKey, newValue)
+
+// Create a new uploaded doc
+app.post('/api/uploaded_docs', async (req, res) => {
+    const { reportId, filename, fileContent, activityId, facilityId } = req.body;
+    try {
+        if (!filename || !Array.isArray(fileContent)) {
+            return res.status(400).json({ error: 'filename and fileContent (array) are required' });
+        }
+
+        const uploadedBy = req.session && req.session.userId ? req.session.userId : null;
+        const result = await pool.query(
+            `INSERT INTO ${tables.UPLOADED_DOCS} (activity_id, facility_id, user_id, uploaded_by, report_id, file_content, filename, created_at) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) 
+             RETURNING *`,
+            [activityId || null, facilityId || null, uploadedBy, uploadedBy, reportId || null, JSON.stringify(fileContent), filename]
+        );
+
+        if (result.rows && result.rows.length > 0) {
+            const doc = result.rows[0];
+            // Ensure file_content is parsed as JSON
+            if (typeof doc.file_content === 'string') {
+                try {
+                    doc.file_content = JSON.parse(doc.file_content);
+                } catch (e) {
+                    // Keep as string if parsing fails
+                }
+            }
+            // Map cell_formulas to formulas for frontend compatibility
+            if (doc.cell_formulas) {
+                if (typeof doc.cell_formulas === 'string') {
+                    try {
+                        doc.formulas = JSON.parse(doc.cell_formulas);
+                    } catch (e) {
+                        doc.formulas = {};
+                    }
+                } else {
+                    doc.formulas = doc.cell_formulas;
+                }
+                delete doc.cell_formulas;
+            } else {
+                doc.formulas = {};
+            }
+            res.json(doc);
+        } else {
+            res.status(500).json({ error: 'Failed to create uploaded_doc' });
+        }
+    } catch (err) {
+        console.error('Failed to create uploaded_doc', err);
+        res.status(500).json({ error: 'Failed to create uploaded_doc', details: err.message });
+    }
+});
+
 app.put('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
-    const { rowIndex, colKey, newValue, partialUpdate } = req.body || {};
+    const { rowIndex, colKey, newValue, partialUpdate, newRows, cellFormulas } = req.body || {};
     try {
         const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
         const doc = docRes.rows[0];
         let content = doc.file_content || [];
+        let formulas = doc.cell_formulas || {};
+
         // If stored as string, try to parse
         if (typeof content === 'string') {
             try { content = JSON.parse(content); } catch (e) { /* leave as-is */ }
         }
+        if (typeof formulas === 'string') {
+            try { formulas = JSON.parse(formulas); } catch (e) { formulas = {}; }
+        }
         if (!Array.isArray(content)) return res.status(400).json({ error: 'file_content must be an array of rows' });
+
+        // Handle new rows being added
+        if (newRows && Array.isArray(newRows)) {
+            content = content.concat(newRows);
+        }
+
+        // Handle cell formulas update
+        if (cellFormulas && typeof cellFormulas === 'object') {
+            formulas = { ...formulas, ...cellFormulas };
+        }
 
         // Batch partial update: { partialUpdate: { [rowIndex]: { colKey: value, ... }, ... } }
         if (partialUpdate && typeof partialUpdate === 'object') {
@@ -7144,8 +7412,8 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
                 }
                 content[idx] = row;
             }
-            await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1 WHERE id = $2`, [JSON.stringify(content), id]);
-            return res.json({ success: true, file_content: content });
+            await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1, cell_formulas = $2 WHERE id = $3`, [JSON.stringify(content), JSON.stringify(formulas), id]);
+            return res.json({ success: true, file_content: content, formulas: formulas });
         }
 
         // Single cell update fallback
@@ -7153,8 +7421,8 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
         const row = content[rowIndex] || {};
         row[colKey] = newValue;
         content[rowIndex] = row;
-        await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1 WHERE id = $2`, [JSON.stringify(content), id]);
-        res.json({ success: true, file_content: content });
+        await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1, cell_formulas = $2 WHERE id = $3`, [JSON.stringify(content), JSON.stringify(formulas), id]);
+        res.json({ success: true, file_content: content, formulas: formulas });
     } catch (err) {
         console.error('Failed to update uploaded_doc', err);
         res.status(500).json({ error: 'Failed to update uploaded_doc' });
@@ -7177,6 +7445,8 @@ app.delete('/api/uploaded_docs/:id', async (req, res) => {
 
 app.post('/api/reports', async (req, res) => {
     const { activityId, userId, facilityId, status, answers, uploadedFiles, id: maybeId, reportId: maybeReportId } = req.body;
+    console.log('[REPORT-CREATE] Received answers object:', JSON.stringify(answers, null, 2));
+    console.log('[REPORT-CREATE] Answers keys:', Object.keys(answers || {}));
     try {
         // Determine current user's role for permission checks (default to 'public')
         let currentRole = 'public';
@@ -7394,28 +7664,43 @@ app.post('/api/reports', async (req, res) => {
         // Persist individual answers to the answers table for querying
         try {
             if (answers && typeof answers === 'object') {
+                console.log('[ANSWER-STORE] Processing answers - keys:', Object.keys(answers));
                 for (const [qId, val] of Object.entries(answers)) {
+                    console.log('[ANSWER-STORE] qId:', qId, 'val:', val, 'val type:', typeof val, 'is array:', Array.isArray(val));
                     try {
-                        // If this value is an array, treat it as a repeatable section: each array element is a row object
+                        // Check if this is a repeatable section array (array of objects) vs checkbox array (array of values)
+                        // If array contains objects, treat as repeatable section. If array contains primitives, treat as checkbox answer
                         if (Array.isArray(val)) {
-                            for (let ri = 0; ri < val.length; ri++) {
-                                const row = val[ri] || {};
-                                if (!row || typeof row !== 'object') continue;
-                                for (const [subQId, subVal] of Object.entries(row)) {
-                                    try {
-                                        let answerVal = subVal;
-                                        let reviewersComment = null; let qiFollowup = null; let score = null;
-                                        if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
-                                            if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
-                                            reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
-                                            qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
-                                            score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
-                                        }
-                                        const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                        const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                        await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
-                                    } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
+                            // Determine if this is a repeatable section (array of objects) or checkbox/multi-select (array of primitives)
+                            const isRepeatableSection = val.length > 0 && val.some(item => item && typeof item === 'object' && !(item instanceof Array));
+
+                            if (isRepeatableSection) {
+                                // Process as repeatable section: each array element is a row object
+                                for (let ri = 0; ri < val.length; ri++) {
+                                    const row = val[ri] || {};
+                                    if (!row || typeof row !== 'object') continue;
+                                    for (const [subQId, subVal] of Object.entries(row)) {
+                                        try {
+                                            let answerVal = subVal;
+                                            let reviewersComment = null; let qiFollowup = null; let score = null;
+                                            if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                                if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                                reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                                qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                                score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                            }
+                                            const answerGroup = `${report.id}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                            const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                            await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, subQId, storedAnswerValue, ri, qId, answerGroup, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
+                                        } catch (e) { console.error('Failed to insert repeated answer for question', subQId, e); }
+                                    }
                                 }
+                            } else {
+                                // Process as checkbox/multi-select answer: array of primitive values
+                                // Store as single answer with JSON array as value
+                                const storedAnswerValue = JSON.stringify(val);
+                                console.log('[ANSWER-STORE] Storing checkbox/multi-select - qId:', qId, 'storedAnswerValue:', storedAnswerValue);
+                                await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), null, null, null, req.session && req.session.businessId ? req.session.businessId : null]);
                             }
                         } else {
                             // support val as primitive or object { value, reviewersComment, qualityImprovementFollowup, score }
@@ -7430,6 +7715,7 @@ app.post('/api/reports', async (req, res) => {
                                 score = (typeof val.score !== 'undefined') ? val.score : null;
                             }
                             const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                            console.log('[ANSWER-STORE] Storing non-grouped answer - qId:', qId, 'answerVal:', answerVal, 'storedAnswerValue:', storedAnswerValue);
                             await pool.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score, business_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [report.id, activityId, qId, storedAnswerValue, null, null, null, facilityId || null, userId || null, req.session.userId || null, new Date(), reviewersComment, qiFollowup, score, req.session && req.session.businessId ? req.session.businessId : null]);
                         }
                     } catch (e) {

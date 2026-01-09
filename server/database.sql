@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS dqai_uploaded_docs (
   facility_id INTEGER REFERENCES facilities(id) ON DELETE SET NULL,
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  report_id INTEGER REFERENCES activity_reports(id) ON DELETE CASCADE,
   file_content JSONB,
+  cell_formulas JSONB,
   filename TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 );

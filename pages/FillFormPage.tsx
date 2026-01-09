@@ -241,6 +241,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
             };
             return (
                 <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">{question.questionText}</label>
                     {checkboxFilteredOptions?.map((opt) => (
                         <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
                     ))}
@@ -681,6 +682,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 };
                 // copy answers but strip out any dataUrl content so we can upload them separately
                 const strippedAnswers: Record<string, any> = {};
+
+                // Log the answers object for debugging
+                console.log('[SUBMIT] Answers object keys:', Object.keys(answers));
+                console.log('[SUBMIT] Full answers object:', JSON.stringify(answers, null, 2));
+
                 // sanitize computed fields so we don't save function source code into DB
                 const sanitizeComputedValue = (v: any) => {
                     if (v === undefined || v === null) return v;
@@ -704,6 +710,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 };
                 const fileAnswerMap: Array<any> = [];
                 for (const [qid, val] of Object.entries(answers)) {
+                    console.log('[SUBMIT] Processing answer - qid:', qid, 'val:', val);
                     // narrow to any so we can safely access file-like properties
                     const vObj = val as any;
                     // if this question is computed, sanitize value
@@ -1125,11 +1132,17 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                     </div>
                                                     <div className="grid grid-cols-12 gap-4">
                                                         {section.questions.map(q => {
-                                                            // visibility for repeated rows uses the same fieldMapLocal (non-row-specific)
+                                                            // Create row-specific fieldMap for visibility evaluation in grouped questions
+                                                            const rowFieldMap: Record<string, any> = { ...fieldMapLocal };
+                                                            Object.keys(row).forEach(key => {
+                                                                rowFieldMap[key] = row[key];
+                                                            });
+
+                                                            // visibility for repeated rows uses row-specific fieldMap
                                                             let visible = true;
                                                             try {
                                                                 if (q.metadata && q.metadata.showIf) {
-                                                                    const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
+                                                                    const res = evaluateFormula(String(q.metadata.showIf), rowFieldMap);
                                                                     visible = !!res;
                                                                 }
                                                             } catch (e) {
