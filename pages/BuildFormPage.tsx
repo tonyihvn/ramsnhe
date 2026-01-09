@@ -225,7 +225,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
           {question.answerType === AnswerType.COMPUTED && (
             <div className="mt-4">
               <label className="block text-sm font-medium text-gray-700">Computed Formula</label>
-              <p className="text-xs text-gray-500 mb-1">Enter a JavaScript-like expression using other field names as variables. Example: <code>field_a + field_b * 2</code>. Use only numbers for arithmetic. The result will be computed at fill-time.</p>
+              <p className="text-xs text-gray-500 mb-1">Enter a JavaScript expression using field names or cell references from uploaded documents. Examples: <code>field_a + field_b * 2</code>, <code>report1_H_J1 * 1.15</code>, or <code>age(dob) + report2_PL_A5</code>. The result will be computed at fill-time.</p>
               <textarea rows={3} className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300 font-mono text-sm" value={(question.metadata && question.metadata.computedFormula) || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), computedFormula: e.target.value } })} />
             </div>
           )}

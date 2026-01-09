@@ -489,7 +489,23 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const evaluateFormula = (formula: string, fieldMap: Record<string, any>) => {
         if (!formula || typeof formula !== 'string') return null;
         try {
-            const varNames = Object.keys(fieldMap || {});
+            // First, resolve any cell references like report1_H_J1 from the fieldMap
+            let processedFormula = formula;
+            const cellRefPattern = /report\d+_[A-Z]{1,3}_[A-Z]+\d+/g;
+            const cellMatches = formula.match(cellRefPattern) || [];
+
+            for (const cellRef of cellMatches) {
+                // Cell reference should be in fieldMap if it's available
+                const cellValue = fieldMap[cellRef];
+                // If found, replace with the value; if not found, try to use as-is
+                if (cellValue !== undefined && cellValue !== null) {
+                    // If numeric, use the number directly; otherwise wrap in quotes
+                    const replacement = typeof cellValue === 'number' ? cellValue : JSON.stringify(cellValue);
+                    processedFormula = processedFormula.replace(new RegExp('\\b' + cellRef + '\\b', 'g'), replacement);
+                }
+            }
+
+            const varNames = Object.keys(fieldMap || {}).filter(n => !n.match(cellRefPattern));
             const args = varNames.map(n => {
                 const v = fieldMap[n];
                 // try to coerce numeric strings to numbers
@@ -499,7 +515,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             // Provide helpers: age, parseDate, diffDays
             // Build function: function(...vars, age, parseDate, diffDays) { return <formula>; }
             // eslint-disable-next-line no-new-func
-            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ return null; }`);
+            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${processedFormula}; } catch(e){ return null; }`);
             return fn(...args, age, parseDate, diffDays);
         } catch (err) {
             console.error('Error evaluating formula', formula, err);

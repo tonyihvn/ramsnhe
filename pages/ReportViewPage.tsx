@@ -46,7 +46,10 @@ const ReportViewPage: React.FC = () => {
   const [cellFormulas, setCellFormulas] = useState<Record<string, string>>({}); // Maps cellRef to formula
   const [selectedCellForFormula, setSelectedCellForFormula] = useState<string | null>(null);
   const [formulaInput, setFormulaInput] = useState<string>('');
-  const formulaInputRef = useRef<HTMLInputElement>(null); // Ref for formula input field
+  const cellNameInputRef = useRef<HTMLInputElement>(null); // Ref for cell name input field
+  const formulaInputRef = useRef<HTMLTextAreaElement>(null); // Ref for formula input field
+  const [columnDataTypes, setColumnDataTypes] = useState<Record<string, string>>({}); // Maps column name to data type
+  const editingModeRef = useRef<'cellName' | 'formula' | null>(null); // Track which input is being edited (using ref to persist through blur events)
 
   // Authorization checks
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
@@ -100,7 +103,13 @@ const ReportViewPage: React.FC = () => {
           const row = rows[rowIndex];
           const keys = Object.keys(row || {});
           if (colIndex >= 0 && colIndex < keys.length) {
-            return row[keys[colIndex]];
+            const value = row[keys[colIndex]];
+            // Convert to number if it's a numeric string
+            if (typeof value === 'string') {
+              const numValue = Number(value);
+              return isNaN(numValue) ? value : numValue;
+            }
+            return value;
           }
         }
       }
@@ -409,6 +418,19 @@ const ReportViewPage: React.FC = () => {
           if (typeof val === 'object') {
             if ('value' in val) val = val.value ?? '';
             else val = JSON.stringify(val);
+          } else if (typeof val === 'string' && val.trim().startsWith('[')) {
+            // Parse checkbox/multi-select answers stored as JSON arrays
+            try {
+              const parsed = JSON.parse(val);
+              if (Array.isArray(parsed)) {
+                // Format as comma-separated list for checkboxes
+                val = parsed.join(', ');
+              } else {
+                val = String(val);
+              }
+            } catch (e) {
+              val = String(val);
+            }
           } else if (typeof val === 'string' && val.trim().startsWith('{')) {
             const parsed = JSON.parse(val);
             if (parsed && typeof parsed === 'object' && 'value' in parsed) {
@@ -1400,13 +1422,67 @@ const ReportViewPage: React.FC = () => {
                                 </th>
                                 {editingDocData.length > 0 && Object.keys(editingDocData[0]).map((key, colIdx) => (
                                   <th key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700">
-                                    <div className="flex items-center justify-between gap-2">
+                                    <div className="flex flex-col gap-1">
                                       <div>
                                         <div className="font-medium">{key}</div>
                                         <div className="text-xs text-gray-500">
                                           {generateCellName(d.id, d.filename, colIdx, 0).split('_').slice(1).join('_')}
                                         </div>
                                       </div>
+                                      <select
+                                        value={columnDataTypes[key] || 'text'}
+                                        onChange={(e) => {
+                                          const newDataType = e.target.value;
+                                          setColumnDataTypes(prev => ({
+                                            ...prev,
+                                            [key]: newDataType
+                                          }));
+
+                                          // If changing to date type, transform existing data to dd/mm/yyyy format
+                                          if (newDataType === 'date') {
+                                            const newData = [...editingDocData];
+                                            newData.forEach((row, rowIdx) => {
+                                              const cellValue = row[key];
+                                              if (cellValue) {
+                                                // Parse ISO date string or other date formats
+                                                let date: Date | null = null;
+                                                if (typeof cellValue === 'string') {
+                                                  // Handle ISO format like "2026-10-25T00:00:00.000Z"
+                                                  date = new Date(cellValue);
+                                                  if (isNaN(date.getTime())) {
+                                                    // Try to parse as YYYY-MM-DD
+                                                    const parts = cellValue.split('-');
+                                                    if (parts.length === 3) {
+                                                      date = new Date(parts[0] + '-' + parts[1] + '-' + parts[2]);
+                                                    }
+                                                  }
+                                                } else if (cellValue instanceof Date) {
+                                                  date = cellValue;
+                                                }
+
+                                                // Convert to dd/mm/yyyy format
+                                                if (date && !isNaN(date.getTime())) {
+                                                  const day = String(date.getDate()).padStart(2, '0');
+                                                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                                                  const year = date.getFullYear();
+                                                  row[key] = `${day}/${month}/${year}`;
+                                                  setEditedCells(prev => new Set([...prev, `${rowIdx}_${key}`]));
+                                                }
+                                              }
+                                            });
+                                            setEditingDocData(newData);
+                                          }
+                                        }}
+                                        className="text-xs border rounded px-1 py-0.5 bg-white"
+                                        title="Set data type for this column"
+                                      >
+                                        <option value="text">Text</option>
+                                        <option value="number">Number</option>
+                                        <option value="date">Date</option>
+                                        <option value="email">Email</option>
+                                        <option value="phone">Phone</option>
+                                        <option value="currency">Currency</option>
+                                      </select>
                                     </div>
                                   </th>
                                 ))}
@@ -1442,22 +1518,67 @@ const ReportViewPage: React.FC = () => {
                                     const cellRef = generateCellName(d.id, d.filename, colIdx, rowIdx);
                                     const isSelected = selectedCellForFormula === cellRef;
                                     const hasFormula = cellFormulas[cellRef];
+                                    const dataType = columnDataTypes[key] || 'text';
+
+                                    // Render input based on data type
+                                    const renderInput = () => {
+                                      const commonProps = {
+                                        value: row[key] ?? '',
+                                        onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+                                          const newData = [...editingDocData];
+                                          let newValue: any = (e.target as HTMLInputElement).value;
+
+                                          // Type conversion based on data type
+                                          if (dataType === 'number') {
+                                            newValue = newValue === '' ? '' : Number(newValue);
+                                          } else if (dataType === 'currency') {
+                                            newValue = newValue === '' ? '' : parseFloat(newValue);
+                                          }
+
+                                          newData[rowIdx][key] = newValue;
+                                          setEditingDocData(newData);
+                                          setEditedCells(prev => new Set([...prev, cellKey]));
+                                        },
+                                        className: `w-full px-2 py-1 border rounded text-sm cursor-pointer ${isSelected ? 'border-purple-500 bg-purple-100 ring-2 ring-purple-300' :
+                                          hasFormula ? 'border-blue-400 bg-blue-50' :
+                                            isEdited ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
+                                          } focus:outline-none focus:ring-2 focus:ring-blue-500`,
+                                        title: hasFormula ? `Formula: ${cellFormulas[cellRef]}` : 'Click to select or use formula input'
+                                      };
+
+                                      switch (dataType) {
+                                        case 'number':
+                                        case 'currency':
+                                          return <input type="number" {...commonProps} step="any" />;
+                                        case 'date':
+                                          // Display as text in dd/mm/yyyy format since we transform to that format
+                                          return <input type="text" placeholder="dd/mm/yyyy" {...commonProps} />;
+                                        case 'email':
+                                          return <input type="email" {...commonProps} />;
+                                        case 'phone':
+                                          return <input type="tel" {...commonProps} />;
+                                        default:
+                                          return <input type="text" {...commonProps} />;
+                                      }
+                                    };
 
                                     return (
-                                      <td key={cellKey} className="border border-gray-300 px-3 py-2 relative group">
-                                        <input
-                                          type="text"
-                                          value={row[key] ?? ''}
-                                          onClick={() => {
-                                            setSelectedCellForFormula(cellRef);
-                                            // Insert cell reference at cursor position in formula input
-                                            const currentFormula = formulaInput;
+                                      <td
+                                        key={cellKey}
+                                        className="border border-gray-300 px-3 py-2 relative group"
+                                        onMouseDown={(e: React.MouseEvent) => {
+                                          // onMouseDown fires BEFORE input loses focus on blur
+                                          // This ensures editingModeRef still has the correct value
+                                          if (editingModeRef.current === 'formula') {
+                                            e.preventDefault(); // Prevent input from losing focus yet
                                             const inputEl = formulaInputRef.current;
                                             if (inputEl) {
-                                              const cursorPos = inputEl.selectionStart || 0;
+                                              const cursorPos = inputEl.selectionStart !== undefined ? inputEl.selectionStart : formulaInput.length;
+                                              const currentFormula = formulaInput;
                                               const newFormula = currentFormula.slice(0, cursorPos) + cellRef + currentFormula.slice(cursorPos);
                                               setFormulaInput(newFormula);
-                                              // Move cursor after the inserted cell reference
+
+                                              // Refocus the formula textarea and position cursor after the inserted reference
                                               setTimeout(() => {
                                                 if (inputEl) {
                                                   inputEl.selectionStart = inputEl.selectionEnd = cursorPos + cellRef.length;
@@ -1465,19 +1586,27 @@ const ReportViewPage: React.FC = () => {
                                                 }
                                               }, 0);
                                             }
-                                          }}
-                                          onChange={(e) => {
-                                            const newData = [...editingDocData];
-                                            newData[rowIdx][key] = e.target.value;
-                                            setEditingDocData(newData);
-                                            setEditedCells(prev => new Set([...prev, cellKey]));
-                                          }}
-                                          className={`w-full px-2 py-1 border rounded text-sm cursor-pointer ${isSelected ? 'border-purple-500 bg-purple-100 ring-2 ring-purple-300' :
-                                            hasFormula ? 'border-blue-400 bg-blue-50' :
-                                              isEdited ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
-                                            } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                                          title={hasFormula ? `Formula: ${cellFormulas[cellRef]}` : 'Click to add to formula'}
-                                        />
+                                          } else if (editingModeRef.current === 'cellName') {
+                                            e.preventDefault(); // Prevent input from losing focus yet
+                                            const inputEl = cellNameInputRef.current;
+                                            if (inputEl) {
+                                              const cursorPos = inputEl.selectionStart !== undefined ? inputEl.selectionStart : (selectedCellForFormula?.length || 0);
+                                              const currentName = selectedCellForFormula || '';
+                                              const newName = currentName.slice(0, cursorPos) + cellRef + currentName.slice(cursorPos);
+                                              setSelectedCellForFormula(newName);
+
+                                              // Refocus the cell name input and position cursor after the inserted reference
+                                              setTimeout(() => {
+                                                if (inputEl) {
+                                                  inputEl.selectionStart = inputEl.selectionEnd = cursorPos + cellRef.length;
+                                                  inputEl.focus();
+                                                }
+                                              }, 0);
+                                            }
+                                          }
+                                        }}
+                                      >
+                                        {renderInput()}
                                         <div className="hidden group-hover:block absolute bottom-full left-0 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap mb-1 z-10">
                                           <div>{cellRef}</div>
                                           {hasFormula && <div className="text-yellow-300">Formula: {cellFormulas[cellRef]}</div>}
@@ -1508,29 +1637,75 @@ const ReportViewPage: React.FC = () => {
                         </div>
 
                         {/* Computed Cells Section */}
-                        <div className="mt-4 p-3 bg-purple-50 border border-purple-200 rounded">
+                        <div className="mt-4 p-12 bg-purple-50 border border-purple-200 rounded">
                           <h5 className="font-medium text-sm text-gray-800 mb-2">🧮 Computed Cell Formula</h5>
                           <p className="text-xs text-gray-600 mb-2">
-                            Click on any cell to insert its reference into the formula. Type operators (+, -, *, /, etc.) and functions to create your expression.
+                            <strong>Click on a cell in the table below:</strong> If formula input is focused → adds cell reference to formula. Otherwise → selects the cell for formula assignment.
                           </p>
-                          <div className="flex gap-2 mb-2 flex-wrap">
-                            <input
-                              type="text"
-                              placeholder="Cell Name (e.g., 'report1_PL_B6')"
-                              className="flex-1 border rounded px-2 py-1 text-sm min-w-48"
-                              value={selectedCellForFormula || ''}
-                              readOnly
-                              title="Currently selected cell for formula"
-                            />
-                            <input
-                              ref={formulaInputRef}
-                              type="text"
-                              placeholder={`Formula (e.g., '${generateCellName(d.id, d.filename, 0, 0)}*${generateCellName(d.id, d.filename, 1, 0)}')`}
-                              className="flex-1 border rounded px-2 py-1 text-sm min-w-48 font-mono"
-                              value={formulaInput}
-                              onChange={(e) => setFormulaInput(e.target.value)}
-                              title="Type formula here or click cells to insert their references"
-                            />
+
+                          {/* Guide Section */}
+                          <details className="mb-3 border border-purple-300 bg-white rounded p-2 text-xs">
+                            <summary className="font-medium text-gray-700 cursor-pointer hover:text-purple-600">📖 Formula Guide & Examples</summary>
+                            <div className="mt-2 space-y-2 text-gray-600">
+                              <p><strong>Formulas are JavaScript expressions</strong> that return a single value. Click cells to insert their references.</p>
+
+                              <div className="bg-gray-50 border-l-4 border-purple-400 pl-2 py-1">
+                                <p className="font-medium text-gray-700">Simple Examples:</p>
+                                <code className="block text-xs bg-gray-100 p-1 rounded mt-1">
+                                  {`${generateCellName(d.id, d.filename, 0, 0)} + ${generateCellName(d.id, d.filename, 1, 0)}`}
+                                </code>
+                                <code className="block text-xs bg-gray-100 p-1 rounded mt-1">
+                                  {`${generateCellName(d.id, d.filename, 0, 0)} * 0.15`}
+                                </code>
+                              </div>
+
+                              <div className="bg-gray-50 border-l-4 border-blue-400 pl-2 py-1">
+                                <p className="font-medium text-gray-700">Complex Example (Multi-step calculation):</p>
+                                <code className="block text-xs bg-gray-100 p-1 rounded mt-1 font-mono">
+                                  {`const base = ${generateCellName(d.id, d.filename, 0, 0)};\nconst rate = ${generateCellName(d.id, d.filename, 1, 0)} / 100;\nconst result = base * (1 + rate);\nreturn Math.round(result * 100) / 100;`}
+                                </code>
+                              </div>
+
+                              <div className="bg-gray-50 border-l-4 border-green-400 pl-2 py-1">
+                                <p className="font-medium text-gray-700">Text & Number Combination:</p>
+                                <code className="block text-xs bg-gray-100 p-1 rounded mt-1 font-mono">
+                                  {`const firstName = "${generateCellName(d.id, d.filename, 0, 0)}";\nconst lastName = "${generateCellName(d.id, d.filename, 1, 0)}";\nconst age = ${generateCellName(d.id, d.filename, 2, 0)};\nreturn firstName + " " + lastName + " (Age: " + age + ")";`}
+                                </code>
+                              </div>
+
+                              <p className="text-gray-600 italic">💡 <strong>Note:</strong> The formula must return a value at the end (explicitly or implicitly). Use <code>return</code> keyword for complex formulas.</p>
+                            </div>
+                          </details>
+
+                          <div className="space-y-2 mb-3">
+                            <div>
+                              <label className="text-xs font-medium text-gray-700 block mb-1">Step 1: Click a cell or enter cell name</label>
+                              <input
+                                ref={cellNameInputRef}
+                                type="text"
+                                placeholder="Cell Name (e.g., 'report1_PL_B6') - Click a cell to set or click here and click cells to insert"
+                                className="w-full border rounded px-2 py-1 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={selectedCellForFormula || ''}
+                                onChange={(e) => setSelectedCellForFormula(e.target.value)}
+                                onFocus={() => { editingModeRef.current = 'cellName'; }}
+                                onBlur={() => { editingModeRef.current = null; }}
+                                title="Select cell by clicking table cells, or type/paste cell reference"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-gray-700 block mb-1">Step 2: Enter formula</label>
+                              <textarea
+                                ref={formulaInputRef}
+                                placeholder={`JavaScript expression (e.g., '${generateCellName(d.id, d.filename, 0, 0)} * 2' or 'A1 + B1 * 0.1')`}
+                                className="w-full border rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500 resize-vertical min-h-24"
+                                value={formulaInput}
+                                onChange={(e) => setFormulaInput(e.target.value)}
+                                onFocus={() => { editingModeRef.current = 'formula'; }}
+                                onBlur={() => { editingModeRef.current = null; }}
+                                title="Focus this field and click cells to insert their references"
+                              />
+                            </div>
+                          </div>                            <div className="flex gap-2 flex-wrap">
                             <Button
                               size="sm"
                               onClick={() => {
@@ -1612,8 +1787,8 @@ const ReportViewPage: React.FC = () => {
                               Clear
                             </Button>
                           </div>
-                          <p className="text-xs text-gray-600">
-                            <strong>How to use:</strong> Click a cell in the table to select it, enter your formula, then click "Set Formula" to apply.
+                          <p className="text-xs text-gray-600 mt-2">
+                            <strong>How to use:</strong> Click a cell in the table to select it, enter your JavaScript formula in the textarea, then click "Set Formula" to apply. The calculated value will immediately appear in the cell after saving. Open "Formula Guide & Examples" above for syntax help.
                           </p>
                         </div>
 
@@ -1638,20 +1813,27 @@ const ReportViewPage: React.FC = () => {
                                   body: JSON.stringify({
                                     partialUpdate: changedRows,
                                     newRows: Array.from(editingNewRows).map(idx => editingDocData[idx]),
-                                    cellFormulas: Object.keys(cellFormulas).length > 0 ? cellFormulas : null
+                                    cellFormulas: Object.keys(cellFormulas).length > 0 ? cellFormulas : null,
+                                    columnDataTypes: Object.keys(columnDataTypes).length > 0 ? columnDataTypes : null
                                   })
                                 });
 
                                 if (res.ok) {
                                   const json = await res.json();
-                                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? { ...x, file_content: json.file_content || editingDocData, formulas: json.formulas || cellFormulas } : x));
+                                  setUploadedDocs(prev => prev.map(x => x.id === d.id ? {
+                                    ...x,
+                                    file_content: json.file_content || editingDocData,
+                                    formulas: json.formulas || cellFormulas,
+                                    columnDataTypes: json.columnDataTypes || columnDataTypes
+                                  } : x));
                                   setEditingDocId(null);
                                   setEditedCells(new Set());
                                   setEditingNewRows(new Set());
                                   setCellFormulas({});
+                                  setColumnDataTypes({});
                                   setSelectedCellForFormula(null);
                                   setFormulaInput('');
-                                  try { swalSuccess('Saved', 'Changes saved successfully'); } catch (e) { }
+                                  try { swalSuccess('Saved', 'Only changed cells and data types were saved'); } catch (e) { }
                                 } else {
                                   console.error('Save failed:', await res.text());
                                   try { swalError('Failed', 'Failed to save changes'); } catch (e) { }
@@ -1673,8 +1855,10 @@ const ReportViewPage: React.FC = () => {
                               setEditingDocData([]);
                               setEditingNewRows(new Set());
                               setCellFormulas({});
+                              setColumnDataTypes({});
                               setSelectedCellForFormula(null);
                               setFormulaInput('');
+                              editingModeRef.current = null;
                             }}
                           >
                             Cancel

@@ -1,7 +1,13 @@
 
 // MUST be first! Load environment variables before importing anything that uses them
 import dotenv from 'dotenv';
-dotenv.config();
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Set up path helpers (needed for dotenv.config)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 import express from 'express';
 import { Pool } from 'pg';
@@ -163,8 +169,6 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
 }
 import cookieSession from 'cookie-session';
 import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import ExcelJS from 'exceljs';
@@ -173,9 +177,7 @@ import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
 import { OpenAIEmbeddings } from '@langchain/openai';
 
-// ESM: provide __dirname/__filename helpers since Node ESM doesn't provide them by default
-const __filename = typeof fileURLToPath === 'function' ? fileURLToPath(import.meta.url) : undefined;
-const __dirname = __filename ? path.dirname(__filename) : process.cwd();
+// __dirname and __filename are already declared at the top after dotenv.config()
 
 const app = express();
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT) || 3000;
@@ -1851,6 +1853,7 @@ async function initDb() {
                 report_id INTEGER REFERENCES ${tables.ACTIVITY_REPORTS}(id) ON DELETE CASCADE,
                 file_content JSONB,
             cell_formulas JSONB,
+            column_data_types JSONB,
             filename TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         )`
@@ -1970,6 +1973,8 @@ async function initDb() {
         await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS account_activated_at TIMESTAMP`);
         // Add deactivated_at for tracking when accounts were deactivated
         await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP`);
+        // Add column_data_types to uploaded_docs to support per-column type configuration
+        await pool.query(`ALTER TABLE ${tables.UPLOADED_DOCS} ADD COLUMN IF NOT EXISTS column_data_types JSONB`);
         // Add powerbi_url and related columns to activities to support activity-level Power BI embeds
         await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
         await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
@@ -4809,6 +4814,98 @@ app.post('/auth/register', async (req, res) => {
             }
         }
 
+        // Send password email if password was provided (self-registration with password)
+        if (password) {
+            try {
+                const smtpConfig = {
+                    host: process.env.SMTP_HOST,
+                    port: parseInt(process.env.SMTP_PORT || '587'),
+                    secure: (process.env.SMTP_PORT || '587') === '465', // true for 465, false for other ports
+                    auth: {
+                        user: process.env.SMTP_USER,
+                        pass: process.env.SMTP_PASSWORD
+                    }
+                };
+
+                if (smtpConfig.host && smtpConfig.auth.user && smtpConfig.auth.pass) {
+                    const nm = await import('nodemailer');
+                    const transporter = nm.createTransport(smtpConfig);
+
+                    const emailContent = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <style>
+                            body { font-family: Arial, sans-serif; color: #333; }
+                            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                            .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                            .content { background-color: #f5f5f5; padding: 20px; border: 1px solid #ddd; }
+                            .credentials { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #3498db; }
+                            .credentials p { margin: 8px 0; font-family: monospace; }
+                            .button { display: inline-block; background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 15px 0; }
+                            .footer { background-color: #34495e; color: white; padding: 15px; text-align: center; border-radius: 0 0 5px 5px; font-size: 12px; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <div class="header">
+                                <h1>Welcome to DQAi Platform</h1>
+                            </div>
+                            <div class="content">
+                                <p>Dear <strong>${firstName || lastName || 'User'}</strong>,</p>
+                                
+                                <p>Welcome to the <strong>DQAi Data Collection Platform</strong>! Your account has been successfully created.</p>
+                                
+                                <p>You can now log in to the platform using the credentials below:</p>
+                                
+                                <div class="credentials">
+                                    <p><strong>Email:</strong> ${email}</p>
+                                    <p><strong>Password:</strong> ${password}</p>
+                                </div>
+                                
+                                <p><strong>Getting Started:</strong></p>
+                                <ol>
+                                    <li>Visit the login page using the button below</li>
+                                    <li>Enter your email and password</li>
+                                    <li>Start using the platform to collect and manage data</li>
+                                </ol>
+                                
+                                <p style="text-align: center;">
+                                    <a href="${process.env.FRONTEND_HOST || 'https://app.dqai.org'}/login" class="button">Log In Now</a>
+                                </p>
+                                
+                                <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                                    <strong>For security:</strong> Please keep your password confidential. If you did not create this account or have any questions, please contact your administrator immediately.
+                                </p>
+                            </div>
+                            <div class="footer">
+                                <p><strong>DQAi Platform</strong></p>
+                                <p>Data Quality Assessment Initiative - Data Collection Platform</p>
+                                <p style="margin-top: 10px; color: #bbb;">This is an automated email from the DQAi Platform. Please do not reply directly to this email.</p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>
+                    `;
+
+                    const plainText = `Hello ${firstName || lastName || 'User'},\n\nWelcome to DQAi Platform!\n\nYour account has been created with the following credentials:\nEmail: ${email}\nPassword: ${password}\n\nPlease log in at: ${process.env.FRONTEND_HOST || 'https://app.dqai.org'}/login\n\nFor security, please keep your password confidential.\n\nBest regards,\nDQAi Platform Team`;
+
+                    await transporter.sendMail({
+                        from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER,
+                        to: email,
+                        subject: 'Welcome to DQAi Platform - Your Account Credentials',
+                        html: emailContent,
+                        text: plainText
+                    });
+                    console.log('Password email sent successfully to', email);
+                } else {
+                    console.warn('SMTP not configured in environment; cannot send password email');
+                }
+            } catch (e) {
+                console.error('Failed to send password email', e);
+            }
+        }
+
         // Optionally create default role assignment rows later via admin
         // set session user and business
         try { req.session.userId = u.id; req.session.businessId = u.business_id || businessId || null; } catch (e) { /* ignore */ }
@@ -7373,13 +7470,14 @@ app.post('/api/uploaded_docs', async (req, res) => {
 
 app.put('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
-    const { rowIndex, colKey, newValue, partialUpdate, newRows, cellFormulas } = req.body || {};
+    const { rowIndex, colKey, newValue, partialUpdate, newRows, cellFormulas, columnDataTypes } = req.body || {};
     try {
         const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
         const doc = docRes.rows[0];
         let content = doc.file_content || [];
         let formulas = doc.cell_formulas || {};
+        let dataTypes = doc.column_data_types || {};
 
         // If stored as string, try to parse
         if (typeof content === 'string') {
@@ -7387,6 +7485,9 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
         }
         if (typeof formulas === 'string') {
             try { formulas = JSON.parse(formulas); } catch (e) { formulas = {}; }
+        }
+        if (typeof dataTypes === 'string') {
+            try { dataTypes = JSON.parse(dataTypes); } catch (e) { dataTypes = {}; }
         }
         if (!Array.isArray(content)) return res.status(400).json({ error: 'file_content must be an array of rows' });
 
@@ -7398,6 +7499,11 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
         // Handle cell formulas update
         if (cellFormulas && typeof cellFormulas === 'object') {
             formulas = { ...formulas, ...cellFormulas };
+        }
+
+        // Handle column data types update
+        if (columnDataTypes && typeof columnDataTypes === 'object') {
+            dataTypes = { ...dataTypes, ...columnDataTypes };
         }
 
         // Batch partial update: { partialUpdate: { [rowIndex]: { colKey: value, ... }, ... } }
@@ -7412,8 +7518,8 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
                 }
                 content[idx] = row;
             }
-            await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1, cell_formulas = $2 WHERE id = $3`, [JSON.stringify(content), JSON.stringify(formulas), id]);
-            return res.json({ success: true, file_content: content, formulas: formulas });
+            await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1, cell_formulas = $2, column_data_types = $3 WHERE id = $4`, [JSON.stringify(content), JSON.stringify(formulas), JSON.stringify(dataTypes), id]);
+            return res.json({ success: true, file_content: content, formulas: formulas, columnDataTypes: dataTypes });
         }
 
         // Single cell update fallback
@@ -7421,8 +7527,8 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
         const row = content[rowIndex] || {};
         row[colKey] = newValue;
         content[rowIndex] = row;
-        await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1, cell_formulas = $2 WHERE id = $3`, [JSON.stringify(content), JSON.stringify(formulas), id]);
-        res.json({ success: true, file_content: content, formulas: formulas });
+        await pool.query(`UPDATE ${tables.UPLOADED_DOCS} SET file_content = $1, cell_formulas = $2, column_data_types = $3 WHERE id = $4`, [JSON.stringify(content), JSON.stringify(formulas), JSON.stringify(dataTypes), id]);
+        res.json({ success: true, file_content: content, formulas: formulas, columnDataTypes: dataTypes });
     } catch (err) {
         console.error('Failed to update uploaded_doc', err);
         res.status(500).json({ error: 'Failed to update uploaded_doc' });
@@ -7556,27 +7662,38 @@ app.post('/api/reports', async (req, res) => {
                     if (answersObj && typeof answersObj === 'object') {
                         for (const [qId, val] of Object.entries(answersObj)) {
                             try {
-                                // If value is an array, treat as a repeatable group: each element is a row object
+                                // Check if this is a repeatable section array (array of objects) vs checkbox array (array of values)
                                 if (Array.isArray(val)) {
-                                    for (let ri = 0; ri < val.length; ri++) {
-                                        const row = val[ri] || {};
-                                        if (!row || typeof row !== 'object') continue;
-                                        for (const [subQId, subVal] of Object.entries(row)) {
-                                            try {
-                                                let answerVal = subVal;
-                                                let reviewersComment = null; let qiFollowup = null; let score = null;
-                                                if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
-                                                    if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
-                                                    reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
-                                                    qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
-                                                    score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
-                                                }
-                                                // store only the primitive value in answer_value (TEXT), keep grouping metadata in separate columns
-                                                const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
-                                                const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
-                                                await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
-                                            } catch (ie) { console.error('Failed to insert repeated answer during report POST-as-update for question', subQId, ie); }
+                                    // Determine if this is a repeatable section (array of objects) or checkbox/multi-select (array of primitives)
+                                    const isRepeatableSection = val.length > 0 && val.some(item => item && typeof item === 'object' && !(item instanceof Array));
+
+                                    if (isRepeatableSection) {
+                                        // Process as repeatable section: each array element is a row object
+                                        for (let ri = 0; ri < val.length; ri++) {
+                                            const row = val[ri] || {};
+                                            if (!row || typeof row !== 'object') continue;
+                                            for (const [subQId, subVal] of Object.entries(row)) {
+                                                try {
+                                                    let answerVal = subVal;
+                                                    let reviewersComment = null; let qiFollowup = null; let score = null;
+                                                    if (subVal && typeof subVal === 'object' && !(subVal instanceof Array)) {
+                                                        if (Object.prototype.hasOwnProperty.call(subVal, 'value')) answerVal = subVal.value;
+                                                        reviewersComment = subVal.reviewersComment || subVal.reviewers_comment || null;
+                                                        qiFollowup = subVal.qualityImprovementFollowup || subVal.quality_improvement_followup || null;
+                                                        score = (typeof subVal.score !== 'undefined') ? subVal.score : null;
+                                                    }
+                                                    // store only the primitive value in answer_value (TEXT), keep grouping metadata in separate columns
+                                                    const answerGroup = `${reportId}__${String(qId).replace(/\s+/g, '_')}_${ri}`;
+                                                    const storedAnswerValue = (answerVal === null || typeof answerVal === 'undefined') ? null : (typeof answerVal === 'object' ? (Object.prototype.hasOwnProperty.call(answerVal, 'value') ? String(answerVal.value) : JSON.stringify(answerVal)) : String(answerVal));
+                                                    await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, subQId, storedAnswerValue, ri, qId, answerGroup, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), reviewersComment, qiFollowup, score]);
+                                                } catch (ie) { console.error('Failed to insert repeated answer during report POST-as-update for question', subQId, ie); }
+                                            }
                                         }
+                                    } else {
+                                        // Process as checkbox/multi-select answer: array of primitive values
+                                        // Store as single answer with JSON array as value
+                                        const storedAnswerValue = JSON.stringify(val);
+                                        await client.query(`INSERT INTO ${tables.ANSWERS} (report_id, activity_id, question_id, answer_value, answer_row_index, question_group, answer_group, facility_id, user_id, recorded_by, answer_datetime, reviewers_comment, quality_improvement_followup, score) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [reportId, payload.activityId || payload.activity_id || existing.rows[0].activity_id, qId, storedAnswerValue, null, null, null, payload.facilityId || payload.facility_id || existing.rows[0].facility_id || null, payload.userId || payload.user_id || existing.rows[0].user_id || null, req.session && req.session.userId ? req.session.userId : null, new Date(), null, null, null]);
                                     }
                                 } else {
                                     let answerVal = val; let reviewersComment = null; let qiFollowup = null; let score = null;
