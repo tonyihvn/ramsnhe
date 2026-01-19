@@ -7,7 +7,7 @@ import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
-import { filterOptionsByCondition } from '../utils/conditionEvaluator';
+import { filterOptionsByCondition, evaluateCondition } from '../utils/conditionEvaluator';
 
 import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -161,7 +161,7 @@ const SearchableSelect: React.FC<{
     );
 };
 
-    const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any> }) => {
+    const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {}, allQuestions = [], fieldMapLocal = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any>; allQuestions?: Question[]; fieldMapLocal?: Record<string, any> }) => {
         // Local state/hooks used by some input types (e.g. location picker)
         const [showLocationMap, setShowLocationMap] = useState(false);
         const handleLocationClick = () => setShowLocationMap(s => !s);
@@ -178,7 +178,8 @@ const SearchableSelect: React.FC<{
             case AnswerType.TIME:
                 return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} disabled={!!disabled} />;
             case AnswerType.DROPDOWN:
-                const filteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+                // Use fieldMapLocal for option filtering - same as question visibility conditions
+                const filteredOptions = filterOptionsByCondition(question.options || [], fieldMapLocal);
                 if (question.metadata && question.metadata.searchable) {
                     return (
                         <SearchableSelect
@@ -983,9 +984,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const getPageKey = (pageId: string) => `/activities/fill/${activityId || ''}:page:${pageId}`;
     const visiblePages = formDef.pages.filter(page => {
       const pageKey = getPageKey(page.id);
-      console.log(`[VISIBILITY] Page "${page.name}" (id=${page.id}), pageKey="${pageKey}", pagePerms=${pagePerms ? pagePerms.length : 0} records`);
       const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
-      console.log(`[VISIBILITY]   → can_view=${viewAllowed}`);
       return viewAllowed;
     });
 
@@ -1048,7 +1047,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                             // build fieldName -> value map for visibility/computed evaluation
                                             const fieldMapLocal: Record<string, any> = {};
                                             (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
-                                                if (qq && qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
+                                                if (qq && qq.fieldName) {
+                                                  const val = answers[qq.id];
+                                                  // If the value is an object with a 'value' property (from scored options), extract just the value
+                                                  fieldMapLocal[qq.fieldName] = (val && typeof val === 'object' && 'value' in val) ? val.value : val;
+                                                }
                                             })));
 
                                             if (!section.isRepeatable) {
@@ -1085,7 +1088,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                                 <div key={q.id} className={colClass}>
                                                                     {/* Render the question input; label is provided by the input component itself to avoid duplication */}
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={answers} />
+                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={answers} allQuestions={formDef.pages.flatMap(p => p.sections.flatMap(s => s.questions))} fieldMapLocal={fieldMapLocal} />
                                                                     {/* Show reviewer comment field below if enabled (but not for paragraph elements) */}
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
                                                                         <div className="mt-2">
@@ -1144,7 +1147,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                             return (
                                                                 <div key={`${q.id}_${rowIndex}`} className={colClass}>
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={row} />
+                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={row} allQuestions={formDef.pages.flatMap(p => p.sections.flatMap(s => s.questions))} fieldMapLocal={fieldMapLocal} />
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
                                                                         <div className="mt-2">
                                                                             <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>

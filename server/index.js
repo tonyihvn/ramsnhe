@@ -2476,7 +2476,7 @@ async function initDb() {
                 await pool.query(`INSERT INTO ${tables.ROLE_PERMISSIONS} (role_id, permission_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [roleId, permId]);
             }
         }
-        console.log('Default roles and permissions seeded (if they were missing).');
+        // Default roles and permissions seeded
     } catch (err) {
         console.error('Failed to seed roles/permissions:', err);
     }
@@ -2490,9 +2490,9 @@ async function initDb() {
             const userId = ures.rows[0].id;
             const roleId = rres.rows[0].id;
             await pool.query(`INSERT INTO ${tables.USER_ROLES} (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, roleId]);
-            console.log('Assigned Admin role to default admin user (post-seed)');
+            // Admin role assigned to default admin user
         } else {
-            console.log('Admin user or Admin role not found during post-seed assignment');
+            // Admin user or Admin role not found during post-seed assignment
         }
     } catch (err) {
         console.error('Failed to assign Admin role to default admin user (post-seed):', err);
@@ -7107,7 +7107,6 @@ app.get('/api/activities/:activityId/role_permissions', async (req, res) => {
 
         try {
             // Get the role_id from the role name, then get permissions
-            console.log('Fetching permissions for activity:', id, 'userRole:', userRoleName, 'tables.ACTIVITY_ROLES:', tables.ACTIVITY_ROLES, 'tables.ROLES:', tables.ROLES);
             const result = await pool.query(
                 `SELECT ar.*, COALESCE(r.name, 'Unknown Role') as role_name 
                  FROM ${tables.ACTIVITY_ROLES} ar 
@@ -7117,7 +7116,6 @@ app.get('/api/activities/:activityId/role_permissions', async (req, res) => {
                  ORDER BY ar.page_key, ar.section_key`,
                 [id, userRoleName]
             );
-            console.log('Permissions found:', result.rows.length, 'for role:', userRoleName);
             res.json(result.rows);
         } catch (dbError) {
             console.error('Database error in activity permissions:', dbError.message, 'Code:', dbError.code);

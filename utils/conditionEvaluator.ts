@@ -36,6 +36,10 @@ export const evaluateCondition = (expression: string | undefined, context: Recor
     `);
 
     const result = evaluateFn(context || {});
+    
+    // Debug logging: always log for visibility
+    console.log(`[CONDITION] "${expression}" → ${result} | Context: ${JSON.stringify(context)}`);
+    
     return Boolean(result);
   } catch (error) {
     // Suppress the warning for ReferenceError about undefined variables
@@ -44,7 +48,8 @@ export const evaluateCondition = (expression: string | undefined, context: Recor
       // Silent fail - just return true to show the option by default
       return true;
     }
-    console.warn(`Failed to evaluate condition: "${expression}"`, error);
+    // Only log non-ReferenceError exceptions
+    console.debug(`Condition evaluation warning: "${expression}"`, error);
     // If evaluation fails, show the option by default for safety
     return true;
   }
@@ -60,5 +65,11 @@ export const filterOptionsByCondition = (
   options: Array<{ label: string; value: string; score?: number; showif?: string }>,
   context: Record<string, any>
 ): Array<{ label: string; value: string; score?: number; showif?: string }> => {
+  if (options && options.length > 0) {
+    const hasConditions = options.some(o => o.showif);
+    if (hasConditions) {
+      console.log(`[FILTER_OPTIONS] Filtering ${options.length} options with context:`, context);
+    }
+  }
   return options.filter(option => evaluateCondition(option.showif, context));
 };
