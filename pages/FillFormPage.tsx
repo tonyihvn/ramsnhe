@@ -234,7 +234,7 @@ const SearchableSelect: React.FC<{
                     </div>
                 );
             case AnswerType.CHECKBOX:
-                const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+                const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], fieldMapLocal);
                 const currentVals = Array.isArray(value) ? value : [];
                 const handleCheck = (val: string, checked: boolean) => {
                     if (checked) onChange([...currentVals, val]);
@@ -242,9 +242,12 @@ const SearchableSelect: React.FC<{
                 };
                 return (
                     <div>
-                        {checkboxFilteredOptions?.map((opt) => (
-                            <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
-                        ))}
+                        <label className="block text-sm font-medium text-gray-700 mb-2">{question.questionText}</label>
+                        <div className="space-y-2">
+                            {checkboxFilteredOptions?.map((opt) => (
+                                <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
+                            ))}
+                        </div>
                     </div>
                 );
             case AnswerType.FILE:
