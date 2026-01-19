@@ -2,6 +2,7 @@
 export const appRoutes: { path: string; label?: string }[] = [
     { path: '/', label: 'Landing Page' },
     { path: '/login', label: 'Login' },
+    { path: '/email-verified', label: 'Email Verification' },
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/programs', label: 'Programs' },
     { path: '/activities/build/:activityId', label: 'Build Activity Form' },
@@ -25,6 +26,7 @@ export const appRoutes: { path: string; label?: string }[] = [
     { path: '/super-admin', label: 'Super Admin Console' },
     { path: '/super-admin/users', label: 'User Management' },
     { path: '/super-admin/landing-page', label: 'Landing Page Config' },
+    { path: '/super-admin/account-approvals', label: 'Account Approvals' },
 ];
 
 export default appRoutes;

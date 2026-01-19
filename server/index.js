@@ -2184,6 +2184,40 @@ async function initDb() {
             )`);
         } catch (e) { /* ignore */ }
 
+        // Ensure account requests table exists for company registration workflow
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.ACCOUNT_REQUESTS} (
+                id SERIAL PRIMARY KEY,
+                first_name TEXT,
+                last_name TEXT,
+                email TEXT UNIQUE,
+                password TEXT,
+                business_name TEXT,
+                phone_number TEXT,
+                industry TEXT,
+                address TEXT,
+                website TEXT,
+                email_verification_token TEXT,
+                email_verified BOOLEAN DEFAULT FALSE,
+                email_verified_at TIMESTAMP,
+                status TEXT DEFAULT 'pending',
+                rejection_reason TEXT,
+                approved_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )`);
+        } catch (e) { /* ignore */ }
+
+        // Ensure account_requests table has all required columns
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS email_verification_token TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS industry TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS address TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS website TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS rejection_reason TEXT`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACCOUNT_REQUESTS} ADD COLUMN IF NOT EXISTS approved_by INTEGER`); } catch (e) { /* ignore */ }
+
         // Add last_login_at to users table if missing
         try { await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`); } catch (e) { /* ignore */ }
 
@@ -4736,82 +4770,139 @@ app.post('/auth/login', async (req, res) => {
     }
 });
 
-// Public registration endpoint: allows self-registration for non-admin roles (public/controller/validator)
+// Public registration endpoint: creates account request for company registration
 app.post('/auth/register', async (req, res) => {
     try {
-        const { firstName, lastName, email, password, organizationName, phoneNumber } = req.body || {};
-        if (!email) return res.status(400).json({ error: 'Missing email' });
-        // Force self-registered users to be 'public' role only. All other roles must be created by an admin.
-        const requested = 'public';
+        const { firstName, lastName, email, password, organizationName, phoneNumber, industry, address, website } = req.body || {};
+        if (!email || !password) return res.status(400).json({ error: 'Missing email or password' });
 
-        // check existing
-        const existing = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [email]);
-        if (existing.rows.length > 0) return res.status(409).json({ error: 'Email already registered' });
-
-        let hashed = null;
-        if (password) {
-            try { hashed = await bcrypt.hash(password, 10); } catch (e) { hashed = password; }
+        // Check if email already exists in account_requests
+        const existingRequest = await pool.query(`SELECT id FROM ${tables.ACCOUNT_REQUESTS} WHERE email = $1`, [email]);
+        if (existingRequest.rows.length > 0) {
+            return res.status(409).json({ error: 'Email already has a pending or processed registration request' });
         }
 
-        // Determine whether to require email verification
-        const verifyToggle = (process.env.ENABLE_EMAIL_VERIFICATION || '').toString().toLowerCase();
-        const requireVerify = (verifyToggle === 'true' || verifyToggle === '1');
-        const initialStatus = requireVerify ? 'Pending' : 'Active';
+        // Also check if email exists in users table
+        const existingUser = await pool.query(`SELECT id FROM ${tables.USERS} WHERE email = $1`, [email]);
+        if (existingUser.rows.length > 0) {
+            return res.status(409).json({ error: 'Email already registered' });
+        }
 
-        // create business/organization record if organization details provided
-        let businessId = null;
+        // Generate email verification token
+        const crypto = await import('crypto');
+        const emailVerificationToken = crypto.default.randomBytes(32).toString('hex');
+
+        // Store the account request (not a user yet - stays in Pending status until approved)
+        const r = await pool.query(
+            `INSERT INTO ${tables.ACCOUNT_REQUESTS} 
+             (first_name, last_name, email, password, business_name, phone_number, 
+              industry, address, website, email_verification_token, status, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+             RETURNING id, first_name, last_name, email, business_name, phone_number, status`,
+            [firstName || null, lastName || null, email, password, organizationName || null, 
+             phoneNumber || null, industry || null, address || null, website || null,
+             emailVerificationToken, 'pending']
+        );
+
+        const accountRequest = r.rows[0];
+
+        // Send email verification email
         try {
-            // Check if landing page config locks registration to a single organization
-            try {
-                const lockRes = await pool.query(`SELECT locked_organization_id FROM ${tables.LANDING_PAGE_CONFIG} WHERE business_id = $1`, [0]);
-                if (lockRes.rows && lockRes.rows[0] && lockRes.rows[0].locked_organization_id) {
-                    businessId = lockRes.rows[0].locked_organization_id;
+            const verifyUrl = `${process.env.FRONTEND_HOST || 'https://app.example.com'}/verify-email?token=${encodeURIComponent(emailVerificationToken)}`;
+            
+            const emailContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2563eb; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
+        .content { padding: 20px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+        .button { display: inline-block; background-color: #2563eb; color: white; padding: 12px 30px; 
+                 text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .footer { font-size: 12px; color: #666; margin-top: 20px; text-align: center; }
+        .note { background-color: #f0f4f8; padding: 15px; border-radius: 5px; margin: 15px 0; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Verify Your Email Address</h1>
+        </div>
+        <div class="content">
+            <p>Hello ${firstName} ${lastName},</p>
+            <p>Thank you for registering your company with DQAi. To complete the registration process, please verify your email address by clicking the button below.</p>
+            
+            <a href="${verifyUrl}" class="button">Verify Email Address</a>
+
+            <p>Or copy and paste this link in your browser:</p>
+            <p style="word-break: break-all; font-size: 12px; color: #666;">${verifyUrl}</p>
+
+            <div class="note">
+                <strong>Note:</strong> This verification link will expire in 24 hours. After verifying your email, your account request will be reviewed by our team. You will receive another email once your account has been approved.
+            </div>
+
+            <div class="footer">
+                <p>This is an automated email. Please do not reply.</p>
+                <p>${process.env.SMTP_FROM_NAME || 'DQAi'} Platform</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+            `;
+
+            const textContent = `Hello ${firstName} ${lastName},
+
+Thank you for registering your company with DQAi. To complete the registration process, please verify your email address by visiting the link below:
+
+${verifyUrl}
+
+This verification link will expire in 24 hours. After verifying your email, your account request will be reviewed by our team. You will receive another email once your account has been approved.`;
+
+            // Send email using nodemailer
+            if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+                try {
+                    const nm = await import('nodemailer');
+                    const transporter = nm.default.createTransport({
+                        host: process.env.SMTP_HOST,
+                        port: parseInt(process.env.SMTP_PORT || '587'),
+                        secure: process.env.SMTP_PORT === '465',
+                        auth: {
+                            user: process.env.SMTP_USER,
+                            pass: process.env.SMTP_PASSWORD
+                        }
+                    });
+                    await transporter.sendMail({
+                        from: `${process.env.SMTP_FROM_NAME || 'DQAi'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+                        to: email,
+                        subject: 'Verify Your Email - DQAi Registration',
+                        html: emailContent,
+                        text: textContent
+                    });
+                    console.log(`Verification email sent to ${email}`);
+                } catch (emailError) {
+                    console.error('Failed to send verification email:', emailError);
+                    // Don't fail the registration if email send fails
                 }
-            } catch (innerE) {
-                console.warn('Failed to check locked organization for registration', innerE && innerE.message ? innerE.message : innerE);
+            } else {
+                console.warn('SMTP not configured; verification email not sent');
             }
-
-            // Only create a new business if there is no locked organization and an organizationName was provided
-            if (!businessId && organizationName) {
-                const br = await pool.query(`INSERT INTO ${tables.BUSINESSES} (name, phone) VALUES ($1, $2) RETURNING id`, [organizationName, phoneNumber || null]);
-                businessId = br.rows[0] ? br.rows[0].id : null;
-            }
-        } catch (e) { console.error('Failed to create business during registration', e); }
-
-        const r = await pool.query(`INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, role, status, business_id`, [firstName || null, lastName || null, email, hashed || null, requested, initialStatus, businessId]);
-        const u = r.rows[0];
-
-        // If verification is required, create token and send email
-        if (requireVerify) {
-            try {
-                const token = crypto.randomBytes(32).toString('hex');
-                const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-                await pool.query(`INSERT INTO ${tables.EMAIL_VERIFICATIONS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [u.id, token, expires]);
-
-                // load smtp
-                const sres = await pool.query("SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1", [businessId]);
-                const smtp = sres.rows[0] ? sres.rows[0].value : null;
-                const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
-                const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
-                if (smtp) {
-                    try {
-                        const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(smtp);
-                        const text = `Hello ${u.first_name || ''},\n\nThank you for registering. Please verify your email by clicking the link below:\n\n${verifyUrl}\n\nThis link will expire in 24 hours.`;
-                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: u.email, subject: 'Verify your email', text });
-                    } catch (e) { console.error('Failed to send verification email', e); }
-                } else {
-                    console.warn('SMTP not configured; cannot send verification email');
-                }
-            } catch (e) {
-                console.error('Failed to create/send email verification token', e);
-            }
+        } catch (e) {
+            console.error('Failed to send verification email', e);
+            // Don't fail registration if email doesn't send
         }
 
-        // Optionally create default role assignment rows later via admin
-        // set session user and business
-        try { req.session.userId = u.id; req.session.businessId = u.business_id || businessId || null; } catch (e) { /* ignore */ }
-        res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, businessId: u.business_id || businessId || null, message: requireVerify ? 'Registered. Check your email for verification link.' : 'Registered' });
+        res.json({ 
+            id: accountRequest.id, 
+            firstName: accountRequest.first_name, 
+            lastName: accountRequest.last_name, 
+            email: accountRequest.email, 
+            businessName: accountRequest.business_name,
+            status: accountRequest.status,
+            message: 'Registration successful. Please check your email to verify your email address.' 
+        });
     } catch (e) {
         console.error('Registration failed', e);
         res.status(500).json({ error: 'Registration failed' });
@@ -4841,6 +4932,117 @@ app.get('/auth/verify-email', async (req, res) => {
     } catch (e) {
         console.error('verify-email error', e);
         res.status(500).send('Verification failed');
+    }
+});
+
+// Email verification endpoint for company account registration requests
+app.get('/auth/verify-account-email', async (req, res) => {
+    try {
+        const token = req.query.token || req.query.t || null;
+        if (!token) return res.status(400).send('Missing verification token');
+        
+        const result = await pool.query(
+            `SELECT * FROM ${tables.ACCOUNT_REQUESTS} WHERE email_verification_token = $1`,
+            [String(token)]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(400).send('Invalid or expired verification token');
+        }
+        
+        const accountRequest = result.rows[0];
+        
+        // Mark email as verified
+        await pool.query(
+            `UPDATE ${tables.ACCOUNT_REQUESTS} 
+             SET email_verified = true, email_verified_at = NOW(), updated_at = NOW()
+             WHERE id = $1`,
+            [accountRequest.id]
+        );
+        
+        // Send notification email to super admin about pending approval
+        try {
+            const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'admin@example.com';
+            const notificationEmail = `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2563eb; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
+        .content { padding: 20px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+        .details { background-color: #f0f4f8; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .details p { margin: 8px 0; }
+        .button { display: inline-block; background-color: #2563eb; color: white; padding: 10px 20px; 
+                 text-decoration: none; border-radius: 5px; margin-top: 15px; }
+        .footer { font-size: 12px; color: #666; margin-top: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>New Account Request Verification</h1>
+        </div>
+        <div class="content">
+            <p>A new company account has completed email verification and is ready for review.</p>
+            
+            <div class="details">
+                <p><strong>First Name:</strong> ${accountRequest.first_name}</p>
+                <p><strong>Last Name:</strong> ${accountRequest.last_name}</p>
+                <p><strong>Email:</strong> ${accountRequest.email}</p>
+                <p><strong>Company:</strong> ${accountRequest.business_name}</p>
+                <p><strong>Phone:</strong> ${accountRequest.phone_number || 'N/A'}</p>
+                <p><strong>Industry:</strong> ${accountRequest.industry || 'N/A'}</p>
+                <p><strong>Registered:</strong> ${new Date(accountRequest.created_at).toLocaleString()}</p>
+            </div>
+
+            <p>Please log in to the admin console to review and approve or reject this account request.</p>
+            <a href="${process.env.FRONTEND_HOST || 'https://app.example.com'}/account-approvals" class="button">Review Account Requests</a>
+
+            <div class="footer">
+                <p>This is an automated email. Please do not reply.</p>
+                <p>${process.env.SMTP_FROM_NAME || 'DQAi'} Platform</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+            `;
+            
+            if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+                try {
+                    const nm = await import('nodemailer');
+                    const transporter = nm.default.createTransport({
+                        host: process.env.SMTP_HOST,
+                        port: parseInt(process.env.SMTP_PORT || '587'),
+                        secure: process.env.SMTP_PORT === '465',
+                        auth: {
+                            user: process.env.SMTP_USER,
+                            pass: process.env.SMTP_PASSWORD
+                        }
+                    });
+                    await transporter.sendMail({
+                        from: `${process.env.SMTP_FROM_NAME || 'DQAi'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+                        to: adminEmail,
+                        subject: `New Account Request - ${accountRequest.business_name}`,
+                        html: notificationEmail
+                    });
+                    console.log(`Admin notification sent for account request ${accountRequest.id}`);
+                } catch (emailError) {
+                    console.error('Failed to send admin notification:', emailError);
+                }
+            }
+        } catch (notificationError) {
+            console.error('Failed to send admin notification:', notificationError);
+        }
+        
+        // Redirect to frontend success page
+        const frontend = process.env.FRONTEND_HOST || process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+        return res.redirect(`${frontend.replace(/\/$/, '')}/email-verified?accountId=${accountRequest.id}`);
+    } catch (e) {
+        console.error('Account email verification error:', e);
+        res.status(500).send('Email verification failed');
     }
 });
 

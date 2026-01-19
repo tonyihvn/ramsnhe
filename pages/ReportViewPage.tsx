@@ -804,7 +804,45 @@ const ReportViewPage: React.FC = () => {
             const rows = Array.isArray(d.file_content) ? d.file_content : [];
             const colsSet = new Set<string>();
             rows.forEach((r: any) => { if (r && typeof r === 'object') Object.keys(r).forEach(k => colsSet.add(k)); });
-            const cols = Array.from(colsSet).map(c => ({ key: c, label: c, editable: true }));
+            
+            // Helper function to detect if a value looks like a date
+            const isDateValue = (val: any): boolean => {
+              if (val === null || val === undefined) return false;
+              if (val instanceof Date) return true;
+              if (typeof val === 'string') {
+                // Check if it's an ISO date string or similar date format
+                const dateTest = new Date(val);
+                if (!isNaN(dateTest.getTime())) {
+                  // Additional check: make sure it's not a plain number masquerading as a date
+                  return !(/^\d+$/.test(val)) && dateTest.getFullYear() >= 1970;
+                }
+              }
+              return false;
+            };
+            
+            // Helper function to format dates without time component
+            const formatDateValue = (val: any): string => {
+              try {
+                if (!val) return '';
+                const date = new Date(val);
+                if (isNaN(date.getTime()) || date.getFullYear() < 1970) return String(val);
+                // Format as date only: "Jan 15, 2025"
+                return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+              } catch (e) {
+                return String(val);
+              }
+            };
+            
+            const cols = Array.from(colsSet).map(c => {
+              // Check if this column contains date values by sampling the first few rows
+              const isDateColumn = rows.slice(0, 5).some((r: any) => isDateValue(r[c]));
+              return {
+                key: c,
+                label: c,
+                editable: true,
+                render: isDateColumn ? (row: any) => formatDateValue(row[c]) : undefined
+              };
+            });
             const handleCellEdit = async (rowIndex: number, key: string, newValue: any) => {
               try {
                 const res = await apiFetch(`/api/uploaded_docs/${d.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ rowIndex, colKey: key, newValue }) });
@@ -868,12 +906,28 @@ const ReportViewPage: React.FC = () => {
                 }
               });
             };
+            // Format the created_at date properly, handling invalid dates
+            const formatUploadDate = (dateValue: any) => {
+              if (!dateValue) return 'Unknown date';
+              try {
+                const date = new Date(dateValue);
+                // Check if date is valid and not the default 1899 date
+                if (isNaN(date.getTime()) || date.getFullYear() < 1970) {
+                  return 'Unknown date';
+                }
+                // Format as date only (no time): "Jan 15, 2025"
+                return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+              } catch (e) {
+                return 'Unknown date';
+              }
+            };
+
             return (
               <div key={d.id} className="mt-4">
                 <div className="flex justify-between items-center mb-2">
                   <div>
                     <div className="font-medium">{d.filename || 'Uploaded file'}</div>
-                    <div className="text-xs text-gray-500">Uploaded: {new Date(d.created_at).toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">Uploaded: {formatUploadDate(d.created_at)}</div>
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="secondary" onClick={handleAddRow}>Add Row</Button>

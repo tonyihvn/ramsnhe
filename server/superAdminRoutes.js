@@ -1300,6 +1300,275 @@ export function registerSuperAdminRoutes(app, pool) {
             res.status(500).json({ error: error.message });
         }
     });
+
+    // ============================================
+    // ACCOUNT REQUESTS ROUTES (Company Registration)
+    // ============================================
+
+    /**
+     * GET /api/super-admin/account-requests
+     * Get all pending account requests (super-admin only)
+     */
+    app.get('/api/super-admin/account-requests', async (req, res) => {
+        try {
+            if (!req.session?.userId) {
+                return res.status(401).json({ error: 'Not authenticated' });
+            }
+
+            const user = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const result = await pool.query(
+                `SELECT id, first_name, last_name, email, business_name, phone_number, industry, 
+                        email_verified, status, created_at, rejection_reason
+                 FROM ${tables.ACCOUNT_REQUESTS}
+                 ORDER BY status ASC, created_at DESC`
+            );
+
+            res.json(result.rows || []);
+        } catch (error) {
+            console.error('GET account-requests error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/super-admin/account-requests/:requestId
+     * Get details of a specific account request
+     */
+    app.get('/api/super-admin/account-requests/:requestId', async (req, res) => {
+        try {
+            if (!req.session?.userId) {
+                return res.status(401).json({ error: 'Not authenticated' });
+            }
+
+            const user = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+            if (user.rows.length === 0 || !isSuperAdminRole(user.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const { requestId } = req.params;
+            const result = await pool.query(
+                `SELECT * FROM ${tables.ACCOUNT_REQUESTS} WHERE id = $1`,
+                [requestId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'Account request not found' });
+            }
+
+            res.json(result.rows[0]);
+        } catch (error) {
+            console.error('GET account-request detail error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    /**
+     * PUT /api/super-admin/account-requests/:requestId
+     * Approve or reject an account request
+     */
+    app.put('/api/super-admin/account-requests/:requestId', async (req, res) => {
+        try {
+            if (!req.session?.userId) {
+                return res.status(401).json({ error: 'Not authenticated' });
+            }
+
+            const currentUser = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+            if (currentUser.rows.length === 0 || !isSuperAdminRole(currentUser.rows[0].role)) {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+
+            const { requestId } = req.params;
+            const { status, rejection_reason } = req.body;
+
+            if (!['approved', 'rejected'].includes(status)) {
+                return res.status(400).json({ error: 'Invalid status. Must be "approved" or "rejected"' });
+            }
+
+            // Get the account request
+            const requestResult = await pool.query(
+                `SELECT * FROM ${tables.ACCOUNT_REQUESTS} WHERE id = $1`,
+                [requestId]
+            );
+
+            if (requestResult.rows.length === 0) {
+                return res.status(404).json({ error: 'Account request not found' });
+            }
+
+            const accountRequest = requestResult.rows[0];
+
+            if (status === 'approved') {
+                // Create a new business for this company
+                const businessResult = await pool.query(
+                    `INSERT INTO ${tables.BUSINESSES} (name, phone, email, website, address, status, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                     RETURNING id`,
+                    [accountRequest.business_name, accountRequest.phone_number, accountRequest.email, 
+                     accountRequest.website || null, accountRequest.address || null, 'Active']
+                );
+
+                const businessId = businessResult.rows[0].id;
+
+                // Hash the password
+                const hashedPassword = await bcrypt.hash(accountRequest.password, 10);
+
+                // Create the actual user account with 'Admin' role for business
+                const userResult = await pool.query(
+                    `INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status, 
+                                                 business_id, account_type, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                     RETURNING id, first_name, last_name, email, role, business_id`,
+                    [accountRequest.first_name, accountRequest.last_name, accountRequest.email, 
+                     hashedPassword, 'Admin', 'Active', businessId, 'user']
+                );
+
+                const newUser = userResult.rows[0];
+
+                // Update the account request to mark as approved
+                const updateResult = await pool.query(
+                    `UPDATE ${tables.ACCOUNT_REQUESTS}
+                     SET status = $1, approved_by = $2, updated_at = NOW()
+                     WHERE id = $3
+                     RETURNING *`,
+                    ['approved', req.session.userId, requestId]
+                );
+
+                // Send approval email with login credentials
+                const approvalEmail = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; color: #333; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                        .header { background-color: #2563eb; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
+                        .content { padding: 20px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+                        .credentials { background-color: #f0f4f8; padding: 15px; border-radius: 5px; margin: 15px 0; }
+                        .credentials p { margin: 8px 0; }
+                        .button { display: inline-block; background-color: #2563eb; color: white; padding: 10px 20px; 
+                                 text-decoration: none; border-radius: 5px; margin-top: 15px; }
+                        .footer { font-size: 12px; color: #666; margin-top: 20px; text-align: center; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>Account Approved!</h1>
+                        </div>
+                        <div class="content">
+                            <p>Hello ${accountRequest.first_name} ${accountRequest.last_name},</p>
+                            <p>Congratulations! Your company account registration has been approved.</p>
+                            <p>Your account is now active and ready to use. Here are your login credentials:</p>
+                            
+                            <div class="credentials">
+                                <p><strong>Email:</strong> ${accountRequest.email}</p>
+                                <p><strong>Password:</strong> ${accountRequest.password}</p>
+                                <p><strong>Company:</strong> ${accountRequest.business_name}</p>
+                            </div>
+
+                            <p>You can now log in to the platform and start using DQAi.</p>
+                            <a href="${process.env.FRONTEND_HOST || 'https://app.example.com'}/login" class="button">Log In to Your Account</a>
+
+                            <p style="margin-top: 20px; font-size: 14px;">
+                                <strong>Important:</strong> Please change your password immediately after your first login for security purposes.
+                            </p>
+
+                            <div class="footer">
+                                <p>This is an automated email. Please do not reply.</p>
+                                <p>${process.env.SMTP_FROM_NAME || 'DQAi'} Platform</p>
+                            </div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                `;
+
+                await sendEmail(
+                    accountRequest.email,
+                    'Your Account Has Been Approved - Welcome to DQAi!',
+                    approvalEmail
+                );
+
+                res.json({ 
+                    success: true, 
+                    message: 'Account approved and user created successfully',
+                    accountRequest: updateResult.rows[0],
+                    user: newUser,
+                    businessId
+                });
+
+            } else if (status === 'rejected') {
+                // Update the account request to mark as rejected
+                const updateResult = await pool.query(
+                    `UPDATE ${tables.ACCOUNT_REQUESTS}
+                     SET status = $1, rejection_reason = $2, approved_by = $3, updated_at = NOW()
+                     WHERE id = $4
+                     RETURNING *`,
+                    ['rejected', rejection_reason || null, req.session.userId, requestId]
+                );
+
+                // Send rejection email
+                const rejectionEmail = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; color: #333; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                        .header { background-color: #ef4444; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
+                        .content { padding: 20px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+                        .reason { background-color: #fef2f2; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #ef4444; }
+                        .footer { font-size: 12px; color: #666; margin-top: 20px; text-align: center; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>Account Registration Status</h1>
+                        </div>
+                        <div class="content">
+                            <p>Hello ${accountRequest.first_name} ${accountRequest.last_name},</p>
+                            <p>Thank you for your interest in joining DQAi. Unfortunately, your account registration request has been reviewed and could not be approved at this time.</p>
+                            
+                            ${rejection_reason ? `
+                            <div class="reason">
+                                <p><strong>Reason:</strong></p>
+                                <p>${rejection_reason}</p>
+                            </div>
+                            ` : ''}
+
+                            <p>If you have any questions about this decision, please don't hesitate to contact us.</p>
+
+                            <div class="footer">
+                                <p>This is an automated email. Please do not reply.</p>
+                                <p>${process.env.SMTP_FROM_NAME || 'DQAi'} Platform</p>
+                            </div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                `;
+
+                await sendEmail(
+                    accountRequest.email,
+                    'Account Registration Status - DQAi',
+                    rejectionEmail
+                );
+
+                res.json({ 
+                    success: true, 
+                    message: 'Account request rejected',
+                    accountRequest: updateResult.rows[0]
+                });
+            }
+        } catch (error) {
+            console.error('PUT account-request error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
 }
 
 export { sendEmail, createAuditLog };

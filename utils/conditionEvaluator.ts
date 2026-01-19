@@ -10,16 +10,20 @@ export const evaluateCondition = (expression: string | undefined, context: Recor
   }
 
   try {
-    // Create a safe function that only has access to the provided context variables
-    // Use Function constructor with restricted scope for security
+    // Create a safe evaluator function that builds the context dynamically
+    // This handles undefined variables gracefully by providing them as undefined rather than throwing ReferenceError
     const contextKeys = Object.keys(context);
-    const contextValues = Object.values(context);
-
-    // Create function with dynamic parameters from context
+    
+    // Build a function that sets all context variables, with undefined defaults for missing ones
+    const variableDeclarations = contextKeys.map(key => `const ${key} = __ctx['${key}'];`).join('\n');
+    
     // eslint-disable-next-line no-new-func
-    const evaluateFn = new Function(...contextKeys, `return (${expression})`);
-    const result = evaluateFn(...contextValues);
-
+    const evaluateFn = new Function('__ctx', `
+      ${variableDeclarations}
+      return (${expression});
+    `);
+    
+    const result = evaluateFn(context || {});
     return Boolean(result);
   } catch (error) {
     console.warn(`Failed to evaluate condition: "${expression}"`, error);

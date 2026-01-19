@@ -38,6 +38,9 @@ const LoginPage: React.FC = () => {
   const [regPassword, setRegPassword] = useState('');
   const [regOrg, setRegOrg] = useState('');
   const [regPhone, setRegPhone] = useState('');
+  const [regIndustry, setRegIndustry] = useState('');
+  const [regAddress, setRegAddress] = useState('');
+  const [regWebsite, setRegWebsite] = useState('');
   const [allowNewRegistrations, setAllowNewRegistrations] = useState(true);
   const [lockedOrgId, setLockedOrgId] = useState<number | null>(null);
   const [regLoading, setRegLoading] = useState(false);
@@ -88,7 +91,21 @@ const LoginPage: React.FC = () => {
     setRegError(null);
     setRegMessage(null);
     try {
-      const r = await fetch('/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstName: regFirst, lastName: regLast, email: regEmail, password: regPassword, organizationName: regOrg || undefined, phoneNumber: regPhone || undefined }) });
+      const r = await fetch('/auth/register', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ 
+          firstName: regFirst, 
+          lastName: regLast, 
+          email: regEmail, 
+          password: regPassword, 
+          organizationName: regOrg || undefined, 
+          phoneNumber: regPhone || undefined,
+          industry: regIndustry || undefined,
+          address: regAddress || undefined,
+          website: regWebsite || undefined
+        }) 
+      });
       if (!r.ok) {
         let txt = '';
         try { txt = await r.text(); } catch (e) { txt = String(e); }
@@ -102,7 +119,7 @@ const LoginPage: React.FC = () => {
         return;
       }
       const j = await r.json();
-      setRegMessage(j.message || 'Registration successful. Please check your email for verification if required.');
+      setRegMessage(j.message || 'Registration successful. Please check your email for verification instructions.');
       // keep modal open so user sees the message; optionally auto-close after a short delay
       setTimeout(() => { setRegOpen(false); }, 3000);
     } catch (e) {
@@ -178,8 +195,8 @@ const LoginPage: React.FC = () => {
           <a className="text-sm text-primary-600 hover:underline" href="#/request-reset">Forgot password?</a>
         </div>
 
-        <Modal isOpen={regOpen} onClose={() => setRegOpen(false)} title="Register">
-          <div className="space-y-3">
+        <Modal isOpen={regOpen} onClose={() => setRegOpen(false)} title="Register Your Company">
+          <div className="space-y-3 max-h-96 overflow-y-auto">
             {!allowNewRegistrations ? (
               <div className="p-3 text-blue-700 bg-blue-100 rounded">
                 <p className="font-medium">New organization registration is currently disabled.</p>
@@ -187,21 +204,32 @@ const LoginPage: React.FC = () => {
               </div>
             ) : (
               <>
-                {regMessage ? <div className="p-2 text-green-700 bg-green-100 rounded">{regMessage}</div> : null}
-                {regError ? <div className="p-2 text-red-700 bg-red-100 rounded">{regError}</div> : null}
-                <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
-                <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
-                <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
+                {regMessage ? <div className="p-2 text-green-700 bg-green-100 rounded text-sm">{regMessage}</div> : null}
+                {regError ? <div className="p-2 text-red-700 bg-red-100 rounded text-sm">{regError}</div> : null}
+                
+                <h3 className="font-semibold text-gray-700 text-sm">Contact Information</h3>
+                <input className="p-2 border rounded w-full text-sm" placeholder="First name *" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full text-sm" placeholder="Last name *" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full text-sm" placeholder="Email *" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} type="email" />
+                <input className="p-2 border rounded w-full text-sm" placeholder="Phone number" value={regPhone} onChange={e => setRegPhone(e.target.value)} disabled={!!regMessage} />
+                
+                <h3 className="font-semibold text-gray-700 text-sm mt-4">Company Information</h3>
                 {!lockedOrgId ? (
-                  <input className="p-2 border rounded w-full" placeholder="Organization name (optional)" value={regOrg} onChange={e => setRegOrg(e.target.value)} disabled={!!regMessage} />
+                  <input className="p-2 border rounded w-full text-sm" placeholder="Company name *" value={regOrg} onChange={e => setRegOrg(e.target.value)} disabled={!!regMessage} />
                 ) : (
                   <div className="p-2 text-sm text-gray-700 bg-gray-50 rounded">Registration will be assigned to the configured organization.</div>
                 )}
-                <input className="p-2 border rounded w-full" placeholder="Phone number (optional)" value={regPhone} onChange={e => setRegPhone(e.target.value)} disabled={!!regMessage} />
-                <input className="p-2 border rounded w-full" placeholder="Password" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full text-sm" placeholder="Industry" value={regIndustry} onChange={e => setRegIndustry(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full text-sm" placeholder="Address" value={regAddress} onChange={e => setRegAddress(e.target.value)} disabled={!!regMessage} />
+                <input className="p-2 border rounded w-full text-sm" placeholder="Website" value={regWebsite} onChange={e => setRegWebsite(e.target.value)} disabled={!!regMessage} />
+                
+                <h3 className="font-semibold text-gray-700 text-sm mt-4">Account Security</h3>
+                <input className="p-2 border rounded w-full text-sm" placeholder="Password *" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
+                
+                <p className="text-xs text-gray-600 mt-2">* Required fields</p>
               </>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 mt-4">
               <Button variant="secondary" onClick={() => setRegOpen(false)}>Cancel</Button>
               <Button onClick={doRegister} disabled={regLoading || !!regMessage}>{regLoading ? 'Registering...' : 'Register'}</Button>
             </div>

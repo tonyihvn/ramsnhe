@@ -39,6 +39,7 @@ import SuperAdminBusinesses from './pages/SuperAdminBusinesses';
 import SuperAdminFeedback from './pages/SuperAdminFeedback';
 import PaymentApprovalPage from './pages/PaymentApprovalPage';
 import AccountApprovalPage from './pages/AccountApprovalPage';
+import EmailVerificationPage from './pages/EmailVerificationPage';
 import { DataProvider, useMockData } from './hooks/useMockData';
 import { ThemeProvider } from './hooks/useTheme';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -81,6 +82,7 @@ const AppRoutes = () => {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/request-reset" element={<RequestPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/email-verified" element={<EmailVerificationPage />} />
 
       <Route path="/dashboard" element={<ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>} />
 
