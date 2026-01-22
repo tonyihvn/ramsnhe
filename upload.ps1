@@ -17,7 +17,7 @@ $RemoteCommands = @"
     source /home/adminoa/nodevenv/oa/10/bin/activate && \ 
     cd /home/adminoa/oa && \
     npm cache clean --force && \
-    npm install --production=false && \
+    npm install --legacy-peer-deps --production=false && \
     npm run build && \
     cp -r dist/. ../public_html && \
     echo 'Remote Deployment Complete!'
