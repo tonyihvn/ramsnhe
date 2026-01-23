@@ -1,8 +1,0 @@
-node_modules/
-.expo/
-.expo-shared/
-.env
-.DS_Store
-android/
-ios/
-web-build/
