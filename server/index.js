@@ -1973,6 +1973,8 @@ async function initDb() {
         await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS account_activated_at TIMESTAMP`);
         // Add deactivated_at for tracking when accounts were deactivated
         await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP`);
+        // Add cell_formulas to uploaded_docs to support formula tracking
+        await pool.query(`ALTER TABLE ${tables.UPLOADED_DOCS} ADD COLUMN IF NOT EXISTS cell_formulas JSONB`);
         // Add column_data_types to uploaded_docs to support per-column type configuration
         await pool.query(`ALTER TABLE ${tables.UPLOADED_DOCS} ADD COLUMN IF NOT EXISTS column_data_types JSONB`);
         // Add powerbi_url and related columns to activities to support activity-level Power BI embeds
@@ -7470,7 +7472,7 @@ app.post('/api/uploaded_docs', async (req, res) => {
 
 app.put('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
-    const { rowIndex, colKey, newValue, partialUpdate, newRows, cellFormulas, columnDataTypes } = req.body || {};
+    const { rowIndex, colKey, newValue, partialUpdate, newRows, deletedRowIndices, cellFormulas, columnDataTypes } = req.body || {};
     try {
         const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
@@ -7491,13 +7493,39 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
         }
         if (!Array.isArray(content)) return res.status(400).json({ error: 'file_content must be an array of rows' });
 
+        // Handle deleted rows
+        if (deletedRowIndices && Array.isArray(deletedRowIndices)) {
+            // Sort indices in descending order to avoid index shifting when deleting
+            const sortedIndices = [...deletedRowIndices].sort((a, b) => b - a);
+            for (const idx of sortedIndices) {
+                if (idx >= 0 && idx < content.length) {
+                    content.splice(idx, 1);
+                }
+            }
+            // Remove formulas associated with deleted rows
+            const updatedFormulas = {};
+            for (const [cellRef, formulaData] of Object.entries(formulas)) {
+                // Extract row number from cell reference (e.g., "report1_R_A10" -> row 9, 0-indexed)
+                const match = cellRef.match(/([A-Z]+)(\d+)$/);
+                if (match) {
+                    const cellRowIndex = Number(match[2]) - 1; // Convert to 0-indexed
+                    // Only keep formulas for rows that were NOT deleted
+                    if (!deletedRowIndices.includes(cellRowIndex)) {
+                        updatedFormulas[cellRef] = formulaData;
+                    }
+                    // If row was deleted, skip this formula (don't add it to updatedFormulas)
+                }
+            }
+            formulas = updatedFormulas;
+        }
+
         // Handle new rows being added
         if (newRows && Array.isArray(newRows)) {
             content = content.concat(newRows);
         }
 
-        // Handle cell formulas update
-        if (cellFormulas && typeof cellFormulas === 'object') {
+        // Handle cell formulas update (only merge if provided and not empty)
+        if (cellFormulas && typeof cellFormulas === 'object' && Object.keys(cellFormulas).length > 0) {
             formulas = { ...formulas, ...cellFormulas };
         }
 

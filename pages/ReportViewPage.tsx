@@ -41,8 +41,10 @@ const ReportViewPage: React.FC = () => {
   const [conversationExpanded, setConversationExpanded] = useState(false);
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editingDocData, setEditingDocData] = useState<any[]>([]);
+  const [originalDocData, setOriginalDocData] = useState<any[]>([]); // Track original data to identify deleted rows
   const [editedCells, setEditedCells] = useState<Set<string>>(new Set());
   const [editingNewRows, setEditingNewRows] = useState<Set<number>>(new Set());
+  const [deletedRowIndices, setDeletedRowIndices] = useState<Set<number>>(new Set());
   const [cellFormulas, setCellFormulas] = useState<Record<string, string>>({}); // Maps cellRef to formula
   const [selectedCellForFormula, setSelectedCellForFormula] = useState<string | null>(null);
   const [formulaInput, setFormulaInput] = useState<string>('');
@@ -125,16 +127,67 @@ const ReportViewPage: React.FC = () => {
       const matches = expression.match(cellRefPattern) || [];
 
       for (const cellRef of matches) {
-        context[cellRef] = resolveCellReference(cellRef);
+        const resolvedValue = resolveCellReference(cellRef);
+        context[cellRef] = resolvedValue;
+        console.log(`Resolved ${cellRef} to:`, resolvedValue, `(type: ${typeof resolvedValue})`);
+      }
+
+      // If the expression is just a single cell reference, return its value directly
+      if (matches.length === 1 && matches[0] === expression.trim()) {
+        return context[matches[0]];
       }
 
       // Use Function constructor for evaluation (safer than eval)
       const func = new Function(...Object.keys(context), `return ${expression}`);
-      return func(...Object.values(context));
+      const result = func(...Object.values(context));
+
+      // Handle NaN - log it and return null or 0
+      if (typeof result === 'number' && isNaN(result)) {
+        console.warn('Formula evaluated to NaN:', expression, 'Context:', context);
+        return null;
+      }
+
+      console.log('Formula result:', result, 'Expression:', expression);
+      return result;
     } catch (e) {
-      console.error('Expression evaluation error:', e);
+      console.error('Expression evaluation error:', e, 'Expression:', expression);
       return null;
     }
+  };
+
+  // Helper: Convert formulas to new format with evaluated values
+  const normalizeFormulas = (formulas: Record<string, any>): Record<string, any> => {
+    const normalized: Record<string, any> = {};
+    for (const [cellRef, formulaOrObj] of Object.entries(formulas)) {
+      if (typeof formulaOrObj === 'string') {
+        // Old format: convert to new format with evaluated value
+        const evaluatedValue = evaluateExpression(formulaOrObj);
+        normalized[cellRef] = { formula: formulaOrObj, value: evaluatedValue };
+      } else if (typeof formulaOrObj === 'object' && formulaOrObj !== null) {
+        // Already in new format, keep as is but re-evaluate in case it changed
+        const evaluatedValue = evaluateExpression(formulaOrObj.formula);
+        normalized[cellRef] = { formula: formulaOrObj.formula, value: evaluatedValue };
+      }
+    }
+    return normalized;
+  };
+
+  // Helper: Extract formula string from formula object
+  const getFormulaString = (formulaOrObj: any): string => {
+    if (typeof formulaOrObj === 'string') {
+      return formulaOrObj;
+    } else if (typeof formulaOrObj === 'object' && formulaOrObj !== null && formulaOrObj.formula) {
+      return formulaOrObj.formula;
+    }
+    return '';
+  };
+
+  // Helper: Extract evaluated value from formula object
+  const getFormulaValue = (formulaOrObj: any): any => {
+    if (typeof formulaOrObj === 'object' && formulaOrObj !== null && 'value' in formulaOrObj) {
+      return formulaOrObj.value;
+    }
+    return null;
   };
 
   const saveReview = async () => {
@@ -1207,6 +1260,81 @@ const ReportViewPage: React.FC = () => {
           <h2 className="text-lg font-semibold">Uploaded Files</h2>
           <input className="border p-2 rounded text-sm" placeholder="Search files..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        {/* File upload section during edit */}
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+          <label className="block text-xs font-medium text-gray-700 mb-2">Upload additional Excel files</label>
+          <label className="px-2 py-1 border rounded cursor-pointer inline-block text-sm text-blue-600 hover:bg-blue-100">
+            Choose file
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  const reader = new FileReader();
+                  reader.onload = async (ev) => {
+                    try {
+                      const ExcelJS = await import('exceljs');
+                      const arrayBuffer = ev.target?.result as ArrayBuffer;
+                      const workbook = new ExcelJS.Workbook();
+                      await workbook.xlsx.load(arrayBuffer);
+                      const worksheet = workbook.worksheets[0];
+
+                      if (!worksheet) {
+                        try { swalError('Error', 'No data found in file'); } catch (err) { }
+                        return;
+                      }
+
+                      const rows: any[] = [];
+                      worksheet.eachRow((row, idx) => {
+                        if (idx === 1) return; // Skip header
+                        const rowData: Record<string, any> = {};
+                        row.eachCell((cell, colNumber) => {
+                          const header = worksheet.getRow(1).getCell(colNumber).value;
+                          if (header) {
+                            rowData[String(header)] = cell.value || '';
+                          }
+                        });
+                        rows.push(rowData);
+                      });
+
+                      // Create new uploaded_docs entry
+                      const res = await apiFetch(`/api/uploaded_docs`, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          reportId: report.id,
+                          filename: file.name,
+                          fileContent: rows,
+                          activityId: report.activity_id,
+                          facilityId: report.facility_id
+                        })
+                      });
+
+                      if (res.ok) {
+                        const newDoc = await res.json();
+                        setUploadedDocs(prev => [...prev, newDoc]);
+                        try { swalSuccess('Success', 'File uploaded successfully'); } catch (err) { }
+                      } else {
+                        try { swalError('Error', 'Failed to upload file'); } catch (err) { }
+                      }
+                    } catch (err) {
+                      console.error('Upload processing error:', err);
+                      try { swalError('Error', 'Failed to process file'); } catch (e) { }
+                    }
+                  };
+                  reader.readAsArrayBuffer(file);
+                } catch (err) {
+                  console.error('Upload error:', err);
+                  try { swalError('Error', 'Upload failed'); } catch (e) { }
+                }
+              }}
+            />
+          </label>
+        </div>
 
         {uploadedDocs.length === 0 && <div className="text-sm text-gray-500">No uploaded files.</div>}
 
@@ -1265,10 +1393,13 @@ const ReportViewPage: React.FC = () => {
                             variant="secondary"
                             onClick={() => {
                               setEditingDocId(d.id);
-                              setEditingDocData(Array.isArray(d.file_content) ? JSON.parse(JSON.stringify(d.file_content)) : []);
+                              const fileContent = Array.isArray(d.file_content) ? JSON.parse(JSON.stringify(d.file_content)) : [];
+                              setEditingDocData(fileContent);
+                              setOriginalDocData(fileContent);
                               setEditedCells(new Set());
                               setEditingNewRows(new Set());
-                              setCellFormulas((d.formulas && typeof d.formulas === 'object') ? d.formulas : {});
+                              setDeletedRowIndices(new Set());
+                              setCellFormulas((d.formulas && typeof d.formulas === 'object') ? normalizeFormulas(d.formulas) : {});
                             }}
                           >
                             {isEditing ? 'Done Editing' : 'Edit'}
@@ -1336,81 +1467,7 @@ const ReportViewPage: React.FC = () => {
                       <div className="mt-4 pt-4 border-t border-gray-200">
                         <h4 className="font-medium text-sm mb-3 text-gray-700">Edit Data</h4>
 
-                        {/* File upload section during edit */}
-                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
-                          <label className="block text-xs font-medium text-gray-700 mb-2">Upload additional Excel files</label>
-                          <label className="px-2 py-1 border rounded cursor-pointer inline-block text-sm text-blue-600 hover:bg-blue-100">
-                            Choose file
-                            <input
-                              type="file"
-                              accept=".xlsx,.xls,.csv"
-                              className="hidden"
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                try {
-                                  const reader = new FileReader();
-                                  reader.onload = async (ev) => {
-                                    try {
-                                      const ExcelJS = await import('exceljs');
-                                      const arrayBuffer = ev.target?.result as ArrayBuffer;
-                                      const workbook = new ExcelJS.Workbook();
-                                      await workbook.xlsx.load(arrayBuffer);
-                                      const worksheet = workbook.worksheets[0];
 
-                                      if (!worksheet) {
-                                        try { swalError('Error', 'No data found in file'); } catch (err) { }
-                                        return;
-                                      }
-
-                                      const rows: any[] = [];
-                                      worksheet.eachRow((row, idx) => {
-                                        if (idx === 1) return; // Skip header
-                                        const rowData: Record<string, any> = {};
-                                        row.eachCell((cell, colNumber) => {
-                                          const header = worksheet.getRow(1).getCell(colNumber).value;
-                                          if (header) {
-                                            rowData[String(header)] = cell.value || '';
-                                          }
-                                        });
-                                        rows.push(rowData);
-                                      });
-
-                                      // Create new uploaded_docs entry
-                                      const res = await apiFetch(`/api/uploaded_docs`, {
-                                        method: 'POST',
-                                        credentials: 'include',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                          reportId: report.id,
-                                          filename: file.name,
-                                          fileContent: rows,
-                                          activityId: report.activity_id,
-                                          facilityId: report.facility_id
-                                        })
-                                      });
-
-                                      if (res.ok) {
-                                        const newDoc = await res.json();
-                                        setUploadedDocs(prev => [...prev, newDoc]);
-                                        try { swalSuccess('Success', 'File uploaded successfully'); } catch (err) { }
-                                      } else {
-                                        try { swalError('Error', 'Failed to upload file'); } catch (err) { }
-                                      }
-                                    } catch (err) {
-                                      console.error('Upload processing error:', err);
-                                      try { swalError('Error', 'Failed to process file'); } catch (e) { }
-                                    }
-                                  };
-                                  reader.readAsArrayBuffer(file);
-                                } catch (err) {
-                                  console.error('Upload error:', err);
-                                  try { swalError('Error', 'Upload failed'); } catch (e) { }
-                                }
-                              }}
-                            />
-                          </label>
-                        </div>
 
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm border-collapse">
@@ -1521,8 +1578,14 @@ const ReportViewPage: React.FC = () => {
 
                                     // Render input based on data type
                                     const renderInput = () => {
+                                      // Get formula string and use stored value if available, otherwise evaluate
+                                      const formulaString = hasFormula ? getFormulaString(hasFormula) : '';
+                                      const storedValue = hasFormula ? getFormulaValue(hasFormula) : null;
+                                      const displayValue = hasFormula
+                                        ? (storedValue !== null ? storedValue : evaluateExpression(formulaString) ?? row[key] ?? '')
+                                        : row[key] ?? '';
                                       const commonProps = {
-                                        value: row[key] ?? '',
+                                        value: displayValue,
                                         onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
                                           const newData = [...editingDocData];
                                           let newValue: any = (e.target as HTMLInputElement).value;
@@ -1602,13 +1665,25 @@ const ReportViewPage: React.FC = () => {
                                                 }
                                               }, 0);
                                             }
+                                          } else if (hasFormula && editingModeRef.current === null) {
+                                            // If cell has formula and no input is in focus, populate the formula form
+                                            e.preventDefault();
+                                            setSelectedCellForFormula(cellRef);
+                                            setFormulaInput(getFormulaString(hasFormula));
+                                            // Scroll to formula section
+                                            setTimeout(() => {
+                                              const formulaSection = document.querySelector('[data-formula-section]');
+                                              if (formulaSection) {
+                                                formulaSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                              }
+                                            }, 100);
                                           }
                                         }}
                                       >
                                         {renderInput()}
                                         <div className="hidden group-hover:block absolute bottom-full left-0 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap mb-1 z-10">
                                           <div>{cellRef}</div>
-                                          {hasFormula && <div className="text-yellow-300">Formula: {cellFormulas[cellRef]}</div>}
+                                          {hasFormula && <div className="text-yellow-300">Formula: {getFormulaString(hasFormula)}</div>}
                                         </div>
                                       </td>
                                     );
@@ -1616,11 +1691,58 @@ const ReportViewPage: React.FC = () => {
                                   <td className="border border-gray-300 px-2 py-2 text-center">
                                     <button
                                       onClick={() => {
+                                        // Delete the row from data
                                         setEditingDocData(prev => prev.filter((_, i) => i !== rowIdx));
+
+                                        // Track deleted rows (only if not a new row)
+                                        if (!editingNewRows.has(rowIdx)) {
+                                          setDeletedRowIndices(prev => new Set([...prev, rowIdx]));
+                                        }
+
+                                        // Update new rows set
                                         setEditingNewRows(prev => {
                                           const newSet = new Set(prev);
                                           newSet.delete(rowIdx);
-                                          return newSet;
+                                          // Adjust indices for rows after the deleted row
+                                          const adjusted = new Set<number>();
+                                          for (const idx of newSet) {
+                                            const idxNum = Number(idx);
+                                            adjusted.add(idxNum > rowIdx ? idxNum - 1 : idxNum);
+                                          }
+                                          return adjusted;
+                                        });
+
+                                        // Delete formulas associated with this row
+                                        setCellFormulas(prev => {
+                                          const updated = { ...prev };
+                                          const cellsToDelete: string[] = [];
+                                          const cellsToUpdate: Record<string, any> = {};
+
+                                          for (const [cellRef, formula] of Object.entries(updated)) {
+                                            // Extract row number from cell reference (e.g., "report1_R_A10" -> row 9, 0-indexed)
+                                            const match = cellRef.match(/([A-Z]+)(\d+)$/);
+                                            if (match) {
+                                              const cellRowIndex = Number(match[2]) - 1; // Convert to 0-indexed
+                                              if (cellRowIndex === rowIdx) {
+                                                // Mark for deletion if this cell is in the deleted row
+                                                cellsToDelete.push(cellRef);
+                                              } else if (cellRowIndex > rowIdx) {
+                                                // Adjust cell reference if it's in a row after the deleted row
+                                                const newRowNum = cellRowIndex - 1; // Adjust after deletion
+                                                const newCellRef = cellRef.replace(/(\d+)$/, String(newRowNum + 1)); // +1 for 1-based indexing in cell references
+                                                cellsToUpdate[newCellRef] = formula;
+                                                cellsToDelete.push(cellRef);
+                                              }
+                                            }
+                                          }
+
+                                          // Remove old references and add updated ones
+                                          for (const cellRef of cellsToDelete) {
+                                            delete updated[cellRef];
+                                          }
+                                          Object.assign(updated, cellsToUpdate);
+
+                                          return updated;
                                         });
                                       }}
                                       className="text-red-600 hover:text-red-800 font-bold text-lg"
@@ -1636,10 +1758,10 @@ const ReportViewPage: React.FC = () => {
                         </div>
 
                         {/* Computed Cells Section */}
-                        <div className="mt-4 p-12 bg-purple-50 border border-purple-200 rounded">
+                        <div className="mt-4 p-12 bg-purple-50 border border-purple-200 rounded" data-formula-section>
                           <h5 className="font-medium text-sm text-gray-800 mb-2">🧮 Computed Cell Formula</h5>
                           <p className="text-xs text-gray-600 mb-2">
-                            <strong>Click on a cell in the table below:</strong> If formula input is focused → adds cell reference to formula. Otherwise → selects the cell for formula assignment.
+                            <strong>Click on a cell with a formula to load it here:</strong> If formula input is focused → adds cell reference to formula. Otherwise → selects the cell for formula assignment.
                           </p>
 
                           {/* Guide Section */}
@@ -1749,19 +1871,24 @@ const ReportViewPage: React.FC = () => {
                                   try { swalError('Error', 'Column index out of bounds'); } catch (e) { }
                                   return;
                                 }
-
                                 // Evaluate formula and update cell
                                 const result = evaluateExpression(formulaInput);
                                 const colKey = keys[colIndex];
+
+                                // Check if result is NaN
+                                if (typeof result === 'number' && isNaN(result)) {
+                                  try { swalError('Error', 'Formula evaluated to NaN. Check that all referenced cells contain numeric values.'); } catch (e) { }
+                                  return;
+                                }
 
                                 const newData = [...editingDocData];
                                 newData[rowIndex][colKey] = result !== null ? result : '';
                                 setEditingDocData(newData);
 
-                                // Store formula for this cell
+                                // Store formula for this cell with evaluated value
                                 setCellFormulas(prev => ({
                                   ...prev,
-                                  [cellRef]: formulaInput
+                                  [cellRef]: { formula: formulaInput, value: result !== null ? result : '' }
                                 }));
 
                                 // Mark cell as edited
@@ -1805,6 +1932,9 @@ const ReportViewPage: React.FC = () => {
                                   changedRows[rowIdx][key] = editingDocData[rowIdx][key];
                                 });
 
+                                // Normalize formulas to include evaluated values
+                                const normalizedFormulas = Object.keys(cellFormulas).length > 0 ? normalizeFormulas(cellFormulas) : null;
+
                                 const res = await apiFetch(`/api/uploaded_docs/${d.id}`, {
                                   method: 'PUT',
                                   headers: { 'Content-Type': 'application/json' },
@@ -1812,7 +1942,8 @@ const ReportViewPage: React.FC = () => {
                                   body: JSON.stringify({
                                     partialUpdate: changedRows,
                                     newRows: Array.from(editingNewRows).map(idx => editingDocData[idx]),
-                                    cellFormulas: Object.keys(cellFormulas).length > 0 ? cellFormulas : null,
+                                    deletedRowIndices: Array.from(deletedRowIndices),
+                                    cellFormulas: normalizedFormulas,
                                     columnDataTypes: Object.keys(columnDataTypes).length > 0 ? columnDataTypes : null
                                   })
                                 });
@@ -1828,11 +1959,12 @@ const ReportViewPage: React.FC = () => {
                                   setEditingDocId(null);
                                   setEditedCells(new Set());
                                   setEditingNewRows(new Set());
+                                  setDeletedRowIndices(new Set());
                                   setCellFormulas({});
                                   setColumnDataTypes({});
                                   setSelectedCellForFormula(null);
                                   setFormulaInput('');
-                                  try { swalSuccess('Saved', 'Only changed cells and data types were saved'); } catch (e) { }
+                                  try { swalSuccess('Saved', 'Changes saved successfully'); } catch (e) { }
                                 } else {
                                   console.error('Save failed:', await res.text());
                                   try { swalError('Failed', 'Failed to save changes'); } catch (e) { }
