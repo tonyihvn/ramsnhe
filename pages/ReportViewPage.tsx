@@ -78,23 +78,32 @@ const ReportViewPage: React.FC = () => {
 
   // Helper: Parse cell reference to find value
   const resolveCellReference = (cellRef: string): any => {
-    // Format: report1_PL_A1
+    // Format: report1_H_D1
     const parts = cellRef.split('_');
-    if (parts.length < 3) return undefined;
+    if (parts.length < 3) {
+      console.warn('Cell reference parsing failed - not enough parts:', cellRef, parts);
+      return undefined;
+    }
 
-    const colLetter = parts[parts.length - 2] + parts[parts.length - 1];
+    // Extract column letter and row number from the last part (e.g., "H1" from "report1_H_H1")
+    const colLetter = parts[parts.length - 1];
     const match = colLetter.match(/^([A-Z]+)(\d+)$/);
-    if (!match) return undefined;
+    if (!match) {
+      console.warn('Cell reference parsing failed - invalid format:', cellRef, colLetter);
+      return undefined;
+    }
 
     const [, letters, rowStr] = match;
     const rowIndex = Number(rowStr) - 1;
 
-    // Find column index from letters
+    // Find column index from letters (A=0, B=1, C=2, ..., Z=25, AA=26, etc.)
     let colIndex = 0;
     for (let i = 0; i < letters.length; i++) {
       colIndex = colIndex * 26 + (letters.charCodeAt(i) - 64);
     }
     colIndex--;
+
+    console.log(`Resolving ${cellRef}: rowIndex=${rowIndex}, colIndex=${colIndex}, letters=${letters}`);
 
     // Find the document
     for (const doc of uploadedDocs) {
@@ -103,38 +112,53 @@ const ReportViewPage: React.FC = () => {
         if (rowIndex >= 0 && rowIndex < rows.length) {
           const row = rows[rowIndex];
           const keys = Object.keys(row || {});
+          console.log(`Row ${rowIndex} keys:`, keys);
           if (colIndex >= 0 && colIndex < keys.length) {
             const value = row[keys[colIndex]];
+            console.log(`Cell ${cellRef} raw value:`, value, `(type: ${typeof value})`);
             // Convert to number if it's a numeric string
             if (typeof value === 'string') {
               const numValue = Number(value);
-              return isNaN(numValue) ? value : numValue;
+              const result = isNaN(numValue) ? value : numValue;
+              console.log(`Converted string "${value}" to:`, result);
+              return result;
             }
             return value;
+          } else {
+            console.warn(`Column index ${colIndex} out of bounds for row with ${keys.length} columns`);
           }
+        } else {
+          console.warn(`Row index ${rowIndex} out of bounds for ${rows.length} rows`);
         }
       }
     }
+    console.warn(`No document found for editing ID: ${editingDocId}`);
     return undefined;
   };
 
-  // Helper: Evaluate JavaScript expression with cell references
-  const evaluateExpression = (expression: string): any => {
+  // Helper: Evaluate JavaScript expression with cell references and return both value and refvalue
+  const evaluateExpression = (expression: string): { value: any; refvalue: string } => {
     try {
       // Create a safe context with cell reference resolution
       const context: Record<string, any> = {};
       const cellRefPattern = /report\d+_[A-Z]{1,3}_[A-Z]+\d+/g;
       const matches = expression.match(cellRefPattern) || [];
+      const refMap: Record<string, any> = {}; // Track cell refs and their values for refvalue
 
       for (const cellRef of matches) {
         const resolvedValue = resolveCellReference(cellRef);
         context[cellRef] = resolvedValue;
+        refMap[cellRef] = resolvedValue;
         console.log(`Resolved ${cellRef} to:`, resolvedValue, `(type: ${typeof resolvedValue})`);
       }
 
       // If the expression is just a single cell reference, return its value directly
       if (matches.length === 1 && matches[0] === expression.trim()) {
-        return context[matches[0]];
+        const value = context[matches[0]];
+        return {
+          value: value,
+          refvalue: `${value}` // Simple case: just the value
+        };
       }
 
       // Use Function constructor for evaluation (safer than eval)
@@ -144,29 +168,46 @@ const ReportViewPage: React.FC = () => {
       // Handle NaN - log it and return null or 0
       if (typeof result === 'number' && isNaN(result)) {
         console.warn('Formula evaluated to NaN:', expression, 'Context:', context);
-        return null;
+        return {
+          value: null,
+          refvalue: 'NaN'
+        };
       }
 
-      console.log('Formula result:', result, 'Expression:', expression);
-      return result;
+      // Create refvalue by replacing cell references with their actual values
+      let refvalue = expression;
+      for (const [cellRef, cellValue] of Object.entries(refMap)) {
+        // Escape special regex characters in cellRef and replace all occurrences
+        const escapedRef = cellRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        refvalue = refvalue.replace(new RegExp(escapedRef, 'g'), String(cellValue));
+      }
+
+      console.log('Formula result:', result, 'Expression:', expression, 'Refvalue:', refvalue);
+      return {
+        value: result,
+        refvalue: refvalue
+      };
     } catch (e) {
       console.error('Expression evaluation error:', e, 'Expression:', expression);
-      return null;
+      return {
+        value: null,
+        refvalue: 'Error'
+      };
     }
   };
 
-  // Helper: Convert formulas to new format with evaluated values
+  // Helper: Convert formulas to new format with evaluated values and refvalues
   const normalizeFormulas = (formulas: Record<string, any>): Record<string, any> => {
     const normalized: Record<string, any> = {};
     for (const [cellRef, formulaOrObj] of Object.entries(formulas)) {
       if (typeof formulaOrObj === 'string') {
-        // Old format: convert to new format with evaluated value
-        const evaluatedValue = evaluateExpression(formulaOrObj);
-        normalized[cellRef] = { formula: formulaOrObj, value: evaluatedValue };
+        // Old format: convert to new format with evaluated value and refvalue
+        const { value, refvalue } = evaluateExpression(formulaOrObj);
+        normalized[cellRef] = { formula: formulaOrObj, value: value, refvalue: refvalue };
       } else if (typeof formulaOrObj === 'object' && formulaOrObj !== null) {
-        // Already in new format, keep as is but re-evaluate in case it changed
-        const evaluatedValue = evaluateExpression(formulaOrObj.formula);
-        normalized[cellRef] = { formula: formulaOrObj.formula, value: evaluatedValue };
+        // Already in object format, re-evaluate to ensure value and refvalue are correct
+        const { value, refvalue } = evaluateExpression(formulaOrObj.formula);
+        normalized[cellRef] = { formula: formulaOrObj.formula, value: value, refvalue: refvalue };
       }
     }
     return normalized;
@@ -1581,9 +1622,16 @@ const ReportViewPage: React.FC = () => {
                                       // Get formula string and use stored value if available, otherwise evaluate
                                       const formulaString = hasFormula ? getFormulaString(hasFormula) : '';
                                       const storedValue = hasFormula ? getFormulaValue(hasFormula) : null;
-                                      const displayValue = hasFormula
-                                        ? (storedValue !== null ? storedValue : evaluateExpression(formulaString) ?? row[key] ?? '')
-                                        : row[key] ?? '';
+                                      let displayValue = row[key] ?? '';
+                                      if (hasFormula) {
+                                        if (storedValue !== null) {
+                                          displayValue = storedValue;
+                                        } else {
+                                          // Re-evaluate formula if no stored value
+                                          const { value } = evaluateExpression(formulaString);
+                                          displayValue = value ?? row[key] ?? '';
+                                        }
+                                      }
                                       const commonProps = {
                                         value: displayValue,
                                         onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -1605,7 +1653,7 @@ const ReportViewPage: React.FC = () => {
                                           hasFormula ? 'border-blue-400 bg-blue-50' :
                                             isEdited ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                                           } focus:outline-none focus:ring-2 focus:ring-blue-500`,
-                                        title: hasFormula ? `Formula: ${cellFormulas[cellRef]}` : 'Click to select or use formula input'
+                                        title: hasFormula ? `Formula: ${cellFormulas[cellRef]?.formula || ''}\nRef Value: ${cellFormulas[cellRef]?.refvalue || ''}` : 'Click to select or use formula input'
                                       };
 
                                       switch (dataType) {
@@ -1872,7 +1920,7 @@ const ReportViewPage: React.FC = () => {
                                   return;
                                 }
                                 // Evaluate formula and update cell
-                                const result = evaluateExpression(formulaInput);
+                                const { value: result, refvalue } = evaluateExpression(formulaInput);
                                 const colKey = keys[colIndex];
 
                                 // Check if result is NaN
@@ -1885,10 +1933,10 @@ const ReportViewPage: React.FC = () => {
                                 newData[rowIndex][colKey] = result !== null ? result : '';
                                 setEditingDocData(newData);
 
-                                // Store formula for this cell with evaluated value
+                                // Store formula for this cell with evaluated value and refvalue
                                 setCellFormulas(prev => ({
                                   ...prev,
-                                  [cellRef]: { formula: formulaInput, value: result !== null ? result : '' }
+                                  [cellRef]: { formula: formulaInput, value: result !== null ? result : '', refvalue: refvalue }
                                 }));
 
                                 // Mark cell as edited
