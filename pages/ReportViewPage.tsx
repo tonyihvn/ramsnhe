@@ -71,7 +71,6 @@ const ReportViewPage: React.FC = () => {
       col = Math.floor(col / 26) - 1;
       if (col < 0) break;
     }
-
     return `report${report?.id || 0}_${abbr}_${colLetter}${rowIndex + 1}`;
   };
 
