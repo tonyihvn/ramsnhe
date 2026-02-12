@@ -2012,5 +2012,4 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
     </div>
   );
 };
-
 export default ReportViewPage;
