@@ -8,6 +8,7 @@ import MInput from '../components/ui/MInput';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
 import { filterOptionsByCondition } from '../utils/conditionEvaluator';
+import { buildFormulasContext, evaluateFormulaWithContext, evaluateFormulasForForm } from '../utils/formulaEvaluator';
 
 import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -412,6 +413,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [selectedFacilityId, setSelectedFacilityId] = useState<number | undefined>(currentUser?.facilityId || undefined);
     const [selectedUserId, setSelectedUserId] = useState<number | undefined>(currentUser?.id || undefined);
     const [pagePerms, setPagePerms] = useState<any[] | null>(null);
+    const [actualTables, setActualTables] = useState<any[]>([]);
+    const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
 
     const location = useLocation();
     const search = new URLSearchParams(location.search);
@@ -486,12 +489,18 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         return diff;
     };
 
-    const evaluateFormula = (formula: string, fieldMap: Record<string, any>) => {
+    const evaluateFormula = (formula: string, fieldMap: Record<string, any>, formulasContext?: any) => {
         if (!formula || typeof formula !== 'string') return null;
         try {
-            // First, resolve any cell references like report1_H_J1 from the fieldMap
+            // If we have a formulas context (cross-document references), use the utility
+            if (formulasContext) {
+                const result = evaluateFormulasForForm(formula, fieldMap, formulasContext);
+                return result;
+            }
+
+            // Otherwise, use the legacy approach with just fieldMap
             let processedFormula = formula;
-            const cellRefPattern = /report\d+_[A-Z]{1,3}_[A-Z]+\d+/g;
+            const cellRefPattern = /report\d+(?:\.\d+)?_[A-Z]{1,3}_[A-Z]+\d+/g;
             const cellMatches = formula.match(cellRefPattern) || [];
 
             for (const cellRef of cellMatches) {
@@ -808,6 +817,33 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 const created = await createRes.json();
                 const reportId = created.id || created.activity_reports_id || null;
 
+                // If a table was selected, save uploaded file data to that table
+                if (selectedTableId && uploadedFiles.length > 0) {
+                    try {
+                        const rowsToInsert = [];
+                        for (const file of uploadedFiles) {
+                            if (Array.isArray(file.data)) {
+                                rowsToInsert.push(...file.data);
+                            }
+                        }
+                        if (rowsToInsert.length > 0) {
+                            const tableRes = await fetch(`/api/actual_tables/${selectedTableId}/rows`, {
+                                method: 'POST',
+                                credentials: 'include',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ rows: rowsToInsert })
+                            });
+                            if (tableRes.ok) {
+                                console.log('Saved', `${rowsToInsert.length} rows to selected table`);
+                            } else {
+                                console.error('Failed to save rows to table:', await tableRes.text());
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Failed to save table data:', e);
+                    }
+                }
+
                 // upload any file answers to /api/review_uploads so they are written to disk and associated with the report
                 const updatedAnswers = { ...strippedAnswers };
                 for (const fa of fileAnswerMap) {
@@ -925,6 +961,22 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const handleFileUpdate = (updatedFile: UploadedFile) => {
         setUploadedFiles(files => files.map(f => f.id === updatedFile.id ? updatedFile : f));
     };
+
+    // Load actual tables for this activity
+    React.useEffect(() => {
+        if (!activityId) return;
+        (async () => {
+            try {
+                const res = await fetch(`/api/actual_tables?activityId=${activityId}`, { credentials: 'include' });
+                if (res.ok) {
+                    const tables = await res.json();
+                    setActualTables(tables || []);
+                }
+            } catch (e) {
+                console.error('Failed to load actual tables:', e);
+            }
+        })();
+    }, [activityId]);
 
     // If reportId supplied in query params, load existing report for editing
     React.useEffect(() => {
@@ -1223,6 +1275,32 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             <h3 className="text-sm font-medium text-blue-800">Form Data Saved</h3>
                             <p className="text-sm text-blue-700 mt-1">Your responses have been captured. You can now upload Excel or CSV files related to this activity. You can edit the data in the table below before final submission.</p>
                         </div>
+
+                        {actualTables && actualTables.length > 0 && (
+                            <div className="bg-green-50 p-4 rounded-md border border-green-200">
+                                <h3 className="text-sm font-medium text-green-900">Select Existing Table (Optional)</h3>
+                                <p className="text-sm text-green-800 mt-1">Pre-created tables are available. You can optionally select one and upload CSV/Excel data to populate it.</p>
+                                <div className="mt-3">
+                                    <select
+                                        className="w-full border border-green-300 rounded px-3 py-2 text-sm bg-white"
+                                        value={selectedTableId || ''}
+                                        onChange={(e) => setSelectedTableId(e.target.value ? parseInt(e.target.value) : null)}
+                                    >
+                                        <option value="">-- None (Create temporary table) --</option>
+                                        {actualTables.map(table => (
+                                            <option key={table.id} value={table.id}>
+                                                {table.title} ({table.row_count || 0} rows)
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {selectedTableId && (
+                                        <p className="text-xs text-green-700 mt-2">
+                                            ✓ Selected table will receive uploaded data. Existing rows will be preserved.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Upload Files</label>

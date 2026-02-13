@@ -228,7 +228,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 ...data,
                 business_id: data.business_id || currentUser?.business_id
             };
-            
+
             const res = await fetch(url, {
                 method: 'POST',
                 credentials: 'include',
@@ -247,6 +247,8 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                     // best-effort flush
                     await flushAudit(currentUser?.id);
                 } catch (e) { /* ignore */ }
+                // Refresh page after save to reflect changes
+                setTimeout(() => window.location.reload(), 500);
             } else {
                 console.error('Save failed', await res.text());
             }
@@ -258,6 +260,8 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
             await fetch(`${url}/${id}`, { method: 'DELETE', credentials: 'include' });
             setter(prev => prev.filter(p => String(p.id) !== String(id)));
             try { addAuditEvent({ type: 'crud', action: 'delete', resource: url, id, userId: currentUser?.id || null }); await flushAudit(currentUser?.id); } catch (e) { }
+            // Refresh page after deletion to reflect all cascading changes
+            setTimeout(() => window.location.reload(), 500);
         } catch (e) { console.error(e); }
     };
 
@@ -288,7 +292,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                     ...user,
                     business_id: user.business_id || currentUser?.business_id
                 };
-                
+
                 const res = await fetch(`${API_URL}/users`, {
                     method: 'POST',
                     credentials: 'include',
@@ -314,24 +318,24 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     // Form Def
     const saveFormDefinition = async (activityId: string, formDef: FormDefinition) => {
         try {
-                // Flatten questions and also send the full form definition so section-level
-                // settings (e.g., isRepeatable and groupName) are persisted to the activity.
-                const questionsArray: any[] = [];
-                for (const p of formDef.pages || []) {
-                    for (const s of p.sections || []) {
-                        for (const q of s.questions || []) {
-                            // include section-level repeat group info on each question so the server
-                            // can persist question_group consistently
-                            questionsArray.push({ ...q, pageName: p.name, sectionName: s.name, questionGroup: q.questionGroup || s.groupName || null });
-                        }
+            // Flatten questions and also send the full form definition so section-level
+            // settings (e.g., isRepeatable and groupName) are persisted to the activity.
+            const questionsArray: any[] = [];
+            for (const p of formDef.pages || []) {
+                for (const s of p.sections || []) {
+                    for (const q of s.questions || []) {
+                        // include section-level repeat group info on each question so the server
+                        // can persist question_group consistently
+                        questionsArray.push({ ...q, pageName: p.name, sectionName: s.name, questionGroup: q.questionGroup || s.groupName || null });
                     }
                 }
-                await fetch(`${API_URL}/activities/${activityId}/form`, {
-                    method: 'PUT',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ questions: questionsArray, formDefinition: formDef })
-                });
+            }
+            await fetch(`${API_URL}/activities/${activityId}/form`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ questions: questionsArray, formDefinition: formDef })
+            });
             // Refresh activities list with business_id filter
             const businessIdParam = currentUser?.business_id ? `?business_id=${encodeURIComponent(currentUser.business_id)}` : '';
             const actRes = await fetch(`${API_URL}/activities${businessIdParam}`, { credentials: 'include' });

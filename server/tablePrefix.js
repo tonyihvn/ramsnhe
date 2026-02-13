@@ -52,8 +52,10 @@ export const tables = new Proxy({}, {
             INDICATORS: 'indicators',
             PASSWORD_RESETS: 'password_resets',
             AUDIT_EVENTS: 'audit_events',
+            ACTUAL_TABLES: 'actual_tables',
+            ACTUAL_TABLE_ROWS: 'actual_table_rows',
         };
-        
+
         if (tableNames[prop]) {
             return `${prefix}${tableNames[prop]}`;
         }

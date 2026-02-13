@@ -2325,6 +2325,38 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )`);
         } catch (err) { /* ignore - table may already exist */ }
+
+        // Create ACTUAL_TABLES table for "Create Actual Table" feature
+        try {
+            await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.ACTUAL_TABLES} (
+                id SERIAL PRIMARY KEY,
+                database_name TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                activity_id INTEGER REFERENCES ${tables.ACTIVITIES}(id) ON DELETE SET NULL,
+                program_id INTEGER,
+                report_id INTEGER,
+                business_id INTEGER REFERENCES ${tables.BUSINESSES}(id) ON DELETE SET NULL,
+                submitted_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
+                schema JSONB,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                created_by INTEGER
+            )`);
+            console.log(`${tables.ACTUAL_TABLES} table created/verified`);
+        } catch (err) { console.error(`Failed to create ${tables.ACTUAL_TABLES} table:`, err); }
+
+        // Drop ACTUAL_TABLE_ROWS table if it exists (migration: all data now in physical tables)
+        try {
+            await pool.query(`DROP TABLE IF EXISTS ${tables.ACTUAL_TABLE_ROWS} CASCADE`);
+            console.log(`${tables.ACTUAL_TABLE_ROWS} table dropped (using physical tables only now)`);
+        } catch (err) { console.warn(`Could not drop ${tables.ACTUAL_TABLE_ROWS}:`, err.message); }
+
+        // Create indexes for actual tables
+        try {
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_actual_tables_activity ON ${tables.ACTUAL_TABLES}(activity_id)`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_actual_tables_business ON ${tables.ACTUAL_TABLES}(business_id)`);
+        } catch (err) { console.error('Failed to create indexes for actual tables:', err); }
+
     } catch (err) {
         console.error('Failed to sync reviewer/score columns between questions and answers:', err);
         throw err;
@@ -5235,10 +5267,70 @@ app.put('/api/activities/:id/form', async (req, res) => {
 });
 
 app.delete('/api/activities/:id', requireAdmin, async (req, res) => {
+    const activityId = Number(req.params.id);
+    if (!activityId) return res.status(400).send('Invalid id');
+    const client = await pool.connect();
     try {
-        await pool.query(`DELETE FROM ${tables.ACTIVITIES} WHERE id = $1`, [req.params.id]);
+        await client.query('BEGIN');
+
+        // Find all reports for this activity
+        const reports = (await client.query(`SELECT id FROM ${tables.ACTIVITY_REPORTS} WHERE activity_id = $1`, [activityId])).rows.map(r => r.id);
+
+        // Find all actual tables for this activity
+        const actualTables = (await client.query(`SELECT id, database_name FROM ${tables.ACTUAL_TABLES} WHERE activity_id = $1`, [activityId])).rows;
+
+        if (reports.length > 0) {
+            // Delete uploaded docs tied to reports
+            await client.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE report_id = ANY($1::int[])`, [reports]);
+            // Delete answers for those reports
+            await client.query(`DELETE FROM ${tables.ANSWERS} WHERE report_id = ANY($1::int[])`, [reports]);
+            // Delete the reports themselves
+            await client.query(`DELETE FROM ${tables.ACTIVITY_REPORTS} WHERE id = ANY($1::int[])`, [reports]);
+        }
+
+        // Delete uploaded docs attached to this activity
+        await client.query(`DELETE FROM ${tables.UPLOADED_DOCS} WHERE activity_id = $1`, [activityId]);
+
+        // Delete answers tied to questions belonging to this activity
+        await client.query(`DELETE FROM ${tables.ANSWERS} WHERE question_id IN (SELECT id FROM ${tables.QUESTIONS} WHERE activity_id = $1)`, [activityId]);
+
+        // Delete questions for this activity
+        await client.query(`DELETE FROM ${tables.QUESTIONS} WHERE activity_id = $1`, [activityId]);
+
+        // Delete report templates for this activity
+        await client.query(`DELETE FROM ${tables.REPORT_TEMPLATES} WHERE activity_id = $1`, [activityId]);
+
+        // Delete indicators associated with this activity
+        await client.query(`DELETE FROM ${tables.INDICATORS} WHERE activity_id = $1`, [activityId]);
+
+        // Delete actual tables and their physical tables
+        if (actualTables.length > 0) {
+            // Delete physical tables
+            const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+            for (const table of actualTables) {
+                try {
+                    const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+                    await client.query(`DROP TABLE IF EXISTS "${physicalTableName}" CASCADE`);
+                } catch (dropErr) {
+                    console.warn(`Failed to drop physical table for actual_table ${table.id}:`, dropErr.message);
+                }
+            }
+            // Delete actual table records
+            await client.query(`DELETE FROM ${tables.ACTUAL_TABLES} WHERE activity_id = $1`, [activityId]);
+        }
+
+        // Finally delete the activity
+        await client.query(`DELETE FROM ${tables.ACTIVITIES} WHERE id = $1`, [activityId]);
+
+        await client.query('COMMIT');
         res.sendStatus(200);
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error('Activity deletion failed:', e.message);
+        res.status(500).send(e.message);
+    } finally {
+        client.release();
+    }
 });
 
 // Facilities
@@ -7574,6 +7666,645 @@ app.delete('/api/uploaded_docs/:id', async (req, res) => {
     } catch (e) {
         console.error('Failed to delete uploaded_doc', e);
         res.status(500).json({ error: 'Failed to delete uploaded_doc' });
+    }
+});
+
+// ===== ACTUAL TABLES ENDPOINTS =====
+// POST /api/actual_tables - Create a new actual table from uploaded file
+app.post('/api/actual_tables', async (req, res) => {
+    const { title, databaseName, activityId, programId, reportId, businessId, fileContent } = req.body;
+    try {
+        if (!title || !databaseName) {
+            return res.status(400).json({ error: 'title and databaseName are required' });
+        }
+
+        // Check if a table with the same title already exists
+        const existingTitleCheck = await pool.query(
+            `SELECT id, title FROM ${tables.ACTUAL_TABLES} WHERE title = $1`,
+            [title]
+        );
+
+        if (existingTitleCheck.rowCount > 0) {
+            return res.status(409).json({ error: `A table with the name "${title}" already exists. Please use a different name.` });
+        }
+
+        // Check if a table with the same database name already exists
+        const existingDbNameCheck = await pool.query(
+            `SELECT id, database_name FROM ${tables.ACTUAL_TABLES} WHERE database_name = $1`,
+            [databaseName]
+        );
+
+        if (existingDbNameCheck.rowCount > 0) {
+            return res.status(409).json({ error: `A table with the database name "${databaseName}" already exists. Please use a different name.` });
+        }
+
+        // Sanitize column names: lowercase, replace spaces and special chars with underscores
+        const sanitizeColumnName = (name) => {
+            return String(name)
+                .toLowerCase()
+                .replace(/\s+/g, '_') // spaces to underscores
+                .replace(/[^a-z0-9_]/g, '_') // replace special characters with underscores
+                .replace(/^_+/, '') // remove leading underscores
+                .replace(/_+$/, '') // remove trailing underscores
+                .replace(/_+/g, '_'); // collapse multiple consecutive underscores to single
+        };
+
+        // Extract schema from file content (first row keys with types)
+        const schema = {};
+        const sanitizedColumns = {};
+        if (Array.isArray(fileContent) && fileContent.length > 0) {
+            const firstRow = fileContent[0];
+            if (firstRow && typeof firstRow === 'object') {
+                for (const [colName, value] of Object.entries(firstRow)) {
+                    const sanitizedName = sanitizeColumnName(colName);
+                    if (sanitizedName) {
+                        const dataType = typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'text';
+                        schema[colName] = {
+                            type: dataType,
+                            required: false,
+                            sanitized_name: sanitizedName
+                        };
+                        sanitizedColumns[colName] = sanitizedName;
+                    }
+                }
+            }
+        }
+
+        // Add relationship fields to schema
+        schema['activity_id'] = {
+            type: 'number',
+            required: false,
+            sanitized_name: 'activity_id',
+            isRelationship: true
+        };
+        schema['program_id'] = {
+            type: 'number',
+            required: false,
+            sanitized_name: 'program_id',
+            isRelationship: true
+        };
+        schema['report_id'] = {
+            type: 'number',
+            required: false,
+            sanitized_name: 'report_id',
+            isRelationship: true
+        };
+        schema['business_id'] = {
+            type: 'number',
+            required: false,
+            sanitized_name: 'business_id',
+            isRelationship: true
+        };
+        schema['submitted_by'] = {
+            type: 'number',
+            required: false,
+            sanitized_name: 'submitted_by',
+            isRelationship: true
+        };
+        schema['created_at'] = {
+            type: 'text',
+            required: false,
+            sanitized_name: 'created_at',
+            isRelationship: true
+        };
+        schema['updated_at'] = {
+            type: 'text',
+            required: false,
+            sanitized_name: 'updated_at',
+            isRelationship: true
+        };
+
+        const userId = req.session?.userId || null;
+
+        // If programId is not provided, fetch it from the activities table based on activityId
+        let resolvedProgramId = programId || null;
+        if (activityId && !programId) {
+            try {
+                const activityRes = await pool.query(
+                    `SELECT program_id FROM ${tables.ACTIVITIES} WHERE id = $1`,
+                    [activityId]
+                );
+                if (activityRes.rowCount > 0) {
+                    resolvedProgramId = activityRes.rows[0].program_id;
+                    console.log(`[actual_tables] Resolved program_id ${resolvedProgramId} from activity ${activityId}`);
+                }
+            } catch (err) {
+                console.warn(`[actual_tables] Failed to fetch program_id from activity ${activityId}:`, err);
+            }
+        }
+
+        // Create metadata for the table
+        const result = await pool.query(
+            `INSERT INTO ${tables.ACTUAL_TABLES} (database_name, title, activity_id, program_id, report_id, business_id, submitted_by, created_by, schema)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *`,
+            [databaseName, title, activityId || null, resolvedProgramId, reportId || null, businessId || null, userId, userId, JSON.stringify(schema)]
+        );
+
+        const table = result.rows[0];
+
+        // Create actual PostgreSQL table with TABLE_PREFIX
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const tableName = `${TABLE_PREFIX}${databaseName}`;
+
+        try {
+            // Build CREATE TABLE statement with sanitized column names
+            let createTableSQL = `CREATE TABLE IF NOT EXISTS "${tableName}" (\n  id SERIAL PRIMARY KEY,\n`;
+
+            const columnDefs = [];
+            for (const [originalName, sanitizedName] of Object.entries(sanitizedColumns)) {
+                const colType = schema[originalName]?.type || 'text';
+                const pgType = colType === 'number' ? 'NUMERIC' : colType === 'boolean' ? 'BOOLEAN' : 'TEXT';
+                columnDefs.push(`  "${sanitizedName}" ${pgType}`);
+            }
+
+            // Add relationship fields
+            columnDefs.push(`  activity_id INTEGER`);
+            columnDefs.push(`  program_id INTEGER`);
+            columnDefs.push(`  report_id INTEGER`);
+            columnDefs.push(`  business_id INTEGER`);
+            columnDefs.push(`  submitted_by INTEGER`);
+            columnDefs.push(`  created_at TIMESTAMP DEFAULT NOW()`);
+            columnDefs.push(`  updated_at TIMESTAMP DEFAULT NOW()`);
+
+            createTableSQL += columnDefs.join(',\n') + '\n)';
+
+            console.log(`[actual_tables] Creating table: ${tableName}`, createTableSQL);
+
+            await pool.query(createTableSQL);
+
+            console.log(`[actual_tables] Table created successfully: ${tableName}`);
+        } catch (tableErr) {
+            console.error(`[actual_tables] Failed to create PostgreSQL table ${tableName}:`, tableErr);
+            // Continue anyway - we've created metadata record, table creation failure is non-fatal
+        }
+
+        // Insert rows into the physical PostgreSQL table only
+        if (Array.isArray(fileContent) && fileContent.length > 0) {
+            try {
+                for (const rowData of fileContent) {
+                    const columnNames = [];
+                    const columnValues = [];
+                    const params = [];
+                    let paramIdx = 1;
+
+                    // Add sanitized column values
+                    for (const [originalName, value] of Object.entries(rowData)) {
+                        if (sanitizedColumns[originalName]) {
+                            columnNames.push(`"${sanitizedColumns[originalName]}"`);
+                            columnValues.push(`$${paramIdx++}`);
+                            params.push(value);
+                        }
+                    }
+
+                    // Add relationship fields
+                    columnNames.push('activity_id', 'program_id', 'report_id', 'business_id', 'submitted_by');
+                    columnValues.push(`$${paramIdx++}`, `$${paramIdx++}`, `$${paramIdx++}`, `$${paramIdx++}`, `$${paramIdx++}`);
+                    params.push(activityId || null, resolvedProgramId, reportId || null, businessId || null, userId);
+
+                    const insertQuery = `
+                        INSERT INTO "${tableName}" (${columnNames.join(', ')})
+                        VALUES (${columnValues.join(', ')})
+                    `;
+
+                    await pool.query(insertQuery, params);
+                }
+                console.log(`[actual_tables] Inserted ${fileContent.length} rows into table ${tableName}`);
+            } catch (insertErr) {
+                console.error(`[actual_tables] Failed to insert rows into physical table ${tableName}:`, insertErr);
+                // Non-fatal - metadata is saved
+            }
+        }
+
+        res.json({ success: true, table: { ...table, schema: schema, tableName: `${TABLE_PREFIX}${databaseName}` } });
+    } catch (err) {
+        console.error('Failed to create actual_table', err);
+        res.status(500).json({ error: 'Failed to create actual table', details: err.message });
+    }
+});
+
+// GET /api/actual_tables - List all actual tables (with filters)
+app.get('/api/actual_tables', async (req, res) => {
+    const { activityId, businessId, programId } = req.query;
+    try {
+        const clauses = [];
+        const params = [];
+        let idx = 1;
+
+        if (activityId) { clauses.push(`activity_id = $${idx++}`); params.push(activityId); }
+        if (businessId) { clauses.push(`business_id = $${idx++}`); params.push(businessId); }
+        if (programId) { clauses.push(`program_id = $${idx++}`); params.push(programId); }
+
+        const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+        const sql = `
+            SELECT 
+                at.*
+            FROM ${tables.ACTUAL_TABLES} at
+            ${where}
+            ORDER BY at.created_at DESC
+        `;
+
+        const result = await pool.query(sql, params);
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const tables_list = await Promise.all(result.rows.map(async (t) => {
+            let rowCount = 0;
+            try {
+                const physicalTableName = `${TABLE_PREFIX}${t.database_name}`;
+                const countRes = await pool.query(`SELECT COUNT(*) FROM "${physicalTableName}"`);
+                rowCount = parseInt(countRes.rows[0].count) || 0;
+            } catch (e) {
+                console.warn(`Could not count rows in physical table for ${t.id}:`, e.message);
+            }
+            return {
+                ...t,
+                schema: typeof t.schema === 'string' ? JSON.parse(t.schema) : t.schema,
+                row_count: rowCount
+            };
+        }));
+
+        res.json(tables_list);
+    } catch (err) {
+        console.error('Failed to get actual_tables', err);
+        res.status(500).json({ error: 'Failed to get actual tables' });
+    }
+});
+
+// GET /api/actual_tables/:tableId - Get a specific table with its rows from physical table
+app.get('/api/actual_tables/:tableId', async (req, res) => {
+    const { tableId } = req.params;
+    try {
+        const tableRes = await pool.query(`SELECT * FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+        if (tableRes.rowCount === 0) return res.status(404).json({ error: 'table not found' });
+
+        const table = tableRes.rows[0];
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+
+        const rowsRes = await pool.query(`SELECT * FROM "${physicalTableName}" ORDER BY id ASC`);
+        const rows = rowsRes.rows;
+
+        const schema = typeof table.schema === 'string' ? JSON.parse(table.schema) : table.schema;
+        const sanitizedToOriginal = {};
+        for (const [originalName, colDef] of Object.entries(schema)) {
+            if (typeof colDef === 'object' && colDef !== null && 'sanitized_name' in colDef) {
+                sanitizedToOriginal[colDef.sanitized_name] = originalName;
+            }
+        }
+
+        const remappedRows = rows.map((row) => {
+            const remappedRow = {};
+            for (const [key, value] of Object.entries(row)) {
+                const originalName = sanitizedToOriginal[key] || key;
+                remappedRow[originalName] = value;
+            }
+            return remappedRow;
+        });
+        res.json({
+            ...table,
+            schema: schema,
+            rows: remappedRows
+        });
+    } catch (err) {
+        console.error('Failed to get actual_table', err);
+        res.status(500).json({ error: 'Failed to get actual table' });
+    }
+});
+
+// GET /api/actual_tables/:tableId/physical-rows - Get rows from physical PostgreSQL table
+app.get('/api/actual_tables/:tableId/physical-rows', async (req, res) => {
+    const { tableId } = req.params;
+    const { filters } = req.query; // filters as JSON string: {"columnName": "search_value"}
+
+    try {
+        // Get table metadata
+        const tableRes = await pool.query(`SELECT * FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+        if (tableRes.rowCount === 0) return res.status(404).json({ error: 'table not found' });
+
+        const table = tableRes.rows[0];
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+
+        // Parse filters if provided
+        let whereConditions = [];
+        let params = [];
+        let paramIndex = 1;
+
+        if (filters) {
+            try {
+                const filterObj = JSON.parse(filters);
+                const schema = typeof table.schema === 'string' ? JSON.parse(table.schema) : table.schema;
+
+                for (const [colName, searchValue] of Object.entries(filterObj)) {
+                    if (searchValue && schema[colName]) {
+                        const sanitizedName = schema[colName].sanitized_name;
+                        whereConditions.push(`"${sanitizedName}"::text ILIKE $${paramIndex++}`);
+                        params.push(`%${searchValue}%`);
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to parse filters:', e);
+            }
+        }
+
+        // Build query
+        let query = `SELECT * FROM "${physicalTableName}"`;
+        if (whereConditions.length > 0) {
+            query += ` WHERE ${whereConditions.join(' AND ')}`;
+        }
+        query += ` ORDER BY id ASC`;
+
+        console.log(`[actual_tables] Fetching from physical table: ${physicalTableName}`, { whereConditions, paramCount: params.length });
+
+        const rowsRes = await pool.query(query, params);
+        const rows = rowsRes.rows;
+
+        // Build a map of sanitized names to original names
+        const schema = typeof table.schema === 'string' ? JSON.parse(table.schema) : table.schema;
+        const sanitizedToOriginal = {};
+        for (const [originalName, colDef] of Object.entries(schema)) {
+            if (typeof colDef === 'object' && colDef !== null && 'sanitized_name' in colDef) {
+                sanitizedToOriginal[colDef.sanitized_name] = originalName;
+            }
+        }
+
+        // Remap rows: convert sanitized column names back to original names
+        const remappedRows = rows.map((row) => {
+            const remappedRow = {};
+            for (const [key, value] of Object.entries(row)) {
+                // If this column has a sanitized name mapping, use the original name
+                const originalName = sanitizedToOriginal[key] || key;
+                remappedRow[originalName] = value;
+            }
+            return remappedRow;
+        });
+
+        console.log(`[actual_tables] Remapped rows from sanitized names:`, {
+            sampleRow: remappedRows[0],
+            totalRows: remappedRows.length
+        });
+
+        res.json({
+            ...table,
+            schema: schema,
+            rows: remappedRows,
+            row_count: remappedRows.length
+        });
+    } catch (err) {
+        console.error(`Failed to get rows from physical table ${req.params.tableId}:`, err);
+        res.status(500).json({ error: 'Failed to fetch table rows', details: err.message });
+    }
+});
+
+// POST /api/actual_tables/:tableId/rows - Add rows to physical table only
+app.post('/api/actual_tables/:tableId/rows', async (req, res) => {
+    const { tableId } = req.params;
+    const { rows } = req.body;
+
+    try {
+        if (!Array.isArray(rows)) {
+            return res.status(400).json({ error: 'rows must be an array' });
+        }
+
+        const tableRes = await pool.query(`SELECT * FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+        if (tableRes.rowCount === 0) return res.status(404).json({ error: 'table not found' });
+
+        const table = tableRes.rows[0];
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+        const userId = req.session?.userId || null;
+
+        // Build mapping from original column names to sanitized names
+        const schema = typeof table.schema === 'string' ? JSON.parse(table.schema) : table.schema;
+        const originalToSanitized = {};
+        for (const [originalName, colDef] of Object.entries(schema)) {
+            if (typeof colDef === 'object' && colDef !== null && 'sanitized_name' in colDef) {
+                originalToSanitized[originalName] = colDef.sanitized_name;
+            } else {
+                originalToSanitized[originalName] = originalName;
+            }
+        }
+
+        const insertedRows = [];
+        for (const rowData of rows) {
+            const columns = [];
+            const values = [];
+
+            for (const [originalColName, value] of Object.entries(rowData)) {
+                const sanitizedColName = originalToSanitized[originalColName] || originalColName;
+                columns.push(`"${sanitizedColName}"`);
+                values.push(value);
+            }
+
+            const allColumns = [...columns, `"activity_id"`, `"program_id"`, `"report_id"`, `"business_id"`, `"submitted_by"`];
+            const allValues = [...values, table.activity_id, table.program_id, table.report_id, table.business_id, userId];
+            const allPlaceholders = Array.from({ length: allValues.length }, (_, i) => `$${i + 1}`).join(', ');
+
+            const query = `INSERT INTO "${physicalTableName}" (${allColumns.join(', ')}) VALUES (${allPlaceholders}) RETURNING *`;
+            console.log(`[INSERT ROW] Query: ${query}, Values:`, allValues);
+            const result = await pool.query(query, allValues);
+            insertedRows.push(result.rows[0]);
+        }
+
+        res.json({ success: true, rows: insertedRows });
+    } catch (err) {
+        console.error('Failed to add rows to actual_table', err);
+        res.status(500).json({ error: 'Failed to add rows to table: ' + err.message });
+    }
+});
+
+// PUT /api/actual_tables/:tableId - Update actual table metadata
+app.put('/api/actual_tables/:tableId', async (req, res) => {
+    const { tableId } = req.params;
+    const { title, schema } = req.body;
+
+    try {
+        const updates = [];
+        const params = [];
+        let idx = 1;
+
+        if (title) { updates.push(`title = $${idx++}`); params.push(title); }
+        if (schema) { updates.push(`schema = $${idx++}::jsonb`); params.push(JSON.stringify(schema)); }
+
+        updates.push(`updated_at = NOW()`);
+        params.push(tableId);
+
+        if (updates.length > 1) {
+            const sql = `UPDATE ${tables.ACTUAL_TABLES} SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`;
+            const result = await pool.query(sql, params);
+            if (result.rowCount === 0) return res.status(404).json({ error: 'table not found' });
+            res.json(result.rows[0]);
+        } else {
+            res.status(400).json({ error: 'No updateable fields provided' });
+        }
+    } catch (err) {
+        console.error('Failed to update actual_table', err);
+        res.status(500).json({ error: 'Failed to update actual table' });
+    }
+});
+
+// PUT /api/actual_tables/:tableId/rows - Update rows (only changed cells), add new rows, delete rows
+app.put('/api/actual_tables/:tableId/rows', async (req, res) => {
+    const { tableId } = req.params;
+    const { report_id, updates = [], new_rows = [], deleted_rows = [] } = req.body;
+
+    try {
+        const tableRes = await pool.query(`SELECT * FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+        if (tableRes.rowCount === 0) return res.status(404).json({ error: 'Table not found' });
+
+        const table = tableRes.rows[0];
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+
+        // Build mapping from original column names to sanitized names
+        const schema = typeof table.schema === 'string' ? JSON.parse(table.schema) : table.schema;
+        const originalToSanitized = {};
+        for (const [originalName, colDef] of Object.entries(schema)) {
+            if (typeof colDef === 'object' && colDef !== null && 'sanitized_name' in colDef) {
+                originalToSanitized[originalName] = colDef.sanitized_name;
+            } else {
+                // If no sanitized_name, assume the column name is already sanitized
+                originalToSanitized[originalName] = originalName;
+            }
+        }
+
+        console.log(`[PUT ROWS] Column mapping:`, originalToSanitized);
+
+        // First, fetch all existing rows to map row_index (array position) to actual database IDs
+        const rowsRes = await pool.query(`SELECT * FROM "${physicalTableName}" WHERE report_id = $1 ORDER BY id ASC`, [report_id]);
+        const allRows = rowsRes.rows;
+
+        console.log(`[PUT ROWS] Fetched ${allRows.length} existing rows for mapping row_index to database IDs`);
+
+        // Update existing rows (only changed cells) - updates is array of {row_index, ...changes}
+        for (const update of updates) {
+            const { row_index, ...changes } = update;
+            if (Object.keys(changes).length === 0) continue;
+
+            // Map row_index (array position) to actual database ID
+            if (row_index >= allRows.length) {
+                console.warn(`[UPDATE ROW] row_index ${row_index} out of bounds (only ${allRows.length} rows exist)`);
+                continue;
+            }
+
+            const actualRowId = allRows[row_index].id;
+
+            // Build UPDATE query dynamically for changed columns with quoted SANITIZED names
+            const setClauses = [];
+            const values = [];
+            let paramIndex = 1;
+
+            for (const [originalColName, value] of Object.entries(changes)) {
+                // Map original name to sanitized name
+                const sanitizedColName = originalToSanitized[originalColName] || originalColName;
+                setClauses.push(`"${sanitizedColName}" = $${paramIndex++}`);
+                values.push(value);
+            }
+
+            // Add actual database ID to WHERE clause
+            values.push(actualRowId);
+            const paramForId = paramIndex;
+
+            if (setClauses.length > 0) {
+                const query = `UPDATE "${physicalTableName}" SET ${setClauses.join(', ')} WHERE id = $${paramForId}`;
+                console.log(`[UPDATE ROW] Mapping row_index=${row_index} to id=${actualRowId}. Query: ${query}, Values:`, values);
+                await pool.query(query, values);
+            }
+        }
+
+        // Delete rows BEFORE inserting new ones - use the initial allRows fetch for consistent index mapping
+        // deleted_rows contains row indices from the frontend table
+        if (deleted_rows.length > 0) {
+            for (const rowIdx of deleted_rows) {
+                if (rowIdx < allRows.length) {
+                    const rowToDelete = allRows[rowIdx];
+                    const query = `DELETE FROM "${physicalTableName}" WHERE id = $1`;
+                    console.log(`[DELETE ROW] Mapping row_index=${rowIdx} to id=${rowToDelete.id}. Query: ${query}`);
+                    await pool.query(query, [rowToDelete.id]);
+                } else {
+                    console.warn(`[DELETE ROW] row_index ${rowIdx} out of bounds (only ${allRows.length} rows exist)`);
+                }
+            }
+        }
+
+        // Insert new rows - map original column names to sanitized names
+        for (const newRow of new_rows) {
+            const columns = [];
+            const values = [];
+
+            for (const [originalColName, value] of Object.entries(newRow)) {
+                const sanitizedColName = originalToSanitized[originalColName] || originalColName;
+                columns.push(`"${sanitizedColName}"`);
+                values.push(value);
+            }
+
+            // Add metadata columns
+            const allColumns = [...columns, `"report_id"`, `"activity_id"`, `"program_id"`, `"business_id"`, `"submitted_by"`];
+            const allValues = [...values, report_id, table.activity_id, table.program_id, table.business_id, null];
+            const allPlaceholders = Array.from({ length: allValues.length }, (_, i) => `$${i + 1}`).join(', ');
+
+            const query = `INSERT INTO "${physicalTableName}" (${allColumns.join(', ')}) VALUES (${allPlaceholders})`;
+            console.log(`[INSERT ROW] Query: ${query}, Values:`, allValues);
+            await pool.query(query, allValues);
+        }
+
+        res.json({ success: true, updated: updates.length, inserted: new_rows.length, deleted: deleted_rows.length });
+    } catch (err) {
+        console.error('Failed to update actual_table rows:', err);
+        res.status(500).json({ error: 'Failed to update rows: ' + err.message });
+    }
+});
+
+// DELETE /api/actual_tables/:tableId - Delete an actual table and its rows (admin only)
+app.delete('/api/actual_tables/:tableId', async (req, res) => {
+    const { tableId } = req.params;
+
+    try {
+        const tableRes = await pool.query(`SELECT * FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+        if (tableRes.rowCount === 0) return res.status(404).json({ error: 'table not found' });
+
+        const table = tableRes.rows[0];
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+
+        // Delete table metadata
+        await pool.query(`DELETE FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+
+        // Drop the physical table from PostgreSQL database
+        try {
+            await pool.query(`DROP TABLE IF EXISTS ${physicalTableName} CASCADE`);
+        } catch (dropErr) {
+            console.warn(`Warning: Could not drop physical table ${physicalTableName}:`, dropErr.message);
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Failed to delete actual_table', err);
+        res.status(500).json({ error: 'Failed to delete actual table' });
+    }
+});
+
+// DELETE /api/actual_tables/:tableId/rows/report/:reportId - Delete rows for a specific report from physical table
+app.delete('/api/actual_tables/:tableId/rows/report/:reportId', async (req, res) => {
+    const { tableId, reportId } = req.params;
+
+    try {
+        const tableRes = await pool.query(`SELECT * FROM ${tables.ACTUAL_TABLES} WHERE id = $1`, [tableId]);
+        if (tableRes.rowCount === 0) return res.status(404).json({ error: 'table not found' });
+
+        const table = tableRes.rows[0];
+        const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqatb_').toString().trim();
+        const physicalTableName = `${TABLE_PREFIX}${table.database_name}`;
+
+        // Delete rows only for this report from physical table
+        const result = await pool.query(
+            `DELETE FROM "${physicalTableName}" WHERE report_id = $1 RETURNING id`,
+            [reportId]
+        );
+
+        res.json({ success: true, deletedCount: result.rowCount || 0 });
+    } catch (err) {
+        console.error('Failed to delete report rows from actual_table', err);
+        res.status(500).json({ error: 'Failed to delete report rows: ' + err.message });
     }
 });
 
