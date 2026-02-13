@@ -1793,10 +1793,11 @@ const ReportViewPage: React.FC = () => {
                         <details className="bg-blue-50 border border-blue-200 rounded p-3">
                           <summary className="font-semibold text-blue-900 cursor-pointer">Formula Guide & Examples</summary>
                           <div className="mt-2 space-y-2 text-xs text-gray-700">
-                            <p><strong>Simple Calculation:</strong> <code>{`${generateCellName(0, table.title || 'table', 0, 0)} * 2`}</code></p>
-                            <p><strong>Reference Same Table:</strong> <code>{`${generateCellName(0, table.title || 'table', 0, 0)} + ${generateCellName(0, table.title || 'table', 1, 0)}`}</code></p>
-                            <p><strong>Complex Calculation:</strong> <code>{`(${generateCellName(0, table.title || 'table', 0, 0)} + ${generateCellName(0, table.title || 'table', 1, 0)}) / 2`}</code></p>
-                            <p><strong>Cross-Table References (from Uploaded Files):</strong> <code>{`report${report?.id || 1}.doc2_HD_A1 + ${generateCellName(0, table.title || 'table', 0, 0)}`}</code></p>
+                            <p><strong>Simple Calculation:</strong> <code>A1 * 2</code></p>
+                            <p><strong>Reference Same Table:</strong> <code>A1 + B1</code></p>
+                            <p><strong>Complex Calculation:</strong> <code>(A1 + B1) / 2</code></p>
+                            <p><strong>Cross-Table References:</strong> <code>report{report?.id || 1}_HD_A1 + A1</code></p>
+                            <p><strong>Multiple Table References:</strong> <code>report{report?.id || 1}_HD_A1 + report{report?.id || 1}_F_D1 * 1.5</code></p>
                           </div>
                         </details>
 
@@ -1833,10 +1834,10 @@ const ReportViewPage: React.FC = () => {
                             />
                           </div>
                           <div>
-                            <label className="text-xs font-medium text-gray-700 block mb-1">Step 2: Enter formula (value only - no formulas saved). Can reference uploaded file cells like report{report?.id || 1}.doc2_HD_A1</label>
+                            <label className="text-xs font-medium text-gray-700 block mb-1">Step 2: Enter formula (value only - no formulas saved). Can reference other tables like report{report?.id || 1}_HD_A1, report{report?.id || 1}_F_D1, report{report?.id || 1}_HCF_A5, etc.</label>
                             <textarea
                               ref={tableFormulaInputRef}
-                              placeholder="JavaScript expression (e.g., 'A1 * 2' or 'B1 + C1 * 0.1' or 'report1.doc2_HD_A1 + A1')"
+                              placeholder="JavaScript expression (e.g., 'A1 * 2' or report1_HD_A1 + B1' or 'report1_F_D1 * 1.5')"
                               className="w-full border rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500 resize-vertical min-h-24"
                               value={tableFormulaInput}
                               onChange={(e) => setTableFormulaInput(e.target.value)}
@@ -1866,77 +1867,144 @@ const ReportViewPage: React.FC = () => {
                                 const rowIdx = parseInt(parts[1]);
                                 const colName = parts.slice(2).join('_');
 
-                                // Get current row data to build context
-                                const currentRow = (tableEditingData[table.id] || [])[rowIdx];
+                                // Helper function to generate abbreviation from name
+                                const generateAbbr = (name: string): string => {
+                                  const abbr = name
+                                    .split(/\s+/)
+                                    .map(word => word.charAt(0).toUpperCase())
+                                    .join('')
+                                    .substring(0, 3);
+                                  return abbr || 'T'; // Default 'T' if no name
+                                };
+
+                                // Helper function to convert column letters to index (A=0, B=1, AA=26)
+                                const letterToIndex = (letters: string): number => {
+                                  let idx = 0;
+                                  for (let i = 0; i < letters.length; i++) {
+                                    idx = idx * 26 + (letters.charCodeAt(i) - 64);
+                                  }
+                                  return idx - 1;
+                                };
+
+                                // Helper function to resolve a cell reference and return its value
+                                const resolveCellRef = (cellRef: string): any => {
+                                  // Format: report{reportId}_{tableAbbr}_{cellRef} (e.g., report1_HD_A1)
+                                  const match = cellRef.match(/^report(\d+)_([A-Z]{1,3})_([A-Z]+)(\d+)$/i);
+                                  if (!match) {
+                                    console.warn('Invalid cell reference format:', cellRef);
+                                    return undefined;
+                                  }
+
+                                  const [, reportId, tableAbbr, colLetters, rowStr] = match;
+                                  const refRowIdx = Number(rowStr) - 1;
+                                  const refColIdx = letterToIndex(colLetters);
+
+                                  // Check if it's a reference to an uploaded file
+                                  const uploadedDoc = uploadedDocs.find(doc => {
+                                    const abbr = generateAbbr(doc.filename || '');
+                                    return abbr === tableAbbr && String(doc.report_id || doc.reportId || doc.report) === String(reportId);
+                                  });
+
+                                  if (uploadedDoc) {
+                                    const rows = Array.isArray(uploadedDoc.file_content) ? uploadedDoc.file_content : [];
+                                    if (refRowIdx >= 0 && refRowIdx < rows.length && refColIdx >= 0) {
+                                      const row = rows[refRowIdx];
+                                      const keys = Object.keys(row || {});
+                                      if (refColIdx < keys.length) {
+                                        const value = row[keys[refColIdx]];
+                                        // Try to convert to number if it looks numeric
+                                        if (typeof value === 'string') {
+                                          const num = Number(value);
+                                          return isNaN(num) ? value : num;
+                                        }
+                                        return value;
+                                      }
+                                    }
+                                    return undefined;
+                                  }
+
+                                  // Check if it's a reference to an actual table
+                                  const actualTable = actualTables?.find(t => {
+                                    const abbr = generateAbbr(t.title || '');
+                                    return abbr === tableAbbr;
+                                  });
+
+                                  if (actualTable) {
+                                    const rows = actualTable.rows || [];
+                                    if (refRowIdx >= 0 && refRowIdx < rows.length && refColIdx >= 0) {
+                                      const row = rows[refRowIdx];
+                                      const keys = actualTable.schema ? Object.keys(actualTable.schema) : [];
+                                      if (refColIdx < keys.length) {
+                                        const value = row[keys[refColIdx]];
+                                        // Try to convert to number if it looks numeric
+                                        if (typeof value === 'string') {
+                                          const num = Number(value);
+                                          return isNaN(num) ? value : num;
+                                        }
+                                        return value;
+                                      }
+                                    }
+                                    return undefined;
+                                  }
+
+                                  console.warn(`Could not find table with abbreviation: ${tableAbbr}`);
+                                  return undefined;
+                                };
+
+                                // Build context with current row values
                                 const context: Record<string, any> = {};
 
+                                const currentRow = (tableEditingData[table.id] || [])[rowIdx];
                                 if (currentRow) {
                                   Object.entries(currentRow).forEach(([key, value]) => {
                                     context[key] = value;
                                   });
                                 }
 
-                                // Add cross-table references from uploaded files
-                                const formulasContext: Record<string, any> = {};
-                                for (const doc of uploadedDocs) {
-                                  if (report?.id) {
-                                    const key = `report${report.id}.${doc.id}`;
-                                    formulasContext[key] = {
-                                      fileContent: Array.isArray(doc.file_content) ? doc.file_content : [],
-                                      filename: doc.filename || ''
-                                    };
-                                  }
-                                }
+                                // Parse and resolve cell references in formula
+                                // Format: report{reportId}_{tableAbbr}_{cellRef}
+                                const cellRefPattern = /report\d+_[A-Z]{1,3}_[A-Z]+\d+/gi;
+                                const matches = (tableFormulaInput.match(cellRefPattern) || []) as string[];
+                                const uniqueCellRefs = [...new Set(matches)]; // Remove duplicates
 
-                                // Parse cell references in formula
-                                const cellRefPattern = /report\d+(?:\.\d+)?_[A-Z]{1,3}_[A-Z]+\d+/g;
-                                const matches = tableFormulaInput.match(cellRefPattern) || [];
-
-                                for (const cellRef of matches) {
-                                  let resolvedValue: any;
-
-                                  if (cellRef.includes('.')) {
-                                    // Cross-document reference from uploaded files
-                                    resolvedValue = resolveCellReferenceFromContext(cellRef, formulasContext);
+                                for (const cellRef of uniqueCellRefs) {
+                                  const resolvedValue = resolveCellRef(cellRef as string);
+                                  if (resolvedValue !== undefined) {
+                                    context[cellRef as string] = resolvedValue;
                                   } else {
-                                    // Same table reference
-                                    const parts = cellRef.match(/([A-Z]+)(\d+)$/);
-                                    if (parts) {
-                                      const [, colLetters, rowStr] = parts;
-                                      const refRowIdx = Number(rowStr) - 1;
-                                      let colIdx = 0;
-                                      for (let i = 0; i < colLetters.length; i++) {
-                                        colIdx = colIdx * 26 + (colLetters.charCodeAt(i) - 64);
-                                      }
-                                      colIdx--;
-                                      const cols = table.schema ? Object.keys(table.schema) : [];
-                                      if (refRowIdx >= 0 && refRowIdx < (tableEditingData[table.id]?.length || 0) && colIdx >= 0 && colIdx < cols.length) {
-                                        resolvedValue = (tableEditingData[table.id] || [])[refRowIdx][cols[colIdx]];
-                                      }
-                                    }
+                                    context[cellRef as string] = 0; // Default to 0 if unresolved
                                   }
-                                  context[cellRef] = resolvedValue;
                                 }
 
                                 // Evaluate formula safely with proper escaping
-                                // Use eval with a properly constructed expression to avoid parameter issues
-                                const contextCode = Object.entries(context)
-                                  .map(([key, value]) => {
-                                    // Safely serialize the value using JSON.stringify
-                                    // Skip undefined values - they shouldn't be in the context
-                                    if (value === undefined) {
-                                      return '';
-                                    }
-                                    if (value === null) {
-                                      return `const ${key} = null;`;
-                                    }
-                                    return `const ${key} = ${JSON.stringify(value)};`;
-                                  })
-                                  .filter(line => line.length > 0)
-                                  .join('');
-                                const fullCode = contextCode + `return ${tableFormulaInput}`;
-                                const func = new Function(fullCode);
-                                const result = func();
+                                // Use a function with parameters instead of const declarations
+                                const validKeys: string[] = [];
+                                const invalidKeys: string[] = [];
+
+                                for (const key of Object.keys(context)) {
+                                  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key)) {
+                                    validKeys.push(key);
+                                  } else {
+                                    invalidKeys.push(key);
+                                  }
+                                }
+
+                                // For invalid keys (with special chars), create safe replacements
+                                let formulaToEval = tableFormulaInput;
+                                const replacementContext: Record<string, any> = { ...context };
+
+                                for (let i = 0; i < invalidKeys.length; i++) {
+                                  const invalidKey = invalidKeys[i];
+                                  const placeholder = `_ref${i}`;
+                                  delete replacementContext[invalidKey];
+                                }
+
+                                // Build parameter list from all keys (now valid)
+                                const paramNames = Object.keys(replacementContext);
+                                const paramValues = paramNames.map(key => replacementContext[key]);
+
+                                const func = new Function(...paramNames, `return ${formulaToEval}`);
+                                const result = func(...paramValues);
 
                                 if (typeof result === 'number' && isNaN(result)) {
                                   try { swalError('Error', 'Formula evaluated to NaN'); } catch (e) { }
