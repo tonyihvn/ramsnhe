@@ -415,6 +415,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [pagePerms, setPagePerms] = useState<any[] | null>(null);
     const [actualTables, setActualTables] = useState<any[]>([]);
     const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
+    const [selectedTable, setSelectedTable] = useState<any | null>(null);
+    const [tableValidationMessage, setTableValidationMessage] = useState<string | null>(null);
+    const [tableImportStatus, setTableImportStatus] = useState<any>(null);
 
     const location = useLocation();
     const search = new URLSearchParams(location.search);
@@ -834,13 +837,31 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 body: JSON.stringify({ rows: rowsToInsert })
                             });
                             if (tableRes.ok) {
-                                console.log('Saved', `${rowsToInsert.length} rows to selected table`);
+                                const result = await tableRes.json();
+                                const successCount = result.rows ? result.rows.length : rowsToInsert.length;
+                                console.log(`✓ Successfully imported ${successCount} rows to table`);
+                                setTableImportStatus({
+                                    success: true,
+                                    message: `✓ Successfully imported ${successCount} rows to the selected table`,
+                                    count: successCount
+                                });
                             } else {
-                                console.error('Failed to save rows to table:', await tableRes.text());
+                                const errText = await tableRes.text();
+                                console.error('Failed to save rows to table:', errText);
+                                setTableImportStatus({
+                                    success: false,
+                                    message: `✗ Failed to import rows: ${errText || 'Unknown error'}`,
+                                    count: 0
+                                });
                             }
                         }
                     } catch (e) {
                         console.error('Failed to save table data:', e);
+                        setTableImportStatus({
+                            success: false,
+                            message: `✗ Error importing data: ${String(e)}`,
+                            count: 0
+                        });
                     }
                 }
 
@@ -928,14 +949,53 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         await workbook.xlsx.load(buffer as ArrayBuffer);
                         const worksheet = workbook.worksheets[0];
                         const data: Record<string, any>[] = [];
+                        let headerRow: string[] = [];
+
                         worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-                            if (rowNumber === 1) return; // skip header
-                            const rowData: Record<string, any> = {};
-                            worksheet.getRow(1).eachCell((cell, colNumber) => {
-                                rowData[cell.value as string] = row.getCell(colNumber).value;
-                            });
-                            data.push(rowData);
+                            if (rowNumber === 1) {
+                                // Extract header row
+                                row.eachCell((cell, colNumber) => {
+                                    headerRow.push(String(cell.value || `Column ${colNumber}`).trim());
+                                });
+                            } else {
+                                // Extract data rows (skip header)
+                                const rowData: Record<string, any> = {};
+                                row.eachCell((cell, colNumber) => {
+                                    if (colNumber <= headerRow.length) {
+                                        rowData[headerRow[colNumber - 1]] = cell.value;
+                                    }
+                                });
+                                data.push(rowData);
+                            }
                         });
+
+                        // If a table is selected, validate the structure
+                        if (selectedTable && data.length > 0) {
+                            const tableSchema = selectedTable.schema || {};
+                            const systemColumns = ['report_id', 'program_id', 'activity_id', 'business_id', 'created_at', 'updated_at', 'submitted_by'];
+
+                            // Only check user-provided columns (exclude system columns)
+                            const tableColumns = Object.keys(tableSchema).filter(col => !systemColumns.includes(col));
+                            const fileColumns = Object.keys(data[0] || {});
+
+                            // Find missing and extra columns (excluding system columns)
+                            const missingColumns = tableColumns.filter(col => !fileColumns.includes(col));
+                            const extraColumns = fileColumns.filter(col => !tableColumns.includes(col) && !systemColumns.includes(col));
+
+                            if (missingColumns.length > 0 || extraColumns.length > 0) {
+                                let validationMsg = '';
+                                if (missingColumns.length > 0) {
+                                    validationMsg += `Missing columns: ${missingColumns.join(', ')}. `;
+                                }
+                                if (extraColumns.length > 0) {
+                                    validationMsg += `Extra columns (will be ignored): ${extraColumns.join(', ')}. `;
+                                }
+                                setTableValidationMessage('⚠️ ' + validationMsg + `Found ${data.length} records to import.`);
+                            } else {
+                                setTableValidationMessage(`✓ Structure matches! Found ${data.length} records to import.`);
+                            }
+                        }
+
                         // read dataURL of original file in parallel so we can optionally upload raw file later
                         readerDataUrl.onload = (ev2) => {
                             const dataUrl = ev2.target?.result as string;
@@ -962,6 +1022,65 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         setUploadedFiles(files => files.map(f => f.id === updatedFile.id ? updatedFile : f));
     };
 
+    const downloadSampleTemplate = async () => {
+        if (!selectedTable) {
+            alert('No table selected');
+            return;
+        }
+
+        try {
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet('Sample Data');
+
+            // Get column headers from table schema
+            const schema = selectedTable.schema || {};
+            const columnNames = Object.keys(schema);
+
+            // Add header row
+            const headerRow = worksheet.addRow(columnNames);
+            headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+            headerRow.alignment = { horizontal: 'center', vertical: 'center' };
+
+            // Add first row as sample if available
+            if (Array.isArray(selectedTable.rows) && selectedTable.rows.length > 0) {
+                const firstRow = selectedTable.rows[0];
+                const sampleValues = columnNames.map(col => firstRow[col] !== undefined ? firstRow[col] : '');
+                worksheet.addRow(sampleValues);
+            } else {
+                // Add empty row as placeholder if no existing data
+                worksheet.addRow(columnNames.map(() => ''));
+            }
+
+            // Auto-fit column widths
+            columnNames.forEach((col, index) => {
+                const maxLength = Math.max(
+                    col.length,
+                    selectedTable.rows && selectedTable.rows.length > 0 ?
+                        String(selectedTable.rows[0][col] || '').length : 0
+                );
+                worksheet.getColumn(index + 1).width = Math.min(Math.max(maxLength + 2, 12), 50);
+            });
+
+            // Generate file
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${selectedTable.title || 'table'}_template.xlsx`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+
+            console.log(`✓ Downloaded template for table: ${selectedTable.title}`);
+        } catch (err) {
+            console.error('Failed to generate template:', err);
+            alert('Failed to generate template: ' + String(err));
+        }
+    };
+
     // Load actual tables for this activity
     React.useEffect(() => {
         if (!activityId) return;
@@ -977,6 +1096,34 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             }
         })();
     }, [activityId]);
+
+    // Load selected table details including schema when table is selected
+    React.useEffect(() => {
+        if (!selectedTableId) {
+            setSelectedTable(null);
+            setTableValidationMessage(null);
+            setTableImportStatus(null);
+            return;
+        }
+        (async () => {
+            try {
+                const res = await fetch(`/api/actual_tables/${selectedTableId}`, { credentials: 'include' });
+                if (res.ok) {
+                    const table = await res.json();
+                    setSelectedTable(table);
+                    setTableValidationMessage(null);
+                    setTableImportStatus(null);
+                } else {
+                    setSelectedTable(null);
+                    setTableValidationMessage('Failed to load table details');
+                }
+            } catch (e) {
+                console.error('Failed to load table details:', e);
+                setSelectedTable(null);
+                setTableValidationMessage('Error loading table');
+            }
+        })();
+    }, [selectedTableId]);
 
     // If reportId supplied in query params, load existing report for editing
     React.useEffect(() => {
@@ -1293,10 +1440,40 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                             </option>
                                         ))}
                                     </select>
-                                    {selectedTableId && (
-                                        <p className="text-xs text-green-700 mt-2">
-                                            ✓ Selected table will receive uploaded data. Existing rows will be preserved.
-                                        </p>
+
+                                    {selectedTableId && selectedTable && (
+                                        <div className="mt-3 space-y-2">
+                                            <p className="text-xs text-green-700 font-semibold">
+                                                📋 Table: {selectedTable.title}
+                                            </p>
+                                            <p className="text-xs text-green-600">
+                                                Columns: {Object.keys(selectedTable.schema || {}).join(', ')}
+                                            </p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-xs text-green-700">
+                                                    ✓ Uploaded data with matching columns will be appended as new rows. Existing rows will be preserved.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={downloadSampleTemplate}
+                                                    className="ml-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300 whitespace-nowrap"
+                                                >
+                                                    📥 Download Template
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {tableValidationMessage && (
+                                        <div className={`mt-3 p-3 rounded text-xs ${tableValidationMessage.startsWith('✓') ? 'bg-green-100 text-green-800 border border-green-300' : 'bg-yellow-100 text-yellow-800 border border-yellow-300'}`}>
+                                            {tableValidationMessage}
+                                        </div>
+                                    )}
+
+                                    {tableImportStatus && (
+                                        <div className={`mt-3 p-3 rounded text-xs ${tableImportStatus.success ? 'bg-green-100 text-green-800 border border-green-300' : 'bg-red-100 text-red-800 border border-red-300'}`}>
+                                            {tableImportStatus.message}
+                                        </div>
                                     )}
                                 </div>
                             </div>

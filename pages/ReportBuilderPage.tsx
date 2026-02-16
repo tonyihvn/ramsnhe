@@ -56,8 +56,59 @@ const ReportBuilderPage: React.FC = () => {
   const [confirmState, setConfirmState] = useState<{ open: boolean; message: string; onConfirm?: () => void }>({ open: false, message: '' });
   const [toasts, setToasts] = useState<Array<{ id: number; text: string }>>([]);
   const [panelShown, setPanelShown] = useState<boolean>(false); // only show floating panel after New/Edit clicked
-  const [richTextMode, setRichTextMode] = useState<string>(() => { try { const r = localStorage.getItem('reportBuilderRichTextMode'); return (r as any) || 'editorjs'; } catch (e) { return 'editorjs'; } });
-  const [disableRichText, setDisableRichText] = useState<boolean>(() => { try { return localStorage.getItem('reportBuilderDisableRichText') === '1'; } catch (e) { return false; } });
+
+  // Load report builder settings from database (persistent across all systems)
+  const [richTextMode, setRichTextModeState] = useState<string>('editorjs');
+  const [disableRichText, setDisableRichTextState] = useState<boolean>(false);
+  const [reporterBuilderSettingsLoaded, setReporterBuilderSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    // Load report builder preferences from database
+    (async () => {
+      try {
+        const res = await fetch('/api/app/settings', { credentials: 'include' });
+        if (res.ok) {
+          const settings = await res.json();
+          if (settings.reportBuilderRichTextMode) {
+            setRichTextModeState(settings.reportBuilderRichTextMode);
+          }
+          if (settings.reportBuilderDisableRichText !== undefined) {
+            setDisableRichTextState(!!settings.reportBuilderDisableRichText);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load report builder settings:', e);
+      }
+      setReporterBuilderSettingsLoaded(true);
+    })();
+  }, []);
+
+  // Sync richTextMode changes to database
+  const setRichTextMode = (value: string) => {
+    setRichTextModeState(value);
+    try {
+      fetch('/api/admin/settings', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportBuilderRichTextMode: value })
+      }).catch(() => { });
+    } catch (e) { }
+  };
+
+  // Sync disableRichText changes to database
+  const setDisableRichText = (value: boolean) => {
+    setDisableRichTextState(value);
+    try {
+      fetch('/api/admin/settings', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportBuilderDisableRichText: value })
+      }).catch(() => { });
+    } catch (e) { }
+  };
+
   const [isCropperOpen, setIsCropperOpen] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string>('');
   const [computedValues, setComputedValues] = useState<Array<{ id: string; label: string; formula: string }>>([]);
@@ -986,7 +1037,7 @@ const ReportBuilderPage: React.FC = () => {
               <div className="mt-2 grid grid-cols-1 gap-2">
                 <div>
                   <label className="block text-xs text-gray-500">Rich Text Editor</label>
-                  <select className="mt-1 block w-full border rounded p-2 text-sm" value={richTextMode} onChange={e => { setRichTextMode(e.target.value); try { localStorage.setItem('reportBuilderRichTextMode', e.target.value); } catch (err) { } }}>
+                  <select className="mt-1 block w-full border rounded p-2 text-sm" value={richTextMode} onChange={e => { setRichTextMode(e.target.value); }}>
                     <option value="editorjs">Editor.js</option>
                     <option value="summernote">Summernote</option>
                     <option value="taptap">TapTap</option>
@@ -995,7 +1046,7 @@ const ReportBuilderPage: React.FC = () => {
                     <option value="basic">Basic (plain)</option>
                     <option value="none">Disable rich text</option>
                   </select>
-                  <div className="mt-2 text-xs text-gray-500 flex items-center gap-2"><input id="disableRT" type="checkbox" checked={disableRichText} onChange={e => { setDisableRichText(e.target.checked); try { localStorage.setItem('reportBuilderDisableRichText', e.target.checked ? '1' : '0'); } catch (err) { } }} /> <label htmlFor="disableRT">Disable rich text entirely</label></div>
+                  <div className="mt-2 text-xs text-gray-500 flex items-center gap-2"><input id="disableRT" type="checkbox" checked={disableRichText} onChange={e => { setDisableRichText(e.target.checked); }} /> <label htmlFor="disableRT">Disable rich text entirely</label></div>
                 </div>
                 <div className="flex gap-1 flex-wrap">
                   <button title="Insert Text" className="p-2 border rounded hover:bg-gray-100" onClick={() => { if (disableRichText || richTextMode === 'none') { setComposeHtml('<div><p>New text</p></div>'); setComposeOpen(true); } else { setComposeHtml(''); setComposeOpen(true); } }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg></button>

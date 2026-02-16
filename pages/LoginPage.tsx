@@ -131,6 +131,15 @@ const LoginPage: React.FC = () => {
     fetchConfig();
   }, []);
 
+  // Log background image for debugging
+  React.useEffect(() => {
+    if (settings?.backgroundImage) {
+      console.log('✓ Background image loaded from settings:', { size: (settings.backgroundImage.length / 1024).toFixed(2) + ' KB' });
+    } else {
+      console.log('✗ No background image in settings');
+    }
+  }, [settings?.backgroundImage]);
+
   // Determine background image and app name
   const heroFeaturedImages = landingConfig?.heroFeaturedImages || landingConfig?.hero_featured_images || [];
   const backgroundImage = (heroFeaturedImages && heroFeaturedImages.length > 0) ? heroFeaturedImages[0] : settings?.backgroundImage;
@@ -139,7 +148,7 @@ const LoginPage: React.FC = () => {
   const navBackgroundColor = landingConfig?.navBackgroundColor || landingConfig?.nav_background_color || '#ffffff';
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: backgroundImage ? `url(${backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+    <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: backgroundImage ? `url(${backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center', backgroundColor: '#f3f4f6' }}>
       <div className="max-w-md w-full space-y-8 bg-white bg-opacity-90 p-10 rounded-lg shadow-md" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.15)', backdropFilter: 'blur(4px)' }}>
         <div>
           <div className="mx-auto h-12 w-12 text-primary-600 flex justify-center">

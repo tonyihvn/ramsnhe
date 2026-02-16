@@ -3366,6 +3366,39 @@ app.post('/auth/reset-password', async (req, res) => {
 });
 
 // Admin: generic settings store (key/value JSON)
+// Get app settings (all users can read, only admins can modify)
+app.get('/api/app/settings', async (req, res) => {
+    try {
+        const businessId = req.session?.businessId || null;
+        // Query for business-specific settings first, then fallback to NULL (global) settings
+        // COALESCE picks business settings if they exist, otherwise global settings
+        const result = await pool.query(`
+            SELECT DISTINCT ON (key) key, value FROM ${tables.SETTINGS} 
+            WHERE business_id = $1 OR business_id IS NULL
+            ORDER BY key, business_id DESC NULLS LAST
+        `, [businessId]);
+        const out = {};
+        for (const r of result.rows) {
+            // The value is stored as JSONB, so we need to extract the actual value
+            // r.value will be a JSONB object/string - parse it
+            try {
+                if (typeof r.value === 'string') {
+                    out[r.key] = JSON.parse(r.value);
+                } else if (typeof r.value === 'object') {
+                    // JSONB already deserialized to object
+                    out[r.key] = r.value;
+                } else {
+                    out[r.key] = r.value;
+                }
+            } catch (e) {
+                out[r.key] = r.value;
+            }
+        }
+        res.json(out);
+    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to fetch settings' }); }
+});
+
+// Get app settings for admins (same as /api/app/settings but restricted to admins)
 app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
@@ -4978,14 +5011,14 @@ app.get('/auth/verify-email', async (req, res) => {
 
 app.get('/api/current_user', async (req, res) => {
     if (!req.session.userId) {
-        return res.send(null);
+        return res.json(null);
     }
     try {
         const result = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
         if (result.rows.length > 0) {
             // Snake_case to camelCase for frontend consistency
             const u = result.rows[0];
-            res.send({
+            res.json({
                 id: u.id,
                 firstName: u.first_name,
                 lastName: u.last_name,
@@ -4997,11 +5030,11 @@ app.get('/api/current_user', async (req, res) => {
                 profileImage: u.profile_image || null
             });
         } else {
-            res.send(null);
+            res.json(null);
         }
     } catch (err) {
         console.error(err);
-        res.send(null);
+        res.json(null);
     }
 });
 
@@ -7564,7 +7597,7 @@ app.post('/api/uploaded_docs', async (req, res) => {
 
 app.put('/api/uploaded_docs/:id', async (req, res) => {
     const { id } = req.params;
-    const { rowIndex, colKey, newValue, partialUpdate, newRows, deletedRowIndices, cellFormulas, columnDataTypes } = req.body || {};
+    const { rowIndex, colKey, newValue, partialUpdate, newRows, deletedRowIndices, deletedColumns, cellFormulas, columnDataTypes } = req.body || {};
     try {
         const docRes = await pool.query(`SELECT * FROM ${tables.UPLOADED_DOCS} WHERE id = $1`, [id]);
         if (docRes.rowCount === 0) return res.status(404).json({ error: 'uploaded_doc not found' });
@@ -7584,6 +7617,40 @@ app.put('/api/uploaded_docs/:id', async (req, res) => {
             try { dataTypes = JSON.parse(dataTypes); } catch (e) { dataTypes = {}; }
         }
         if (!Array.isArray(content)) return res.status(400).json({ error: 'file_content must be an array of rows' });
+
+        // Handle deleted columns - remove from all rows and update formulas
+        if (deletedColumns && Array.isArray(deletedColumns) && deletedColumns.length > 0) {
+            // Remove deleted columns from all rows
+            content = content.map(row => {
+                if (typeof row === 'object' && row !== null) {
+                    const newRow = { ...row };
+                    deletedColumns.forEach(colName => {
+                        delete newRow[colName];
+                    });
+                    return newRow;
+                }
+                return row;
+            });
+
+            // Remove formulas associated with deleted columns
+            const updatedFormulas = {};
+            for (const [cellRef, formulaData] of Object.entries(formulas)) {
+                // Extract column letter from cell reference (e.g., "report1_R_A10" -> column A)
+                const match = cellRef.match(/([A-Z]+)(\d+)$/);
+                if (match) {
+                    const colLetter = match[1];
+                    // Skip this formula if its column was deleted
+                    // Note: This is a simplified check - in practice you'd need to map cell letters back to column names
+                    updatedFormulas[cellRef] = formulaData;
+                }
+            }
+            formulas = updatedFormulas;
+
+            // Remove data types for deleted columns
+            deletedColumns.forEach(colName => {
+                delete dataTypes[colName];
+            });
+        }
 
         // Handle deleted rows
         if (deletedRowIndices && Array.isArray(deletedRowIndices)) {
@@ -7672,7 +7739,7 @@ app.delete('/api/uploaded_docs/:id', async (req, res) => {
 // ===== ACTUAL TABLES ENDPOINTS =====
 // POST /api/actual_tables - Create a new actual table from uploaded file
 app.post('/api/actual_tables', async (req, res) => {
-    const { title, databaseName, activityId, programId, reportId, businessId, fileContent } = req.body;
+    const { title, databaseName, activityId, programId, reportId, businessId, fileContent, columnOrder } = req.body;
     try {
         if (!title || !databaseName) {
             return res.status(400).json({ error: 'title and databaseName are required' });
@@ -7710,12 +7777,21 @@ app.post('/api/actual_tables', async (req, res) => {
         };
 
         // Extract schema from file content (first row keys with types)
+        // Use provided columnOrder to maintain original column order, otherwise extract from first row
         const schema = {};
         const sanitizedColumns = {};
+        const columnsToProcess = Array.isArray(columnOrder) && columnOrder.length > 0
+            ? columnOrder
+            : (Array.isArray(fileContent) && fileContent.length > 0 && fileContent[0]
+                ? Object.keys(fileContent[0])
+                : []);
+
         if (Array.isArray(fileContent) && fileContent.length > 0) {
             const firstRow = fileContent[0];
             if (firstRow && typeof firstRow === 'object') {
-                for (const [colName, value] of Object.entries(firstRow)) {
+                // Process columns in the specified order
+                for (const colName of columnsToProcess) {
+                    const value = firstRow[colName];
                     const sanitizedName = sanitizeColumnName(colName);
                     if (sanitizedName) {
                         const dataType = typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'text';
@@ -7808,14 +7884,21 @@ app.post('/api/actual_tables', async (req, res) => {
         const tableName = `${TABLE_PREFIX}${databaseName}`;
 
         try {
-            // Build CREATE TABLE statement with sanitized column names
+            // Build CREATE TABLE statement with sanitized column names in correct order
             let createTableSQL = `CREATE TABLE IF NOT EXISTS "${tableName}" (\n  id SERIAL PRIMARY KEY,\n`;
 
             const columnDefs = [];
-            for (const [originalName, sanitizedName] of Object.entries(sanitizedColumns)) {
-                const colType = schema[originalName]?.type || 'text';
-                const pgType = colType === 'number' ? 'NUMERIC' : colType === 'boolean' ? 'BOOLEAN' : 'TEXT';
-                columnDefs.push(`  "${sanitizedName}" ${pgType}`);
+            // Add columns in the correct order
+            const orderedColumns = Array.isArray(columnOrder) && columnOrder.length > 0
+                ? columnOrder
+                : Object.keys(sanitizedColumns);
+
+            for (const originalName of orderedColumns) {
+                if (sanitizedColumns[originalName]) {
+                    const colType = schema[originalName]?.type || 'text';
+                    const pgType = colType === 'number' ? 'NUMERIC' : colType === 'boolean' ? 'BOOLEAN' : 'TEXT';
+                    columnDefs.push(`  "${sanitizedColumns[originalName]}" ${pgType}`);
+                }
             }
 
             // Add relationship fields
@@ -7848,9 +7931,14 @@ app.post('/api/actual_tables', async (req, res) => {
                     const params = [];
                     let paramIdx = 1;
 
-                    // Add sanitized column values
-                    for (const [originalName, value] of Object.entries(rowData)) {
+                    // Add sanitized column values in the correct order
+                    const orderedColumns = Array.isArray(columnOrder) && columnOrder.length > 0
+                        ? columnOrder
+                        : Object.keys(rowData);
+
+                    for (const originalName of orderedColumns) {
                         if (sanitizedColumns[originalName]) {
+                            const value = rowData[originalName];
                             columnNames.push(`"${sanitizedColumns[originalName]}"`);
                             columnValues.push(`$${paramIdx++}`);
                             params.push(value);

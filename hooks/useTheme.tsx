@@ -32,25 +32,38 @@ const DEFAULT: ThemeSettings = {
     , backgroundImage: null
 };
 
-const STORAGE_KEY = 'intelliform_theme_settings_v1';
+const STORAGE_KEY = 'intelliform_theme_settings_backup';
 
 const ThemeContext = createContext<{
     settings: ThemeSettings;
     setSettings: (s: Partial<ThemeSettings>) => void;
     reset: () => void;
+    isLoading: boolean;
 } | undefined>(undefined);
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
+    // Initialize from localStorage (backup cache) for instant load
     const [settings, setSettingsState] = useState<ThemeSettings>(() => {
         try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            return raw ? JSON.parse(raw) : DEFAULT;
+            const cached = localStorage.getItem(STORAGE_KEY);
+            if (cached) return JSON.parse(cached);
         } catch (e) {
-            return DEFAULT;
+            console.warn('Failed to load cached settings from localStorage');
         }
+        return DEFAULT;
     });
     const [isAdmin, setIsAdmin] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
     const saveTimer = React.useRef<number | null>(null);
+
+    useEffect(() => {
+        // Persist settings to localStorage (backup cache)
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        } catch (e) {
+            console.warn('Failed to save settings to localStorage:', e);
+        }
+    }, [settings]);
 
     useEffect(() => {
         // Apply CSS variables to :root
@@ -68,78 +81,108 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         try { root.style.fontSize = (settings as any).fontSize || '14px'; } catch (e) { }
         if (settings.logoDataUrl) root.style.setProperty('--logo-image', `url(${settings.logoDataUrl})`);
         root.dataset.logoText = settings.logoText || '';
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (e) { }
     }, [settings]);
 
-    // Determine if current user is admin to enable auto-save AND load persisted settings
+    // Load theme settings from database (for all users - ensures consistency across systems)
+    // Overwrites localStorage cache with API data when available
     useEffect(() => {
-        (async () => {
+        const loadSettings = async () => {
+            setIsLoading(true);
             try {
-                const r = await fetch('/api/current_user', { credentials: 'include' });
-                if (!r.ok) { setIsAdmin(false); return; }
-                const j = await r.json();
-                const role = (j && (j.role || '')).toString().toLowerCase();
-                const isAdminUser = role === 'admin' || role === 'super-admin' || role === 'super_admin';
-                setIsAdmin(isAdminUser);
-                
-                // If admin, load persisted settings from server
-                if (isAdminUser) {
-                    try {
-                        const settingsRes = await fetch('/api/admin/settings', { credentials: 'include' });
-                        if (!settingsRes.ok) return;
+                // First, check user role to determine if admin
+                let isUserAdmin = false;
+                try {
+                    const userRes = await fetch('/api/current_user', { credentials: 'include' });
+                    if (userRes.ok) {
+                        const userData = await userRes.json();
+                        const role = (userData && (userData.role || '')).toString().toLowerCase();
+                        isUserAdmin = role === 'admin' || role === 'super-admin' || role === 'super_admin';
+                    }
+                } catch (e) {
+                    console.warn('Failed to check user role:', e);
+                }
+                setIsAdmin(isUserAdmin);
+
+                // Load theme settings from database (all users can read)
+                try {
+                    const settingsRes = await fetch('/api/app/settings', { credentials: 'include' });
+                    if (settingsRes.ok) {
                         const payload = await settingsRes.json();
-                        if (!payload) return;
-                        // payload is { key: value } mapping; merge keys that match ThemeSettings
-                        const merge: Partial<ThemeSettings> = {};
-                        // common theme keys live at top-level in the settings object; if server saved the whole theme object, it may be returned directly
-                        if (typeof payload === 'object' && !Array.isArray(payload)) {
-                            // if payload looks like a theme object directly (has primaryColor), merge it
-                            if (payload.primaryColor) {
-                                Object.assign(merge, payload);
-                            } else if (payload.theme) {
+                        if (payload && typeof payload === 'object') {
+                            const merge: Partial<ThemeSettings> = {};
+                            // Extract theme-related keys from the payload
+                            if (payload.theme && typeof payload.theme === 'object') {
+                                // If server returns a 'theme' key with theme object
                                 Object.assign(merge, payload.theme);
                             } else {
-                                // sometimes settings stored top-level — pick known keys
-                                ['primaryColor','sidebarBg','navTextColor','logoColor','textColor','fontFamily','navbarBg','logoDataUrl','logoText','fontSize','logoWidth','organizationName','backgroundImage'].forEach(k => {
+                                // Look for top-level theme property keys
+                                const themeKeys = ['primaryColor', 'sidebarBg', 'navTextColor', 'logoColor', 'textColor', 'fontFamily', 'navbarBg', 'logoDataUrl', 'logoText', 'fontSize', 'logoWidth', 'organizationName', 'backgroundImage'];
+                                themeKeys.forEach(k => {
                                     if (k in payload) (merge as any)[k] = (payload as any)[k];
                                 });
-                                // also if server returned many keys and one is 'theme', prefer that
-                                if (payload.settings && typeof payload.settings === 'object') Object.assign(merge, payload.settings);
+                            }
+                            if (Object.keys(merge).length > 0) {
+                                // Update settings from database (will auto-save to localStorage via useEffect)
+                                setSettingsState(prev => ({ ...prev, ...merge }));
                             }
                         }
-                        if (Object.keys(merge).length) setSettingsState(prev => ({ ...prev, ...merge }));
-                    } catch (e) { /* ignore settings fetch */ }
+                    }
+                } catch (e) {
+                    console.warn('Failed to load theme settings from database:', e);
+                    // Settings remain as cached from localStorage (fallback)
                 }
-            } catch (e) { setIsAdmin(false); }
-        })();
+            } catch (e) {
+                console.warn('Failed to load settings:', e);
+                // Settings remain as cached from localStorage (fallback)
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        loadSettings();
     }, []);
 
-    // Debounced autosave: if admin, persist theme to server after changes
+    // Debounced autosave: persist theme settings to database (admin only)
+    // All users load settings from database, but only admins can save
     const persistToServer = async (toSave: ThemeSettings) => {
+        if (!isAdmin) return; // Only admins can persist changes
         try {
-            // Try admin endpoint first, ignore errors silently
-            await fetch('/api/admin/settings', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toSave) }).catch(() => {});
-        } catch (e) { /* ignore saving errors silently */ }
+            const res = await fetch('/api/admin/settings', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(toSave)
+            });
+            if (!res.ok) {
+                console.warn('Failed to persist theme settings to database');
+            }
+        } catch (e) {
+            console.warn('Failed to persist theme settings:', e);
+        }
     };
 
     const setSettings = (patch: Partial<ThemeSettings>) => {
         setSettingsState(prev => {
             const next = ({ ...prev, ...patch });
-            try {
-                if (isAdmin) {
-                    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-                    // debounce 1.5s
-                    saveTimer.current = window.setTimeout(() => { persistToServer(next); saveTimer.current = null; }, 1500) as unknown as number;
-                }
-            } catch (e) { /* ignore */ }
+            if (isAdmin) {
+                if (saveTimer.current) window.clearTimeout(saveTimer.current);
+                // Debounce 1.5s before saving to database
+                saveTimer.current = window.setTimeout(() => { persistToServer(next); saveTimer.current = null; }, 1500) as unknown as number;
+            }
             return next;
         });
     };
 
-    const reset = () => setSettingsState(DEFAULT);
+    const reset = () => {
+        const defaultSettings = DEFAULT;
+        setSettingsState(defaultSettings);
+        // If admin, also save reset to database
+        if (isAdmin) {
+            persistToServer(defaultSettings);
+        }
+    };
 
     return (
-        <ThemeContext.Provider value={{ settings, setSettings, reset }}>
+        <ThemeContext.Provider value={{ settings, setSettings, reset, isLoading }}>
             {children}
         </ThemeContext.Provider>
     );
@@ -149,6 +192,13 @@ export const useTheme = () => {
     const ctx = useContext(ThemeContext);
     if (!ctx) throw new Error('useTheme must be used inside ThemeProvider');
     return ctx;
+};
+
+export type ThemeContextType = {
+    settings: ThemeSettings;
+    setSettings: (s: Partial<ThemeSettings>) => void;
+    reset: () => void;
+    isLoading: boolean;
 };
 
 export type { ThemeSettings };

@@ -9,6 +9,8 @@ import FormBuilder, { FormSchema } from '../components/FormBuilder';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
 import { useMockData } from '../hooks/useMockData';
+import { success as swalSuccess, error as swalError, info as swalInfo } from '../components/ui/swal';
+import Swal from 'sweetalert2';
 
 const LLMSettingsForm: React.FC = () => {
     const { settings, setSettings } = useTheme();
@@ -34,7 +36,7 @@ const LLMSettingsForm: React.FC = () => {
 
     const save = () => {
         setSettings({ ...(settings as any), llmProviders: local });
-        alert('LLM settings saved');
+        swalSuccess('Success', 'LLM settings saved');
     };
 
     const addProvider = () => setLocal(prev => [...prev, { id: `p_${Date.now()}`, provider_id: `p_${Date.now()}`, name: 'openai', model: '', apiKey: '', priority: (prev || []).length + 1 }]);
@@ -61,7 +63,7 @@ const LLMSettingsForm: React.FC = () => {
                         }
                     }
                 } catch (e) { /* ignore local probe failure */ }
-                alert('No local Ollama detected or not authorized');
+                swalInfo('Ollama Detection', 'No local Ollama detected or not authorized');
                 return;
             }
 
@@ -73,18 +75,18 @@ const LLMSettingsForm: React.FC = () => {
                 setDetectedModels(models as string[]);
             } else if (j && j.ok && j.version) {
                 // version found but no models; notify user
-                alert('Ollama detected (version info found), but no models installed locally. Use /api/pull to install models.');
+                swalInfo('Ollama Detected', 'Ollama detected, but no models installed locally. Use /api/pull to install models.');
             } else {
-                alert('No local Ollama models detected');
+                swalInfo('No Models', 'No local Ollama models detected');
             }
         } catch (e) {
             console.error(e);
-            alert('Error detecting local Ollama: ' + String(e));
+            swalError('Detection Error', 'Error detecting local Ollama: ' + String(e));
         } finally { setDetecting(false); }
     };
 
     const addDetectedAsProvider = () => {
-        if (!selectedDetected) return alert('Select a model first');
+        if (!selectedDetected) return swalInfo('Select Model', 'Please select a model first');
         const base = 'http://127.0.0.1:11434';
         setLocal(prev => [...prev, { id: `ollama_${Date.now()}`, provider_id: `ollama_${Date.now()}`, name: 'ollama-local', model: selectedDetected, apiKey: '', serverUrl: base, priority: (prev || []).length + 1 }]);
         setDetectedModels([]);
@@ -166,13 +168,13 @@ const LLMSettingsForm: React.FC = () => {
                         if (r.ok) {
                             const provs = await r.json();
                             setSettings({ ...(settings as any), llmProviders: provs });
-                            alert('LLM providers saved');
+                            swalSuccess('Success', 'LLM providers saved');
                         } else {
-                            alert('Failed to save providers');
+                            swalError('Failed', 'Failed to save providers');
                         }
                     } catch (e) {
                         console.error(e);
-                        alert('Failed to save LLM providers: ' + String(e));
+                        swalError('Failed', 'Failed to save LLM providers: ' + String(e));
                     }
                 }}>Save LLM Settings</Button>
             </div>
@@ -228,11 +230,11 @@ const DBMSTab: React.FC = () => {
                 // fallback to public execute_sql endpoint
                 r = await fetch('/api/execute_sql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql: run }) });
             }
-            if (!r.ok) { const txt = await r.text(); alert('Query failed: ' + txt); setLoading(false); return; }
+            if (!r.ok) { const txt = await r.text(); swalError('Query Failed', txt); setLoading(false); return; }
             const j = await r.json(); setRows(j.rows || j || []);
             if ((j.rows || []).length > 0) setColumns(Object.keys((j.rows || [])[0]));
             else setColumns([]);
-        } catch (e) { console.error('runQuery', e); alert('Query error: ' + String(e)); }
+        } catch (e) { console.error('runQuery', e); swalError('Query Error', String(e)); }
         setLoading(false);
     };
 
@@ -457,7 +459,7 @@ const ActivityPermissionsManager: React.FC = () => {
 
     const handleSavePermission = async () => {
         if (!currentPermission || !currentPermission.role_id) {
-            alert('Please select a role');
+            swalInfo('Select Role', 'Please select a role');
             return;
         }
         setSaving(true);
@@ -483,13 +485,13 @@ const ActivityPermissionsManager: React.FC = () => {
                 if (reloadRes.ok) {
                     setPermissions(await reloadRes.json());
                 }
-                alert('Permission saved successfully');
+                swalSuccess('Success', 'Permission saved successfully');
             } else {
-                alert('Failed to save permission: ' + await res.text());
+                swalError('Failed', 'Failed to save permission: ' + await res.text());
             }
         } catch (e) {
             console.error('Failed to save permission:', e);
-            alert('Error: ' + String(e));
+            swalError('Error', String(e));
         } finally {
             setSaving(false);
         }
@@ -504,13 +506,13 @@ const ActivityPermissionsManager: React.FC = () => {
             });
             if (res.ok) {
                 setPermissions(prev => prev.filter(p => p.role_id !== roleId));
-                alert('Permission deleted');
+                swalSuccess('Success', 'Permission deleted');
             } else {
-                alert('Failed to delete permission');
+                swalError('Failed', 'Failed to delete permission');
             }
         } catch (e) {
             console.error('Failed to delete permission:', e);
-            alert('Error deleting permission');
+            swalError('Error', 'Error deleting permission');
         }
     };
 
@@ -698,7 +700,7 @@ const RolesList: React.FC = () => {
             const payload = id ? { id, name, description: desc } : { name, description: desc };
             const r = await fetch('/api/admin/roles', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             if (r.ok) { await refreshRoles(); setName(''); setDesc(''); }
-        } catch (e) { alert('Failed'); }
+        } catch (e) { swalError('Failed', 'An error occurred'); }
     };
 
     const openManage = async (role: any) => {
@@ -727,7 +729,7 @@ const RolesList: React.FC = () => {
                 await Promise.all(toAdd.map(pid => fetch('/api/admin/role_permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roleId: manageRole.id, permissionId: pid }) })));
                 setRolePerms(allPerms.map(p => p.id));
             }
-        } catch (e) { console.error(e); alert('Failed to update permissions'); }
+        } catch (e) { console.error(e); swalError('Failed', 'Failed to update permissions'); }
     };
 
     const togglePerm = async (permId: number) => {
@@ -741,7 +743,7 @@ const RolesList: React.FC = () => {
                 await fetch('/api/admin/role_permissions/remove', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roleId: manageRole.id, permissionId: permId }) });
                 setRolePerms(prev => prev.filter(p => p !== permId));
             }
-        } catch (e) { console.error(e); alert('Failed to update permission'); }
+        } catch (e) { console.error(e); swalError('Failed', 'Failed to update permission'); }
     };
 
     return (
@@ -846,25 +848,25 @@ const UsersList: React.FC = () => {
                 await fetch('/api/admin/roles/unassign', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: manageUser.id, roleId }) });
                 setUserRoles(prev => prev.filter((r: number) => r !== roleId));
             }
-        } catch (e) { console.error(e); alert('Failed to update role'); }
+        } catch (e) { console.error(e); swalError('Failed', 'Failed to update role'); }
     };
 
     const saveUser = async (u?: any) => {
         try {
             const payload = { ...(u || editing) };
             const r = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            if (r.ok) { fetchUsers(); setEditing(null); alert('User saved'); }
-            else alert('Failed to save user: ' + await r.text());
-        } catch (e) { console.error(e); alert('Failed to save user'); }
+            if (r.ok) { fetchUsers(); setEditing(null); swalSuccess('Success', 'User saved'); }
+            else swalError('Failed', 'Failed to save user: ' + await r.text());
+        } catch (e) { console.error(e); swalError('Failed', 'Failed to save user'); }
     };
 
     const deleteUser = async (id: number) => {
         if (!confirm('Delete user? This cannot be undone.')) return;
         try {
             const r = await fetch(`/api/admin/users/${id}`, { method: 'DELETE', credentials: 'include' });
-            if (r.ok) { fetchUsers(); alert('User deleted'); }
-            else alert('Failed to delete user: ' + await r.text());
-        } catch (e) { console.error(e); alert('Failed to delete user'); }
+            if (r.ok) { fetchUsers(); swalSuccess('Success', 'User deleted'); }
+            else swalError('Failed', 'Failed to delete user: ' + await r.text());
+        } catch (e) { console.error(e); swalError('Failed', 'Failed to delete user'); }
     };
 
     return (
@@ -936,7 +938,7 @@ const PermissionsList: React.FC = () => {
             } catch (e) { /* ignore */ }
         })();
     }, []);
-    const save = async (id?: number) => { try { const payload = id ? { id, name, description: desc } : { name, description: desc }; const r = await fetch('/api/admin/permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (r.ok) setList(await (await fetch('/api/admin/permissions', { credentials: 'include' })).json()); setName(''); setDesc(''); setManualEntry(false); } catch (e) { alert('Failed'); } };
+    const save = async (id?: number) => { try { const payload = id ? { id, name, description: desc } : { name, description: desc }; const r = await fetch('/api/admin/permissions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (r.ok) setList(await (await fetch('/api/admin/permissions', { credentials: 'include' })).json()); setName(''); setDesc(''); setManualEntry(false); } catch (e) { swalError('Failed', 'An error occurred'); } };
 
     // Build dropdown options from appRoutes and existing permission names
     const routeOptions = appRoutes || [];
@@ -994,13 +996,48 @@ const SettingsPage: React.FC = () => {
             } catch (e) { setIsAdmin(false); }
         })();
     }, []);
+    // Helper: Compress image to manageable size for database storage
+    const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: number = 600, quality: number = 0.7): Promise<string> => {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+
+                // Calculate new dimensions to fit within max width/height
+                if (width > maxWidth || height > maxHeight) {
+                    const ratio = Math.min(maxWidth / width, maxHeight / height);
+                    width = Math.round(width * ratio);
+                    height = Math.round(height * ratio);
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(img, 0, 0, width, height);
+                }
+
+                // Use toDataURL with quality compression
+                const compressed = canvas.toDataURL('image/jpeg', quality);
+                resolve(compressed);
+            };
+            img.onerror = () => resolve(dataUrl); // Fallback to original if compression fails
+            img.src = dataUrl;
+        });
+    };
+
     const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0];
         if (!f) return;
         const reader = new FileReader();
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
             const dataUrl = ev.target?.result as string;
-            setSettings({ logoDataUrl: dataUrl });
+            // Compress logo to 500x500 max, 0.8 quality
+            const compressed = await compressImage(dataUrl, 500, 500, 0.8);
+            setSettings({ logoDataUrl: compressed });
+            swalSuccess('Logo Uploaded', `Compressed and ready to save. Click "Save" to persist to database.`);
         };
         reader.readAsDataURL(f);
     };
@@ -1131,14 +1168,14 @@ const SettingsPage: React.FC = () => {
                                             res = await fetch('/api/test-db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                                         }
                                         if (res.ok) {
-                                            alert('Connection succeeded');
+                                            swalSuccess('Success', 'Connection succeeded');
                                         } else {
                                             // try to parse json else text
                                             let body = await res.text();
                                             try { const j = JSON.parse(body); body = j.error || j.message || JSON.stringify(j); } catch (e) { /* keep text */ }
-                                            alert('Connection failed: ' + body);
+                                            swalError('Connection Failed', body);
                                         }
-                                    } catch (e) { alert('Connection test error: ' + String(e)); }
+                                    } catch (e) { swalError('Test Error', 'Connection test error: ' + String(e)); }
                                 }}>Test Connection</Button>
                                 <Button variant="secondary" onClick={async () => {
                                     try {
@@ -1149,11 +1186,11 @@ const SettingsPage: React.FC = () => {
                                             // fall back to public env write
                                             res = await fetch('/api/env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                                             if (res.ok) {
-                                                alert('Saved DB settings to .env and .env.local (server settings table not updated because not authenticated)');
+                                                swalSuccess('Saved', 'Saved DB settings to .env and .env.local (server settings table not updated because not authenticated)');
                                                 return;
                                             } else {
                                                 const txt = await res.text();
-                                                alert('Failed to save via public endpoint: ' + txt);
+                                                swalError('Failed', 'Failed to save via public endpoint: ' + txt);
                                                 return;
                                             }
                                         }
@@ -1163,11 +1200,11 @@ const SettingsPage: React.FC = () => {
                                             try {
                                                 await fetch('/api/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ db: payload }) });
                                             } catch (e) { /* ignore */ }
-                                            alert('Saved DB settings to .env and settings table');
+                                            swalSuccess('Saved', 'Saved DB settings to .env and settings table');
                                         } else {
-                                            alert('Failed to save: ' + await res.text());
+                                            swalError('Failed', 'Failed to save: ' + await res.text());
                                         }
-                                    } catch (e) { alert('Save error: ' + String(e)); }
+                                    } catch (e) { swalError('Error', 'Save error: ' + String(e)); }
                                 }}>Save DB Settings</Button>
                             </div>
                         </div>
@@ -1237,21 +1274,55 @@ const SettingsPage: React.FC = () => {
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Upload Logo</label>
                             <input type="file" accept="image/*" onChange={handleLogoUpload} className="mt-2" />
-                            <div className="mt-2">
-                                <label className="block text-sm font-medium text-gray-700">Background Image (login page)</label>
+                            {/* Logo Preview */}
+                            {settings.logoDataUrl && (
+                                <div className="mt-3 p-2 bg-gray-50 border border-gray-300 rounded">
+                                    <p className="text-xs font-medium text-gray-700 mb-2">Current Logo Preview:</p>
+                                    <img
+                                        src={settings.logoDataUrl}
+                                        alt="Logo preview"
+                                        className="h-12 w-12 object-contain"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Size: {(settings.logoDataUrl.length / 1024).toFixed(2)} KB
+                                    </p>
+                                </div>
+                            )}
+                            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Background Image (login page)</label>
                                 <input type="file" accept="image/*" onChange={async (e) => {
                                     const f = e.target.files?.[0];
                                     if (!f) return;
                                     const reader = new FileReader();
-                                    reader.onload = (ev) => {
+                                    reader.onload = async (ev) => {
                                         const dataUrl = ev.target?.result as string;
-                                        setSettings({ backgroundImage: dataUrl });
+                                        // Compress background image to 1200x800 max, 0.6 quality for better compression
+                                        const compressed = await compressImage(dataUrl, 1200, 800, 0.6);
+                                        setSettings({ backgroundImage: compressed });
+                                        // Show success message
+                                        swalSuccess('Background Image Uploaded', `Compressed and ready to save. Click "Save" to persist to database.`);
                                     };
                                     reader.readAsDataURL(f);
-                                }} className="mt-2" />
-                                <p className="text-xs text-gray-500 mt-1">Optional background image used on the login page. Saved to theme settings (localStorage) and can be persisted to server via Save.</p>
+                                }} className="mt-2 block" />
+                                <p className="text-xs text-gray-600 mt-2">Automatically compressed for storage. Will be displayed on the login page background.</p>
+
+                                {/* Preview of current background image */}
+                                {(settings as any).backgroundImage && (
+                                    <div className="mt-3 p-2 bg-white border border-gray-300 rounded">
+                                        <p className="text-xs font-medium text-gray-700 mb-2">Current Background Image Preview:</p>
+                                        <img
+                                            src={(settings as any).backgroundImage}
+                                            alt="Background preview"
+                                            className="w-full h-32 object-cover rounded"
+                                            style={{ maxHeight: '200px' }}
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Size: {((settings as any).backgroundImage.length / 1024).toFixed(2)} KB
+                                        </p>
+                                    </div>
+                                )}
                             </div>
-                            <p className="text-xs text-gray-500">Uploaded logo will be saved to application settings (persisted to server on Save).</p>
+                            <p className="text-xs text-gray-500 mt-2">Note: Logo and background changes are saved locally and persisted to server when you click "Save".</p>
                         </div>
 
                         <div>
@@ -1327,18 +1398,18 @@ const SettingsPage: React.FC = () => {
                                 const payload = settings || {};
                                 let r = await fetch('/api/admin/settings', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                                 if (r.status === 401) {
-                                    alert('Not authorized to save settings on server. Please login as Admin to persist settings.');
+                                    swalError('Not Authorized', 'Please login as Admin to persist settings.');
                                     return;
                                 }
                                 if (!r.ok) {
                                     const txt = await r.text();
-                                    alert('Failed to save settings: ' + txt);
+                                    swalError('Failed to Save', txt);
                                     return;
                                 }
-                                alert('Theme saved to server');
+                                swalSuccess('Success', 'Theme saved to server');
                             } catch (e) {
                                 console.error('Failed to save theme settings', e);
-                                alert('Failed to save theme settings: ' + String(e));
+                                swalError('Failed', 'Failed to save theme settings: ' + String(e));
                             }
                         }}>Save</Button>
                         <Button variant="secondary" onClick={() => setBandsOpen(true)}>Edit Bands</Button>
@@ -1488,9 +1559,9 @@ function SMTPSettings() {
         setSaving(true);
         try {
             const r = await fetch('/api/admin/smtp', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(smtp || {}) });
-            if (!r.ok) return alert('Failed to save: ' + await r.text());
-            alert('Saved');
-        } catch (e) { alert('Save failed: ' + String(e)); }
+            if (!r.ok) return swalError('Failed', 'Failed to save: ' + await r.text());
+            swalSuccess('Success', 'Saved');
+        } catch (e) { swalError('Error', 'Save failed: ' + String(e)); }
         setSaving(false);
     };
 
@@ -1499,9 +1570,9 @@ function SMTPSettings() {
         try {
             const payload = { to: testTo || ((smtp && smtp.from) ? smtp.from : ''), subject: 'Test email', text: 'Test message' };
             const r = await fetch('/api/admin/test-smtp', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            if (!r.ok) return alert('Test failed: ' + await r.text());
-            alert('Test email sent');
-        } catch (e) { alert('Test failed: ' + String(e)); }
+            if (!r.ok) return swalError('Test Failed', 'Test failed: ' + await r.text());
+            swalSuccess('Success', 'Test email sent');
+        } catch (e) { swalError('Test Failed', 'Test failed: ' + String(e)); }
         setTesting(false);
     };
 
@@ -1646,7 +1717,7 @@ const FormsBuildersSection: React.FC = () => {
             }
         } catch (error) {
             console.error('Failed to load form schemas:', error);
-            alert('Failed to load form schemas: ' + String(error));
+            swalError('Failed', 'Failed to load form schemas: ' + String(error));
         } finally {
             setLoading(false);
         }
@@ -1701,8 +1772,8 @@ const FormsBuildersSection: React.FC = () => {
                 <button
                     onClick={() => setActiveForm('facility')}
                     className={`px-4 py-2 rounded ${activeForm === 'facility'
-                            ? 'bg-primary-700 text-white'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        ? 'bg-primary-700 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                 >
                     Facility Form
@@ -1710,8 +1781,8 @@ const FormsBuildersSection: React.FC = () => {
                 <button
                     onClick={() => setActiveForm('user')}
                     className={`px-4 py-2 rounded ${activeForm === 'user'
-                            ? 'bg-primary-700 text-white'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        ? 'bg-primary-700 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                 >
                     User Form
@@ -1775,14 +1846,14 @@ const AuditTrails: React.FC = () => {
     };
 
     const createDatasetFromPreview = async () => {
-        if (!datasetPreview || datasetPreview.length === 0) return alert('No rows to create dataset from');
+        if (!datasetPreview || datasetPreview.length === 0) return swalInfo('No Data', 'No rows to create dataset from');
         const name = datasetName && String(datasetName).trim() ? datasetName.trim() : datasetNamePlaceholder || `dataset_${Date.now()}`;
         setCreatingDataset(true);
         try {
             // create dataset
             const r = await fetch('/api/admin/datasets', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, category: datasetCategory || null, dataset_fields: [] }) });
-            if (r.status === 401) { alert('Unauthorized - admin required to create dataset'); setCreatingDataset(false); return; }
-            if (!r.ok) { alert('Failed to create dataset: ' + await r.text()); setCreatingDataset(false); return; }
+            if (r.status === 401) { swalError('Unauthorized', 'Admin required to create dataset'); setCreatingDataset(false); return; }
+            if (!r.ok) { swalError('Failed', 'Failed to create dataset: ' + await r.text()); setCreatingDataset(false); return; }
             const created = await r.json();
             const dsId = created.id;
             // push rows as content (one by one) - server accepts JSON body for content
@@ -1793,12 +1864,12 @@ const AuditTrails: React.FC = () => {
                     if (rc.ok) inserted++;
                 } catch (e) { /* ignore row-level failures */ }
             }
-            alert(`Dataset created (id=${dsId}). Inserted ${inserted}/${datasetPreview.length} rows.`);
+            swalSuccess('Created', `Dataset created (id=${dsId}). Inserted ${inserted}/${datasetPreview.length} rows.`);
             setDatasetModalOpen(false);
             // refresh datasets? not necessary here; user can view datasets in settings
         } catch (e) {
             console.error('Failed to create dataset from audit', e);
-            alert('Failed to create dataset: ' + String(e));
+            swalError('Failed', 'Failed to create dataset: ' + String(e));
         }
         setCreatingDataset(false);
     };
@@ -2003,28 +2074,28 @@ const RagManager: React.FC = () => {
     const startCreate = () => setEditing({ table_name: '', schema: [], sample_rows: [] });
 
     const save = async () => {
-        if (!editing || !editing.table_name) return alert('Table name required');
-        if (!editing.business_rules || !String(editing.business_rules).trim()) return alert('Business Rules (natural language) are required for every RAG record');
+        if (!editing || !editing.table_name) return swalInfo('Required', 'Table name required');
+        if (!editing.business_rules || !String(editing.business_rules).trim()) return swalInfo('Required', 'Business Rules (natural language) are required for every RAG record');
         try {
             const payload = { ...editing };
             // POST to admin endpoint (requires auth)
             const r = await fetch('/api/admin/rag_schemas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });
-            if (r.status === 401) return alert('Unauthorized - please login as admin');
-            if (!r.ok) return alert('Save failed: ' + await r.text());
-            alert('Saved');
+            if (r.status === 401) return swalError('Unauthorized', 'Please login as admin');
+            if (!r.ok) return swalError('Failed', 'Save failed: ' + await r.text());
+            swalSuccess('Saved', 'Record saved successfully');
             setEditing(null);
             await load();
-        } catch (e) { alert('Save failed: ' + String(e)); }
+        } catch (e) { swalError('Error', 'Save failed: ' + String(e)); }
     };
 
     const remove = async (id: any) => {
         if (!confirm('Delete this RAG record?')) return;
         try {
             const r = await fetch('/api/admin/rag_schemas/' + id, { method: 'DELETE', credentials: 'include' });
-            if (r.status === 401) return alert('Unauthorized');
-            if (!r.ok) return alert('Delete failed: ' + await r.text());
+            if (r.status === 401) return swalError('Unauthorized', 'Please login as admin');
+            if (!r.ok) return swalError('Failed', 'Delete failed: ' + await r.text());
             await load();
-        } catch (e) { alert('Delete failed: ' + String(e)); }
+        } catch (e) { swalError('Error', 'Delete failed: ' + String(e)); }
     };
 
     return (
@@ -2080,7 +2151,12 @@ const RagManager: React.FC = () => {
                                 <div className="text-xs text-gray-500">Columns: {(r.schema || []).map((c: any) => c.column_name || c.name).filter(Boolean).slice(0, 5).join(', ')}</div>
                             </div>
                             <div className="flex gap-2">
-                                <Button onClick={() => alert(JSON.stringify(r.sample_rows || [], null, 2))}>Preview</Button>
+                                <Button onClick={() => Swal.fire({
+                                    title: 'Sample Rows Preview',
+                                    html: `<pre style="text-align: left; max-height: 400px; overflow-y: auto; background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px;">${JSON.stringify(r.sample_rows || [], null, 2)}</pre>`,
+                                    width: 700,
+                                    confirmButtonText: 'Close'
+                                })}>Preview</Button>
                                 {isAdmin && <Button variant="secondary" onClick={() => setEditing(r)}>Edit</Button>}
                                 {isAdmin && <Button variant="danger" onClick={() => remove(r.id)}>Delete</Button>}
                             </div>
