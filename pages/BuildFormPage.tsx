@@ -392,6 +392,7 @@ const BuildFormPage: React.FC = () => {
   const [roleModalSectionKey, setRoleModalSectionKey] = useState<string | null>(null);
   const [rolePerms, setRolePerms] = useState<Record<string, { can_create: boolean; can_view: boolean; can_edit: boolean; can_delete: boolean }>>({});
   const [rolePermsLoading, setRolePermsLoading] = useState(false);
+  const [roleShowIf, setRoleShowIf] = useState<string>('');
   const [validationErrors, setValidationErrors] = useState<Record<string, QuestionErrors>>({});
 
   useEffect(() => {
@@ -577,6 +578,7 @@ const BuildFormPage: React.FC = () => {
     setRoleModalPageKey(pk);
     setRoleModalSectionKey(null);
     setRoleModalTarget({ type: 'page', pageIndex });
+    setRoleShowIf((page.metadata?.showIf) || '');
     setIsRoleModalOpen(true);
     // load existing perms
     await loadRolePermsForTarget(pk, null);
@@ -592,12 +594,32 @@ const BuildFormPage: React.FC = () => {
     setRoleModalPageKey(pk);
     setRoleModalSectionKey(sk);
     setRoleModalTarget({ type: 'section', pageIndex, sectionIndex });
+    setRoleShowIf((section.metadata?.showIf) || '');
     setIsRoleModalOpen(true);
     await loadRolePermsForTarget(pk, sk);
   };
 
   const handleSaveRolePerms = async () => {
     if (!roleModalTarget) return alert('No target selected');
+    
+    // Update formDef with showIf
+    if (formDef) {
+      const newFormDef = { ...formDef };
+      if (roleModalTarget.type === 'page' && roleModalTarget.pageIndex !== undefined) {
+        const page = newFormDef.pages[roleModalTarget.pageIndex];
+        if (page) {
+          page.metadata = { ...(page.metadata || {}), showIf: roleShowIf || undefined };
+        }
+      } else if (roleModalTarget.type === 'section' && roleModalTarget.pageIndex !== undefined && roleModalTarget.sectionIndex !== undefined) {
+        const page = newFormDef.pages[roleModalTarget.pageIndex];
+        const section = page?.sections?.[roleModalTarget.sectionIndex];
+        if (section) {
+          section.metadata = { ...(section.metadata || {}), showIf: roleShowIf || undefined };
+        }
+      }
+      setFormDef(newFormDef);
+    }
+    
     const payload: any[] = [];
     // Save all roles currently in rolePerms state (which only contains perms for current target)
     for (const [roleName, permsAny] of Object.entries(rolePerms || {})) {
@@ -619,16 +641,17 @@ const BuildFormPage: React.FC = () => {
         const j = await res.json().catch(() => ({}));
         throw new Error(j && j.error ? j.error : 'Failed to save permissions');
       }
-      alert('Permissions saved.');
+      alert('Permissions and showIf saved.');
       // persist local overrides as a fallback so settings survive refresh even if server isn't available
       persistLocalOverrides(payload);
       // refresh loaded perms for the target to ensure UI reflects saved rows
       if (roleModalPageKey) await loadRolePermsForTarget(roleModalPageKey, roleModalSectionKey || null);
       setIsRoleModalOpen(false);
+      setRoleShowIf('');
     } catch (e) {
       console.error('Failed to save permissions', e);
       // As a fallback, persist locally so builder settings are not lost
-      try { persistLocalOverrides(payload); alert('Permissions saved locally (offline).'); setIsRoleModalOpen(false); } catch (err) { alert('Failed to save permissions. See console for details.'); }
+      try { persistLocalOverrides(payload); alert('Permissions and showIf saved locally (offline).'); setIsRoleModalOpen(false); setRoleShowIf(''); } catch (err) { alert('Failed to save permissions. See console for details.'); }
     }
   };
 
@@ -1371,8 +1394,8 @@ const BuildFormPage: React.FC = () => {
         }
 
         return (
-          <Modal size="lg" isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} title={modalTitle} footer={<>
-            <Button onClick={() => setIsRoleModalOpen(false)} variant="secondary">Cancel</Button>
+          <Modal size="lg" isOpen={isRoleModalOpen} onClose={() => { setIsRoleModalOpen(false); setRoleShowIf(''); }} title={modalTitle} footer={<>
+            <Button onClick={() => { setIsRoleModalOpen(false); setRoleShowIf(''); }} variant="secondary">Cancel</Button>
             <Button onClick={handleSaveRolePerms} className="ml-2">Save Permissions</Button>
           </>}>
             <div className="space-y-4">
@@ -1409,6 +1432,22 @@ const BuildFormPage: React.FC = () => {
                   </table>
                 </div>
               )}
+              
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Visibility Condition (Show If)
+                </label>
+                <textarea 
+                  rows={3}
+                  placeholder="e.g. field_name === 'value' && another_field > 10"
+                  className="w-full border rounded-md px-3 py-2 font-mono text-sm border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  value={roleShowIf}
+                  onChange={e => setRoleShowIf(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  Enter a JavaScript expression to control visibility of this entire {roleModalTarget?.type === 'page' ? 'page' : 'section'}. Leave empty to always show. Examples: <code>age &gt; 18</code>, <code>facility === 'NYC'</code>
+                </p>
+              </div>
             </div>
           </Modal>
         );

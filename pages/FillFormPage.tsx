@@ -1011,7 +1011,28 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         console.log(`[VISIBILITY] Page "${page.name}" (id=${page.id}), pageKey="${pageKey}", pagePerms=${pagePerms ? pagePerms.length : 0} records`);
         const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
         console.log(`[VISIBILITY]   → can_view=${viewAllowed}`);
-        return viewAllowed;
+        
+        // Check page visibility condition (showIf)
+        let pageVisible = true;
+        try {
+            if (page.metadata && page.metadata.showIf) {
+                // Build fieldMap for page visibility evaluation
+                const fieldMapForPage: Record<string, any> = {};
+                (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
+                    if (qq && qq.fieldName) {
+                        const rawAnswer = answers[qq.id];
+                        const answerValue = (rawAnswer && typeof rawAnswer === 'object' && 'value' in rawAnswer) ? rawAnswer.value : rawAnswer;
+                        fieldMapForPage[qq.fieldName] = answerValue;
+                    }
+                })));
+                pageVisible = evaluateCondition(String(page.metadata.showIf), fieldMapForPage);
+            }
+        } catch (e) {
+            console.error('Error evaluating showIf for page', page.id, e);
+            pageVisible = true;
+        }
+        
+        return viewAllowed && pageVisible;
     });
 
     // If user has no visible pages, show access message
@@ -1061,26 +1082,38 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         </div>
 
                         <div className="mt-6 space-y-8">
-                            {currentPage.sections.filter(section => {
-                                const pageKey = getPageKey(currentPage.id);
-                                const sectionAllowed = hasPermissionFlag('can_view', pageKey, section.id);
-                                return sectionAllowed;
-                            }).map(section => (
-                                <div key={section.id} className="bg-gray-50 p-4 rounded-md">
-                                    <h3 className="text-lg font-medium text-gray-900 border-b pb-2 border-gray-200">{section.name}</h3>
-                                    <div className="mt-4 grid grid-cols-12 gap-6">
-                                        {(() => {
-                                            // build fieldName -> value map for visibility/computed evaluation
-                                            const fieldMapLocal: Record<string, any> = {};
-                                            (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
-                                                if (qq && qq.fieldName) {
-                                                    const rawAnswer = answers[qq.id];
-                                                    // Extract value from answer - if it's an object with a 'value' property (from scoring options),
-                                                    // extract just the value; otherwise use the answer as-is
-                                                    const answerValue = (rawAnswer && typeof rawAnswer === 'object' && 'value' in rawAnswer) ? rawAnswer.value : rawAnswer;
-                                                    fieldMapLocal[qq.fieldName] = answerValue;
-                                                }
-                                            })));
+                            {(() => {
+                                // Build fieldName -> value map once for visibility/computed evaluation
+                                const fieldMapLocal: Record<string, any> = {};
+                                (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
+                                    if (qq && qq.fieldName) {
+                                        const rawAnswer = answers[qq.id];
+                                        const answerValue = (rawAnswer && typeof rawAnswer === 'object' && 'value' in rawAnswer) ? rawAnswer.value : rawAnswer;
+                                        fieldMapLocal[qq.fieldName] = answerValue;
+                                    }
+                                })));
+
+                                return currentPage.sections.filter(section => {
+                                    const pageKey = getPageKey(currentPage.id);
+                                    const sectionAllowed = hasPermissionFlag('can_view', pageKey, section.id);
+                                    
+                                    // Check section visibility condition (showIf)
+                                    let sectionVisible = true;
+                                    try {
+                                        if (section.metadata && section.metadata.showIf) {
+                                            sectionVisible = evaluateCondition(String(section.metadata.showIf), fieldMapLocal);
+                                        }
+                                    } catch (e) {
+                                        console.error('Error evaluating showIf for section', section.id, e);
+                                        sectionVisible = true;
+                                    }
+                                    
+                                    return sectionAllowed && sectionVisible;
+                                }).map(section => (
+                                    <div key={section.id} className="bg-gray-50 p-4 rounded-md">
+                                        <h3 className="text-lg font-medium text-gray-900 border-b pb-2 border-gray-200">{section.name}</h3>
+                                        <div className="mt-4 grid grid-cols-12 gap-6">
+                                            {(() => {
 
                                             if (!section.isRepeatable) {
                                                 return section.questions.map(q => {
@@ -1209,7 +1242,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
                                     </div>
                                 </div>
-                            ))}
+                            ))
+                        })()}
                         </div>
 
                         <div className="mt-8 pt-5 border-t border-gray-200">

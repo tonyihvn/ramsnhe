@@ -65,12 +65,14 @@ export interface FormSection {
   questions: Question[];
   isRepeatable?: boolean; // If true, user can add multiple rows of this section
   groupName?: string; // Auto-generated group name for repeatable sections (e.g. "products_section_1234")
+  metadata?: Record<string, any>; // Can store showIf and other metadata
 }
 
 export interface FormPage {
   id: string;
   name: string;
   sections: FormSection[];
+  metadata?: Record<string, any>; // Can store showIf and other metadata
 }
 
 export interface FormDefinition {
