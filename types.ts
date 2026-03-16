@@ -1,0 +1,177 @@
+
+export interface Program {
+  id: string;
+  name: string;
+  details: string;
+  type: string;
+  category: string;
+  remarks?: string;
+  business_id?: string; // Business/Organization ID
+}
+
+export interface Activity {
+  id: string;
+  title: string;
+  subtitle?: string;
+  details: string;
+  startDate: string;
+  endDate: string;
+  createdBy: string;
+  programId: string;
+  responseType?: string;
+  category: string;
+  status: 'Draft' | 'Published' | 'Archived';
+  formDefinition?: FormDefinition;
+  business_id?: string; // Business/Organization ID
+}
+
+export enum AnswerType {
+  TEXT = 'textbox',
+  DATE = 'date',
+  TIME = 'time',
+  DROPDOWN = 'dropdown',
+  TEXTAREA = 'textarea',
+  NUMBER = 'number',
+  CHECKBOX = 'checkbox',
+  RADIO = 'radio',
+  FILE = 'file', // Generic file upload within form
+  COMPUTED = 'computed', // Computed / formula-driven field
+  PARAGRAPH = 'paragraph', // Display-only paragraph/instructions
+  LOCATION = 'location' // Location picker with map
+}
+
+export interface Question {
+  id: string;
+  activityId: string;
+  fieldName?: string; // machine-friendly name editable by user and usable in formulas
+  pageName: string; // Used for logical grouping if needed, but primarily linked via Section->Page
+  sectionName: string;
+  questionText: string;
+  questionHelper?: string;
+  answerType: AnswerType;
+  options?: { label: string; value: string; score?: number; showif?: string }[];
+  category?: string;
+  questionGroup?: string;
+  columnSize: number; // Bootstrap 12-grid value: 12 (full), 6 (half), 4 (third), 3 (quarter)
+  required?: boolean;
+  metadata?: Record<string, any>;
+  status: 'Active' | 'Inactive';
+  createdBy: string;
+}
+
+export interface FormSection {
+  id: string;
+  name: string;
+  questions: Question[];
+  isRepeatable?: boolean; // If true, user can add multiple rows of this section
+  groupName?: string; // Auto-generated group name for repeatable sections (e.g. "products_section_1234")
+}
+
+export interface FormPage {
+  id: string;
+  name: string;
+  sections: FormSection[];
+}
+
+export interface FormDefinition {
+  id: string;
+  activityId: string;
+  pages: FormPage[];
+}
+
+export interface Answer {
+  id?: string;
+  questionId: string;
+  answerValue: any;
+  facilityId?: string;
+  userId?: string;
+  recordedBy?: string;
+  answerDateTime?: string;
+  reviewersComment?: string;
+  qualityImprovementFollowup?: string;
+  score?: number;
+}
+
+export interface UploadedFile {
+  id: string;
+  fileName: string;
+  data: Record<string, any>[]; // Array of objects representing rows
+}
+
+export interface ActivityReport {
+  id: string;
+  activityId: string;
+  facilityId?: string; // If facility level
+  userId?: string; // If user level
+  feedbackDetails?: string;
+  dataCollectionLevel: 'User' | 'Facility';
+  status: 'Pending' | 'Reviewed' | 'Completed';
+  score?: number;
+  preparedBy: string; // User ID
+  remarks?: string;
+  answers: Record<string, any>; // Map of questionId -> value
+  uploadedFiles?: UploadedFile[];
+  submissionDate: string;
+  business_id?: string; // Business/Organization ID for multi-tenancy
+}
+
+export interface Facility {
+  id: string;
+  name: string;
+  state: string;
+  lga: string;
+  address: string;
+  contactPerson?: string;
+  category?: string;
+  remarks?: string;
+  location?: string; // stored as "lat,lng"
+  show_on_map?: boolean;
+  business_id?: string; // Business/Organization ID
+}
+
+export type UserRole = 'Admin' | 'Form Builder' | 'Data Collector' | 'Viewer' | 'Responder' | 'super-admin';
+
+export interface User {
+  id: string;
+  firstName: string;
+  lastName: string;
+  otherNames?: string;
+  email: string;
+  password?: string;
+  phoneNumber: string;
+  about?: string;
+  designation?: string;
+  category?: string;
+  facilityId?: string;
+  profileImage?: string;
+  role: UserRole;
+  status: 'Active' | 'Inactive';
+  location?: string; // stored as "lat,lng"
+  show_on_map?: boolean;
+  business_id?: string; // Business/Organization ID for multi-tenancy
+  canSwitchBusiness?: boolean; // Super admin flag for switching businesses
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  description?: string;
+  max_programs_per_business: number;
+  max_activities_per_program: number;
+  max_users?: number | null; // null means unlimited
+  features?: Record<string, any>; // Flexible feature flags (e.g., { "reports": true, "analytics": false })
+  price_monthly?: number; // Optional pricing information
+  status: 'Active' | 'Inactive';
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface PlanAssignment {
+  id: string;
+  business_id: string;
+  plan_id: string;
+  assigned_at: string;
+  assigned_by: string; // User ID of super admin who assigned the plan
+  expires_at?: string; // Optional expiration date for trial periods
+  status: 'Active' | 'Expired' | 'Cancelled';
+}

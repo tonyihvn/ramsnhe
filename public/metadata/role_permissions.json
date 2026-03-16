@@ -1,0 +1,7 @@
+{
+  "controller": ["READ_TELEMETRY", "DOWNLOAD_BUNDLE", "ACCESS_DASHBOARD_STATE"],
+  "state_analyst": ["READ_TELEMETRY", "ACCESS_DASHBOARD_STATE"],
+  "vendor_reviewer": ["READ_TELEMETRY"],
+  "financier": ["DOWNLOAD_BUNDLE"],
+  "public": []
+}

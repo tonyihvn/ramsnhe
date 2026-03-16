@@ -1,0 +1,5 @@
+[
+  { "id": "primary", "name": "Primary" },
+  { "id": "secondary", "name": "Secondary" },
+  { "id": "tertiary", "name": "Tertiary" }
+]

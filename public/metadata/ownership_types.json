@@ -1,0 +1,7 @@
+[
+  { "id": "federal", "name": "Federal" },
+  { "id": "state", "name": "State" },
+  { "id": "lga", "name": "LGA" },
+  { "id": "private", "name": "Private" },
+  { "id": "faith_based", "name": "Faith-Based" }
+]

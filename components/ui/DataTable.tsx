@@ -1,0 +1,204 @@
+import React, { useMemo, useState, useEffect } from 'react';
+
+type Column<T> = {
+  key: string;
+  label: string;
+  editable?: boolean;
+  width?: string;
+  render?: (row: T) => React.ReactNode;
+};
+
+interface DataTableProps<T> {
+  columns: Column<T>[];
+  data: T[];
+  onCellEdit?: (rowIndex: number, key: string, newValue: any) => void;
+  pageSize?: number;
+  // optional key to persist column visibility per table (defaults to hash of column keys)
+  persistKey?: string;
+  stickyHeader?: boolean;
+}
+
+export default function DataTable<T extends Record<string, any>>({ columns, data, onCellEdit, pageSize = 100, persistKey, stickyHeader = false }: DataTableProps<T>) {
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [showControls, setShowControls] = useState(false);
+  const [page, setPage] = useState(1);
+  const [localPageSize, setLocalPageSize] = useState<number>(pageSize);
+  const [draggedCol, setDraggedCol] = useState<string | null>(null);
+
+  // compute a stable storage key when not provided
+  const computedKey = persistKey || `datatable_visible_${columns.map(c => c.key).join('__')}`;
+  const [visibleMap, setVisibleMap] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(computedKey);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    // default: all true
+    const m: Record<string, boolean> = {};
+    columns.forEach(c => m[c.key] = true);
+    return m;
+  });
+
+  // Load column order from localStorage
+  const orderKey = `${computedKey}_order`;
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(orderKey);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    return columns.map(c => c.key);
+  });
+
+  // Handle column reordering
+  const handleDragStart = (key: string) => setDraggedCol(key);
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+  const handleDrop = (targetKey: string) => {
+    if (!draggedCol || draggedCol === targetKey) return;
+    const newOrder = [...columnOrder];
+    const draggedIdx = newOrder.indexOf(draggedCol);
+    const targetIdx = newOrder.indexOf(targetKey);
+    if (draggedIdx === -1 || targetIdx === -1) return;
+    newOrder.splice(draggedIdx, 1);
+    newOrder.splice(draggedIdx < targetIdx ? targetIdx - 1 : targetIdx, 0, draggedCol);
+    setColumnOrder(newOrder);
+    try { localStorage.setItem(orderKey, JSON.stringify(newOrder)); } catch (e) { }
+    setDraggedCol(null);
+  };
+
+  useEffect(() => {
+    // when columns change, ensure map includes them
+    setVisibleMap(prev => {
+      const copy = { ...prev };
+      let changed = false;
+      columns.forEach(c => { if (copy[c.key] === undefined) { copy[c.key] = true; changed = true; } });
+      if (changed) {
+        try { localStorage.setItem(computedKey, JSON.stringify(copy)); } catch (e) { }
+      }
+      return copy;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns.map(c => c.key).join(',')]);
+
+  const setVisible = (key: string, v: boolean) => {
+    setVisibleMap(prev => {
+      const next = { ...prev, [key]: v };
+      try { localStorage.setItem(computedKey, JSON.stringify(next)); } catch (e) { }
+      return next;
+    });
+  };
+
+  const visibleColumns = columnOrder
+    .filter(key => columns.find(c => c.key === key))
+    .map(key => columns.find(c => c.key === key)!)
+    .filter(c => visibleMap[c.key]);
+
+  const filtered = useMemo(() => {
+    if (!data) return [] as T[];
+    return data.filter(row => {
+      return visibleColumns.every(col => {
+        const f = filters[col.key];
+        if (!f || String(f).trim() === '') return true;
+        const val = row[col.key];
+        if (val === null || typeof val === 'undefined') return false;
+        return String(val).toLowerCase().includes(String(f).toLowerCase());
+      });
+    });
+  }, [data, filters, columns, visibleMap]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / Math.max(1, localPageSize)));
+  const paged = useMemo(() => {
+    const start = (page - 1) * localPageSize;
+    return filtered.slice(start, start + localPageSize);
+  }, [filtered, page, localPageSize]);
+
+  const handleChange = (key: string, v: string) => setFilters(prev => ({ ...prev, [key]: v }));
+
+  return (
+    <div className="relative">
+      <div className="flex items-center justify-end mb-2">
+        <div className="relative">
+          <button onClick={() => setShowControls(s => !s)} className="px-2 py-1 border rounded text-sm bg-white">Columns ▾</button>
+          {showControls && (
+            <div className="absolute right-0 mt-2 w-56 bg-white border rounded shadow z-50 p-3">
+              <div className="text-xs font-medium mb-2">Toggle columns</div>
+              <div className="space-y-1 max-h-56 overflow-auto">
+                {columns.map(col => (
+                  <label key={col.key} className="flex items-center text-sm">
+                    <input type="checkbox" checked={!!visibleMap[col.key]} onChange={e => setVisible(col.key, e.target.checked)} className="mr-2" />
+                    <span>{col.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 text-right">
+                <button className="px-2 py-1 text-xs text-gray-600" onClick={() => { setVisibleMap(() => { const m: Record<string, boolean> = {}; columns.forEach(c => m[c.key] = true); try { localStorage.setItem(computedKey, JSON.stringify(m)); } catch (e) { } return m; }); }}>Show All</button>
+                <button className="ml-2 px-2 py-1 text-xs text-gray-600" onClick={() => { setVisibleMap(() => { const m: Record<string, boolean> = {}; columns.forEach(c => m[c.key] = false); try { localStorage.setItem(computedKey, JSON.stringify(m)); } catch (e) { } return m; }); }}>Hide All</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              {visibleColumns.map(col => (
+                <th key={col.key} draggable onDragStart={() => handleDragStart(col.key)} onDragOver={handleDragOver} onDrop={() => handleDrop(col.key)} style={{ width: col.width, cursor: 'move', opacity: draggedCol === col.key ? 0.5 : 1 }} className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}>
+                  <div className="flex flex-col">
+                    <span className="break-words whitespace-normal">{col.label}</span>
+                    <input
+                      placeholder="Search"
+                      value={filters[col.key] || ''}
+                      onChange={e => handleChange(col.key, e.target.value)}
+                      className="mt-1 block w-full border-gray-200 rounded text-xs px-2 py-1"
+                    />
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {paged.map((row, rIdx) => (
+              <tr key={rIdx} data-row-index={rIdx}>
+                {visibleColumns.map(col => (
+                  <td key={col.key} className="px-2 py-2 align-top text-sm">
+                    {col.editable && onCellEdit ? (
+                      <input
+                        value={row[col.key] ?? ''}
+                        onChange={e => onCellEdit?.((page - 1) * localPageSize + rIdx, col.key, e.target.value)}
+                        className="w-full border-gray-200 rounded text-sm px-2 py-1"
+                      />
+                    ) : col.render ? (
+                      col.render(row)
+                    ) : (
+                      String(row[col.key] ?? '')
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <div className="text-sm text-gray-600">Showing {filtered.length === 0 ? 0 : Math.min(filtered.length, (page - 1) * localPageSize + 1)} - {Math.min(filtered.length, (page) * localPageSize)} of {filtered.length}</div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button disabled={page <= 1} onClick={() => setPage(1)} className="px-2 py-1 border rounded text-sm">«</button>
+            <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="px-2 py-1 border rounded text-sm">‹</button>
+            <span className="px-2 text-sm">Page</span>
+            <input type="number" value={page} onChange={e => setPage(Math.max(1, Math.min(totalPages, Number(e.target.value || 1))))} className="w-16 p-1 border rounded text-sm" />
+            <span className="px-2 text-sm">of {totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="px-2 py-1 border rounded text-sm">›</button>
+            <button disabled={page >= totalPages} onClick={() => setPage(totalPages)} className="px-2 py-1 border rounded text-sm">»</button>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm">Per page</label>
+            <select value={localPageSize} onChange={e => { setLocalPageSize(Number(e.target.value || 50)); setPage(1); }} className="p-1 border rounded text-sm">
+              {[10, 20, 50, 100, 250].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

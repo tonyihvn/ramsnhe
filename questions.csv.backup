@@ -1,0 +1,78 @@
+Question,Type,field_name,Required,ColumnSize,Page,Section,group_name
+Patient PEPFAR ID,textbox,pi_ppid,true,12,Patient Information,Patient Information,
+Patient Name,textbox,pi_pname,true,12,Patient Information,Patient Information,
+Last Visit Date,textbox,pi_lvdt,false,12,Patient Information,Patient Information,
+Viral Load Count,textbox,pi_vlc,false,12,Patient Information,Patient Information,
+Date of Birth,textbox,pi_dob,false,12,Patient Information,Patient Information,
+Patient Identification - care card/registers/EMR: Unique identifier,dropdown,pi_s1_uit,false,12,Folder Audit,Patient Identification,UI
+Patient Identification - care card/registers/EMR: Full name and contact information,dropdown,pi_s1_fnacit,false,12,Folder Audit,Patient Identification,FNACI
+Patient Identification - care card/registers/EMR: Date of birth and gender,dropdown,pi_s1_dbagt,false,12,Folder Audit,Patient Identification,DBAG
+Patient Identification - care card/registers/EMR: Details of next of kin and care card completion,dropdown,pi_s1_dnokceccbct,false,12,Folder Audit,Patient Identification,DNOKCC
+Patient Identification - care card/registers/EMR: Pregnancy/breastfeeding status,dropdown,pi_s1_pbsriat,false,12,Folder Audit,Patient Identification,PBS
+Patient Identification - care card/registers/EMR: Transfer to recent care card version,dropdown,pi_s1_trccvt,false,12,Folder Audit,Patient Identification,TRCV
+Medical History - folder/care card: Initial clinical evaluation,dropdown,pi_s2_iacet,false,12,Folder Audit,Medical History,IACE
+Medical History - folder/care card: Co-morbid conditions,dropdown,pi_s2_cct,false,12,Folder Audit,Medical History,CC
+Clinical Assessments - care card/registers/EMR: Visit encounter date,dropdown,pi_s3_vedt,false,12,Folder Audit,Clinical Assessments,VED
+Clinical Assessments - care card/registers/EMR: Vital signs,dropdown,pi_s3_vst,false,12,Folder Audit,Clinical Assessments,VS
+Clinical Assessments - care card/registers/EMR: BMI,dropdown,pi_s3_bmit,false,12,Folder Audit,Clinical Assessments,BMI
+Clinical Assessments - care card/registers/EMR: WHO staging,dropdown,pi_s3_wsot,false,12,Folder Audit,Clinical Assessments,WS
+Clinical Assessments - care card/registers/EMR: Functional status,dropdown,pi_s3_fst,false,12,Folder Audit,Clinical Assessments,FS
+Clinical Assessments - care card/registers/EMR: TB evaluation,dropdown,pi_s3_tbet,false,12,Folder Audit,Clinical Assessments,TBE
+Clinical Assessments - care card/registers/EMR: Baseline CD4 count,dropdown,pi_s3_bcc4t,false,12,Folder Audit,Clinical Assessments,BCC4
+Clinical Assessments - care card/registers/EMR: Viral load order and result,dropdown,pi_s3_vlort,false,12,Folder Audit,Clinical Assessments,VLOR
+Clinical Assessments - care card/registers/EMR: AHD diagnostic cascade,dropdown,pi_s3_ahddct,false,12,Folder Audit,Clinical Assessments,AHDD
+Treatment Information - care card/POF/register/EMR: ART regimen details,dropdown,pi_s4_atirdt,false,12,Folder Audit,Treatment Information,ATIRD
+Treatment Information - care card/POF/register/EMR: Days of ARV refill,dropdown,pi_s4_darrdt,false,12,Folder Audit,Treatment Information,DARF
+Treatment Information - care card/POF/register/EMR: ART start date,dropdown,pi_s4_asdt,false,12,Folder Audit,Treatment Information,ASD
+Treatment Information - care card/POF/register/EMR: Adherence to ART,dropdown,pi_s4_aatat,false,12,Folder Audit,Treatment Information,AAT
+Treatment Information - care card/POF/register/EMR: Last drug pickup date,dropdown,pi_s4_ldpdt,false,12,Folder Audit,Treatment Information,LDPD
+Treatment Information - care card/POF/register/EMR: Changes in ART regimen,dropdown,pi_s4_ciart,false,12,Folder Audit,Treatment Information,CIAR
+Treatment Information - care card/POF/register/EMR: Next appointment date,dropdown,pi_s4_nadt,false,12,Folder Audit,Treatment Information,NAD
+Laboratory Tests - care card/folder/EMR: Client intake form,dropdown,pi_s5_cifot,false,12,Folder Audit,Laboratory Tests,CIF
+Laboratory Tests - care card/folder/EMR: HTS request and result form,dropdown,pi_s5_hrft,false,12,Folder Audit,Laboratory Tests,HRF
+Laboratory Tests - care card/folder/EMR: Laboratory order form,dropdown,pi_s5_loft,false,12,Folder Audit,Laboratory Tests,LOF
+Laboratory Tests - care card/folder/EMR: Viral load test date and results,dropdown,pi_s5_vlttt,false,12,Folder Audit,Laboratory Tests,VLTR
+Laboratory Tests - care card/folder/EMR: VL result in care card and hard copy,dropdown,pi_s5_vlrcct,false,12,Folder Audit,Laboratory Tests,VLRC
+Laboratory Tests - care card/folder/EMR: Previous VL result documented,dropdown,pi_s5_pvldt,false,12,Folder Audit,Laboratory Tests,PVLD
+Laboratory Tests - care card/folder/EMR: Enhanced adherence counselling evidence,dropdown,pi_s5_eacet,false,12,Folder Audit,Laboratory Tests,EACE
+Laboratory Tests - care card/folder/EMR: Repeat VL test post EAC,dropdown,pi_s5_rvltpet,false,12,Folder Audit,Laboratory Tests,RVLTPE
+Medication Records - care card/POF/EMR/register/Pharmacovigilance: Prescription details,dropdown,pi_s6_pdt,false,12,Folder Audit,Medication Records,PD
+Medication Records - care card/POF/EMR/register/Pharmacovigilance: Pharmacy refill records,dropdown,pi_s6_prrt,false,12,Folder Audit,Medication Records,PRR
+Medication Records - care card/POF/EMR/register/Pharmacovigilance: Side effects documentation,dropdown,pi_s6_sedt,false,12,Folder Audit,Medication Records,SED
+Counselling and Support Services - care card/referral forms/violence prevention: Counselling session records,dropdown,pi_s7_csrt,false,12,Folder Audit,Counselling and Support Services,CSR
+Counselling and Support Services - care card/referral forms/violence prevention: Index testing forms,dropdown,pi_s7_iftt,false,12,Folder Audit,Counselling and Support Services,IFT
+Counselling and Support Services - care card/referral forms/violence prevention: Referrals to support services,dropdown,pi_s7_rsst,false,12,Folder Audit,Counselling and Support Services,RSS
+Counselling and Support Services - care card/referral forms/violence prevention: Prevention education,dropdown,pi_s7_peat,false,12,Folder Audit,Counselling and Support Services,PE
+Counselling and Support Services - care card/referral forms/violence prevention: IPV risk assessment,dropdown,pi_s7_ipvrat,false,12,Folder Audit,Counselling and Support Services,IPVRA
+Preventive Measures - care card/TPT card/register/EMR: TB screening documented,dropdown,pi_s8_tbsdt,false,12,Folder Audit,Preventive Measures,TBS
+Preventive Measures - care card/TPT card/register/EMR: Prophylaxis for opportunistic infections,dropdown,pi_s8_pfot,false,12,Folder Audit,Preventive Measures,PFO
+Preventive Measures - care card/TPT card/register/EMR: INH dispensing,dropdown,pi_s8_idt,false,12,Folder Audit,Preventive Measures,ID
+Preventive Measures - care card/TPT card/register/EMR: TPT start and completion date,dropdown,pi_s8_tptscdt,false,12,Folder Audit,Preventive Measures,TPTSC
+Follow-Up and Monitoring - care card/registers/forms/EMR: Adherence to scheduled appointments,dropdown,pi_s9_asaat,false,12,Folder Audit,Follow-Up and Monitoring,ASA
+Follow-Up and Monitoring - care card/registers/forms/EMR: Missed appointment tracking,dropdown,pi_s9_matt,false,12,Folder Audit,Follow-Up and Monitoring,MAT
+Follow-Up and Monitoring - care card/registers/forms/EMR: Follow up action for defaulters,dropdown,pi_s9_fuaft,false,12,Folder Audit,Follow-Up and Monitoring,FUAF
+Pediatrics - care card/registers/EMR: Current regimens age and weight appropriate,dropdown,pi_s10_crawa t,false,12,Folder Audit,Pediatrics,CRAWA
+Pediatrics - care card/registers/EMR: Clinical monitoring for growth and screening,dropdown,pi_s10_cmgst,false,12,Folder Audit,Pediatrics,CMGS
+Pediatrics - care card/registers/EMR: Viral load monitoring timely testing,dropdown,pi_s10_vlmtt,false,12,Folder Audit,Pediatrics,VLMT
+Pediatrics - care card/registers/EMR: Enhanced adherence counselling completion,dropdown,pi_s10_eacct,false,12,Folder Audit,Pediatrics,EACC
+Pediatrics - care card/registers/EMR: Adolescent violence screening and support,dropdown,pi_s10_avst,false,12,Folder Audit,Pediatrics,AVS
+PMTCT - care card/registers/EMR: Date of first and subsequent ANC visits,dropdown,pi_s11_dfasavt,false,12,Folder Audit,PMTCT,DFASAV
+PMTCT - care card/registers/EMR: Partner HIV status documented,dropdown,pi_s11_phst,false,12,Folder Audit,PMTCT,PHS
+PMTCT - care card/registers/EMR: Repeat HIV test if negative initially,dropdown,pi_s11_rhtt,false,12,Folder Audit,PMTCT,RHT
+PMTCT - care card/registers/EMR: PMTCT enrolment and ART start date,dropdown,pi_s11_peasdt,false,12,Folder Audit,PMTCT,PEASD
+PMTCT - care card/registers/EMR: Pregnancy status and gestational age,dropdown,pi_s11_psagat,false,12,Folder Audit,PMTCT,PSGA
+PMTCT - care card/registers/EMR: Expected date of delivery,dropdown,pi_s11_eddt,false,12,Folder Audit,PMTCT,EDD
+PMTCT - care card/registers/EMR: Routine antenatal labs,dropdown,pi_s11_ralt,false,12,Folder Audit,PMTCT,RAL
+PMTCT - care card/registers/EMR: Follow-up viral load at appropriate intervals,dropdown,pi_s11_fvlait,false,12,Folder Audit,PMTCT,FVLAI
+PMTCT - care card/registers/EMR: Pregnancy complications recorded,dropdown,pi_s11_pcrt,false,12,Folder Audit,PMTCT,PCR
+PMTCT - care card/registers/EMR: Place of delivery documented,dropdown,pi_s11_pddt,false,12,Folder Audit,PMTCT,PDD
+PMTCT - care card/registers/EMR: Date and mode of delivery,dropdown,pi_s11_dmddt,false,12,Folder Audit,PMTCT,DMDD
+PMTCT - care card/registers/EMR: Infant ARV prophylaxis given and date,dropdown,pi_s11_iapgdt,false,12,Folder Audit,PMTCT,IAPG
+PMTCT - care card/registers/EMR: Infant feeding option documented,dropdown,pi_s11_ifot,false,12,Folder Audit,PMTCT,IFO
+PMTCT - care card/registers/EMR: Exclusive breastfeeding,dropdown,pi_s11_ebft,false,12,Folder Audit,PMTCT,EBF
+PMTCT - care card/registers/EMR: Replacement feeding,dropdown,pi_s11_rft,false,12,Folder Audit,PMTCT,RF
+PMTCT - care card/registers/EMR: Infant Cotrimoxazole start date,dropdown,pi_s11_icsdt,false,12,Folder Audit,PMTCT,ICS
+PMTCT - care card/registers/EMR: DNA PCR sample collected and date,dropdown,pi_s11_dpsct,false,12,Folder Audit,PMTCT,DPSC
+PMTCT - care card/registers/EMR: PCR results documented,dropdown,pi_s11_prdt,false,12,Folder Audit,PMTCT,PRD
+PMTCT - care card/registers/EMR: Repeat PCR where applicable,dropdown,pi_s11_rpwat,false,12,Folder Audit,PMTCT,RPWA
+PMTCT - care card/registers/EMR: Final HIV status documented,dropdown,pi_s11_fhsdt,false,12,Folder Audit,PMTCT,FHS

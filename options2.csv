@@ -1,0 +1,22 @@
+name,value,label,showif,score
+q2,Fully Meets,Fully Meets,,0
+q2,Partially Meets,Partially Meets,,0
+q63,Percentage of pregnant women who know their HIV status) VT-1 Verified,Percentage of pregnant women who know their HIV status) VT-1 Verified,,0
+q63,Number of people living with HIV newly started on ART during the month) TCS-New,Number of people living with HIV newly started on ART during the month) TCS-New,,0
+q63,Number of people living with HIV who are currently receiving ART during the month (All regimens) TCS-1,Number of people living with HIV who are currently receiving ART during the month (All regimens) TCS-1,,0
+q63,Percentage of other vulnerable populations that have received an HIV test during the reporting period and know their results) HTS-3e,Percentage of other vulnerable populations that have received an HIV test during the reporting period and know their results) HTS-3e,,0
+q63,Percentage of HIV-positive new and relapse TB patients on ART during TB treatment) TB/HIV 6(M),Percentage of HIV-positive new and relapse TB patients on ART during TB treatment) TB/HIV 6(M),,0
+q63,Percentage of HIV-exposed infants receiving a virological test for HIV within 2 months of birth) VT-2,Percentage of HIV-exposed infants receiving a virological test for HIV within 2 months of birth) VT-2,,0
+q63,Percentage of high-risk adolescent girls and young women reached with HIV prevention programs - defined package of services) YP - 2,Percentage of high-risk adolescent girls and young women reached with HIV prevention programs - defined package of services) YP - 2,,0
+q63,HTS-2 Percentage of high risk AGYW that have received an HIV test during the reporting period in AGYW programs) HTS 2,HTS-2 Percentage of high risk AGYW that have received an HIV test during the reporting period in AGYW programs) HTS 2,,0
+q63,Number of MSM who received HIV Testing Service) HTS-3a,Number of MSM who received HIV Testing Service) HTS-3a,,0
+q63,Number of  who FSWreceived HIV Testing Service) HTS-3c,Number of  who FSWreceived HIV Testing Service) HTS-3c,,0
+q63,Number of PWID who received HIV Testing Service) HTS-3d,Number of PWID who received HIV Testing Service) HTS-3d,,0
+q68,Yes,Yes,,0
+q68,No,No,,0
+q69,Yes,Yes,,0
+q69,No,No,,0
+q70,Yes,Yes,,0
+q70,No,No,,0
+q71,Yes,Yes,,0
+q71,No,No,,0

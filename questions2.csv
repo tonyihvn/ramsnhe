@@ -1,0 +1,9 @@
+Question,Type,Helper Text,field_name,Required,ColumnSize,Page,Section,ShowIf,calculation,score,reviewers_comment,group_name
+"Does your program has adequate and dedicated staff for monitoring and evaluation (M&E)�including?advisor, M&E officer, database manager, health informatics�officer, and at least one data entry clerk (DEC) or equivalent.? For care and treatment sites, at least one DEC for those with more than 1,000 patients currently on?antiretroviral?therapy (ART).",dropdown,"Discussion, review of M&E structure and organogram",q2,true,12,M&E System Assessment,Human Resources Capacity and Management ,,,2,false,
+Are there documented job descriptions for all staff in the M&E team?,dropdown,"Discussion,  review of M&E structure and job descriptions",q3,true,12,M&E System Assessment,Human Resources Capacity and Management ,,,2,false,
+Score(%),computed,,q66,false,3,Part A. Data Recounting ,Indicator Reporting,,(reported && verified) ? Math.round((verified / reported) * 100) : 0,0,false,indicator_reporting
+UIC or registration number of tool,textbox,,q67,false,12,Part B. Recording Tools,Recording Tools Verification,,,0,false,recording_tools_verification
+The recording tool has correct UIC (if applicable)/ registration number? (Integrity and consistency),dropdown,,q68,false,3,Part B. Recording Tools,Recording Tools Verification,,,0,false,recording_tools_verification
+All data fields of recording tool are filled out per logic/rule? (Completeness),dropdown,,q69,false,3,Part B. Recording Tools,Recording Tools Verification,,,0,false,recording_tools_verification
+The recording tool has correct date? (Timeliness),dropdown,,q70,false,3,Part B. Recording Tools,Recording Tools Verification,,,0,false,recording_tools_verification
+The recording tool has been signed by supervisor? (Validity),dropdown,,q71,false,3,Part B. Recording Tools,Recording Tools Verification,,,0,false,recording_tools_verification
