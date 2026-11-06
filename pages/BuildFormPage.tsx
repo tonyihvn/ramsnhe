@@ -37,7 +37,8 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 }) => {
   const hasOptions = [AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(question.answerType);
   const isFile = question.answerType === AnswerType.FILE;
-  const collapsed = !!(question.metadata && question.metadata.collapsed);
+  // Default to collapsed (true) unless explicitly set to false
+  const collapsed = question.metadata?.collapsed !== false;
 
   const parsePastedOptions = (pasteData: string): { label: string; value: string }[] => {
     return pasteData
@@ -245,6 +246,62 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
           <div className="mt-4">
             <label className="block text-sm font-medium text-gray-700">Visibility Condition (Show If)</label>
             <textarea rows={2} placeholder="e.g. age > 18" className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300 font-mono text-sm" value={(question.metadata && question.metadata.showIf) || ''} onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), showIf: e.target.value } })} />
+          </div>
+
+          {/* Default Value for text and textarea fields */}
+          {[AnswerType.TEXT, AnswerType.TEXTAREA].includes(question.answerType) && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Default Value</label>
+              <p className="text-xs text-gray-500 mb-1">This value will be pre-filled in the form field</p>
+              {question.answerType === AnswerType.TEXTAREA ? (
+                <textarea
+                  rows={3}
+                  className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300"
+                  value={(question.metadata && question.metadata.defaultValue) || ''}
+                  onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), defaultValue: e.target.value } })}
+                  placeholder="Enter default value"
+                />
+              ) : (
+                <input
+                  type="text"
+                  className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300"
+                  value={(question.metadata && question.metadata.defaultValue) || ''}
+                  onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), defaultValue: e.target.value } })}
+                  placeholder="Enter default value"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Default/Selected Value for select, dropdown, and radio fields */}
+          {[AnswerType.DROPDOWN, AnswerType.RADIO].includes(question.answerType) && (question.options || []).length > 0 && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Default/Selected Value</label>
+              <p className="text-xs text-gray-500 mb-1">Select the option that should be pre-selected in the form</p>
+              <select
+                className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300"
+                value={(question.metadata && question.metadata.selectedValue) || ''}
+                onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), selectedValue: e.target.value } })}
+              >
+                <option value="">-- No default selection --</option>
+                {(question.options || []).map((o: any, i: number) => (
+                  <option key={i} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Read-only Field Toggle */}
+          <div className="mt-4">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!(question.metadata && question.metadata.isReadOnly)}
+                onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), isReadOnly: e.target.checked } })}
+              />
+              <span className="text-sm text-gray-700">Make this field read-only</span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1">Read-only fields display data but cannot be edited by form users</p>
           </div>
 
           {isFile && (
@@ -823,7 +880,7 @@ const BuildFormPage: React.FC = () => {
       createdBy: currentUser?.id ?? null,
       fieldName: makeFieldName('New Question') + `_${Date.now()}`,
       options: (type === AnswerType.DROPDOWN || type === AnswerType.RADIO || type === AnswerType.CHECKBOX) ? [{ label: 'Option 1', value: '1' }] : undefined,
-      metadata: (type === AnswerType.FILE) ? { allowedFileTypes: ['image/*', '.pdf'] } : undefined,
+      metadata: { ...(type === AnswerType.FILE ? { allowedFileTypes: ['image/*', '.pdf'] } : {}), collapsed: true },
     };
     const newFormDef = { ...formDef };
     newFormDef.pages[pageIndex].sections[sectionIndex].questions.push(newQuestion);
@@ -962,7 +1019,7 @@ const BuildFormPage: React.FC = () => {
             createdBy: null,
             fieldName,
             options,
-            metadata: { ...(metadata || {}), score: scoreVal, displayReviewersComment: reviewersCommentFlag },
+            metadata: { ...(metadata || {}), score: scoreVal, displayReviewersComment: reviewersCommentFlag, collapsed: true },
             questionGroup: groupName
           };
         });
