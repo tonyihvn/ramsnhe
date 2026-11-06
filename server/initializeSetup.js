@@ -118,6 +118,19 @@ async function setupMultiTenancy(pool) {
       )
     `);
     
+    // USER_PREFERENCES table (store user preferences server-side)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${tables.USER_PREFERENCES} (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES ${tables.USERS}(id) ON DELETE CASCADE,
+        preference_key VARCHAR(255) NOT NULL,
+        preference_value JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, preference_key)
+      )
+    `);
+    
     console.log('[startup] Multi-tenancy features setup complete');
   } catch (error) {
     console.error('[startup] Error setting up multi-tenancy:', error);

@@ -15,22 +15,10 @@ export const evaluateCondition = (expression: string | undefined, context: Recor
     const contextKeys = Object.keys(context);
     const contextValues = Object.values(context);
 
-    // Debug: log context keys available for evaluation
-    const debugMode = localStorage?.getItem('DEBUG_CONDITIONS') === 'true';
-    if (debugMode) {
-      console.log(`[Condition Debug] Evaluating: "${expression}"`);
-      console.log(`[Condition Debug] Available context keys:`, contextKeys);
-      console.log(`[Condition Debug] Context values:`, context);
-    }
-
     // Create function with dynamic parameters from context
     // eslint-disable-next-line no-new-func
     const evaluateFn = new Function(...contextKeys, `return (${expression})`);
     const result = evaluateFn(...contextValues);
-
-    if (debugMode) {
-      console.log(`[Condition Debug] Result: ${result}`);
-    }
 
     return Boolean(result);
   } catch (error) {

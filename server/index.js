@@ -5903,6 +5903,105 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     } catch (e) { console.error('Failed to delete user', e); res.status(500).json({ error: 'Failed to delete user' }); }
 });
 
+// User Preferences - get a preference
+app.get('/api/user-preferences/:key', async (req, res) => {
+    try {
+        const userId = req.session?.userId;
+        const preferenceKey = req.params.key;
+        
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        if (!preferenceKey) return res.status(400).json({ error: 'Preference key required' });
+        
+        const result = await pool.query(
+            `SELECT preference_value FROM ${tables.USER_PREFERENCES} WHERE user_id = $1 AND preference_key = $2 LIMIT 1`,
+            [userId, preferenceKey]
+        );
+        
+        if (result.rowCount === 0) {
+            return res.json({ key: preferenceKey, value: null });
+        }
+        
+        const row = result.rows[0];
+        res.json({ key: preferenceKey, value: row.preference_value });
+    } catch (e) {
+        console.error('Failed to get user preference:', e);
+        res.status(500).json({ error: 'Failed to get preference' });
+    }
+});
+
+// User Preferences - get all preferences
+app.get('/api/user-preferences', async (req, res) => {
+    try {
+        const userId = req.session?.userId;
+        
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        
+        const result = await pool.query(
+            `SELECT preference_key, preference_value FROM ${tables.USER_PREFERENCES} WHERE user_id = $1`,
+            [userId]
+        );
+        
+        const preferences = {};
+        for (const row of result.rows) {
+            preferences[row.preference_key] = row.preference_value;
+        }
+        
+        res.json(preferences);
+    } catch (e) {
+        console.error('Failed to get user preferences:', e);
+        res.status(500).json({ error: 'Failed to get preferences' });
+    }
+});
+
+// User Preferences - set a preference
+app.post('/api/user-preferences/:key', async (req, res) => {
+    try {
+        const userId = req.session?.userId;
+        const preferenceKey = req.params.key;
+        const preferenceValue = req.body.value !== undefined ? req.body.value : null;
+        
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        if (!preferenceKey) return res.status(400).json({ error: 'Preference key required' });
+        
+        // Upsert preference (INSERT ... ON CONFLICT UPDATE)
+        const result = await pool.query(
+            `INSERT INTO ${tables.USER_PREFERENCES} (user_id, preference_key, preference_value, created_at, updated_at)
+             VALUES ($1, $2, $3, NOW(), NOW())
+             ON CONFLICT (user_id, preference_key) 
+             DO UPDATE SET preference_value = $3, updated_at = NOW()
+             RETURNING preference_key, preference_value`,
+            [userId, preferenceKey, preferenceValue]
+        );
+        
+        const row = result.rows[0];
+        res.json({ key: row.preference_key, value: row.preference_value });
+    } catch (e) {
+        console.error('Failed to set user preference:', e);
+        res.status(500).json({ error: 'Failed to set preference' });
+    }
+});
+
+// User Preferences - delete a preference
+app.delete('/api/user-preferences/:key', async (req, res) => {
+    try {
+        const userId = req.session?.userId;
+        const preferenceKey = req.params.key;
+        
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+        if (!preferenceKey) return res.status(400).json({ error: 'Preference key required' });
+        
+        await pool.query(
+            `DELETE FROM ${tables.USER_PREFERENCES} WHERE user_id = $1 AND preference_key = $2`,
+            [userId, preferenceKey]
+        );
+        
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Failed to delete user preference:', e);
+        res.status(500).json({ error: 'Failed to delete preference' });
+    }
+});
+
 // Reports
 app.get('/api/reports', async (req, res) => {
     try {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMockData } from '../hooks/useMockData';
+import { useServerPreferences } from '../hooks/useServerPreferences';
 import { FormDefinition, FormPage, FormSection, Question, AnswerType } from '../types';
 import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import Button from '../components/ui/Button';
@@ -419,6 +420,7 @@ const BuildFormPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
   const { getActivity, getFormDefinition, saveFormDefinition, currentUser } = useMockData();
+  const { getPreference, setPreference } = useServerPreferences();
   const [activity, setActivity] = useState(getActivity(activityId || ''));
   const [formDef, setFormDef] = useState<FormDefinition | undefined>(getFormDefinition(activityId || ''));
   const [isSaved, setIsSaved] = useState<boolean>(false);
@@ -605,11 +607,10 @@ const BuildFormPage: React.FC = () => {
     } catch (e) {
       console.error('Failed to load page/section permissions', e);
     }
-    // apply any saved local overrides (builder may run without authenticated backend)
+    // apply any saved server preferences for permissions overrides
     try {
-      const raw = localStorage.getItem('page_permissions_overrides');
-      if (raw) {
-        const saved: any[] = JSON.parse(raw);
+      const saved = await getPreference('page_permissions_overrides');
+      if (saved && Array.isArray(saved)) {
         for (const s of saved) {
           const rn = (s.role_name || s.roleName || s.role || '') as string;
           if (!rn) continue;
@@ -689,19 +690,18 @@ const BuildFormPage: React.FC = () => {
     }
   };
 
-  // Persist overrides to localStorage as a fallback when backend/admin is not available
-  const persistLocalOverrides = (items: any[]) => {
+  // Persist overrides to server preferences as fallback when backend/admin is not available
+  const persistLocalOverrides = async (items: any[]) => {
     try {
-      const raw = localStorage.getItem('page_permissions_overrides');
-      const existing = raw ? JSON.parse(raw) : [];
+      const existing = await getPreference('page_permissions_overrides') || [];
       // merge by (page_key, section_key, role_name)
       const keyOf = (r: any) => `${String(r.page_key || r.pageKey || r.page || '')}::${String(r.section_key || r.sectionKey || r.section || '') || ''}::${String(r.role_name || r.roleName || r.role || '')}`;
       const map: Record<string, any> = {};
       for (const e of existing) map[keyOf(e)] = e;
       for (const it of items) map[keyOf(it)] = it;
       const merged = Object.values(map);
-      localStorage.setItem('page_permissions_overrides', JSON.stringify(merged));
-    } catch (err) { console.warn('Failed to persist local overrides', err); }
+      await setPreference('page_permissions_overrides', merged);
+    } catch (err) { console.warn('Failed to persist permission overrides', err); }
   };
 
   const validateForm = (): boolean => {

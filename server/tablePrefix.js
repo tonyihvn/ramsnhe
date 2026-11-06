@@ -40,6 +40,7 @@ export const tables = {
   UPLOADED_DOCS: 'uploaded_docs',
   USER_APPROVALS: 'user_approvals',
   USER_PERMISSIONS: 'user_permissions',
+  USER_PREFERENCES: 'user_preferences',
   USER_ROLES: 'user_roles',
   USERS: 'users'
 };
