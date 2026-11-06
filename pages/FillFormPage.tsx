@@ -203,6 +203,19 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
 
     // Build the evaluation context from all answers and field name map
     const evaluationContext = buildEvaluationContext(allAnswers, fieldNameMap);
+    
+    // Debug logging for option filtering
+    if (question.questionText?.includes('Facility Name') && question.options) {
+      console.log(`[DEBUG RenderQuestion FACILITY_NAME]`, {
+        questionText: question.questionText,
+        fieldName: question.fieldName,
+        totalOptions: question.options?.length,
+        hasShowif: question.options?.some(o => o.showif),
+        firstOption: question.options?.[0],
+        fieldNameMap,
+        evaluationContext
+      });
+    }
 
     switch (question.answerType) {
         case AnswerType.TEXT:
@@ -236,24 +249,26 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                 );
             }
             return (
-                <MInput
-                    label={question.questionText}
-                    type="select"
-                    value={(displayValue && typeof displayValue === 'object' && 'value' in displayValue) ? displayValue.value : (displayValue || '')}
-                    onChange={(val: any) => {
-                        const sel = filteredOptions.find(o => String(o.value) === String(val));
-                        if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
-                        else onChange(val);
-                    }}
-                    options={filteredOptions.map(o => ({ value: o.value as any, label: o.label }))}
-                    placeholder="Select..."
-                    disabled={!!effectiveDisabled}
-                />
+              <MInput label={question.questionText} type="select" value={(displayValue && typeof displayValue === 'object' && 'value' in displayValue) ? displayValue.value : (displayValue || '')} onChange={(val: any) => {
+                          const sel = filteredOptions.find(o => String(o.value) === String(val));
+                          if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
+                          else onChange(val);
+                      }} options={filteredOptions.map(o => ({ value: o.value as any, label: o.label }))} placeholder="Select..." disabled={!!effectiveDisabled} />
             );
         case AnswerType.RADIO:
             const radioFilteredOptions = filterOptionsByCondition(question.options || [], evaluationContext);
             return (
                 <div>
+                    {question.questionText?.includes('Facility Name') && (
+                      <div className="text-xs text-gray-500 bg-yellow-50 p-2 mb-2 border border-yellow-200 rounded">
+                        <div>DEBUG: {question.questionText}</div>
+                        <div>Total options: {question.options?.length}</div>
+                        <div>Filtered options: {radioFilteredOptions.length}</div>
+                        <div>q2 value: {evaluationContext.q2}</div>
+                        <div>State value: {evaluationContext.state}</div>
+                        <div>Context keys: {Object.keys(evaluationContext).join(', ')}</div>
+                      </div>
+                    )}
                     {radioFilteredOptions?.map((opt) => (
                         <MInput
                             key={`${question.id}-radio-${opt.value}`}
@@ -1306,14 +1321,26 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                     <div className="mt-4 grid grid-cols-12 gap-6">
                                         {(() => {
                                             // build fieldName -> value map for visibility/computed evaluation
+                                            // IMPORTANT: Include default/selected values so conditions can evaluate them
                                             const fieldMapLocal: Record<string, any> = {};
                                             let globalQuestionIndex = 1; // Track questions across all pages/sections for q1, q2, q3 naming
                                             (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
                                                 if (qq) {
+                                                    // Determine the effective value: use answer if present, otherwise use default/selected value
+                                                    let effectiveValue = answers[qq.id];
+                                                    if (effectiveValue === undefined || effectiveValue === null || effectiveValue === '') {
+                                                        // No answer yet, check for default value
+                                                        if (qq.metadata && qq.metadata.selectedValue) {
+                                                            effectiveValue = qq.metadata.selectedValue;
+                                                        } else if (qq.metadata && qq.metadata.defaultValue) {
+                                                            effectiveValue = qq.metadata.defaultValue;
+                                                        }
+                                                    }
+                                                    
                                                     // Add by fieldName if it exists
-                                                    if (qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
+                                                    if (qq.fieldName) fieldMapLocal[qq.fieldName] = effectiveValue;
                                                     // Also add by sequential position (q1, q2, q3, etc.) for easier condition referencing
-                                                    fieldMapLocal[`q${globalQuestionIndex}`] = answers[qq.id];
+                                                    fieldMapLocal[`q${globalQuestionIndex}`] = effectiveValue;
                                                     globalQuestionIndex++;
                                                 }
                                             })));

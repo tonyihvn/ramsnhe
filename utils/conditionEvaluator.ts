@@ -22,9 +22,6 @@ export const evaluateCondition = (expression: string | undefined, context: Recor
 
     return Boolean(result);
   } catch (error) {
-    console.warn(`Failed to evaluate condition: "${expression}"`, error);
-    console.warn(`Context keys available:`, Object.keys(context));
-    console.warn(`Context:`, context);
     // If evaluation fails, show the option by default for safety
     return true;
   }
@@ -40,16 +37,17 @@ export const filterOptionsByCondition = (
   options: Array<{ label: string; value: string; score?: number; showif?: string }>,
   context: Record<string, any>
 ): Array<{ label: string; value: string; score?: number; showif?: string }> => {
-  return options.filter(option => {
-    if (!option.showif) return true;
-    
-    // Try to evaluate with the provided context
-    // The context should already have both question IDs and field names
-    try {
-      return evaluateCondition(option.showif, context);
-    } catch (err) {
-      console.warn(`Error filtering option with condition "${option.showif}":`, err);
-      return true; // Show by default if evaluation fails
+  if (!options || options.length === 0) {
+    return [];
+  }
+  
+  const filtered = options.filter((option) => {
+    if (!option.showif) {
+      return true;
     }
+    
+    return evaluateCondition(option.showif, context);
   });
+  
+  return filtered;
 };
