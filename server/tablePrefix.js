@@ -1,89 +1,45 @@
-/**
- * Table Prefix Utility
- * Dynamically generates table names using the TABLE_PREFIX environment variable
- * Default prefix: 'dqai_'
- */
+// Table name prefix configuration
+// These are the table names used throughout the application
+// Using constants here makes it easy to maintain and update table references
 
-// Get the current table prefix (evaluate at runtime, not at import time)
-function getPrefix() {
-    return (process.env.TABLE_PREFIX || 'dqai_').toString().trim();
-}
-
-// Use a Proxy to make table names dynamic at runtime
-export const tables = new Proxy({}, {
-    get(target, prop) {
-        const prefix = getPrefix();
-        const tableNames = {
-            USERS: 'users',
-            PROGRAMS: 'programs',
-            FACILITIES: 'facilities',
-            ACTIVITIES: 'activities',
-            ACTIVITY_ROLES: 'activity_roles',
-            ACTIVITY_REPORTS: 'activity_reports',
-            QUESTIONS: 'questions',
-            ANSWERS: 'answers',
-            UPLOADED_DOCS: 'uploaded_docs',
-            DATASETS: 'datasets',
-            DATASET_CONTENT: 'dataset_content',
-            REPORT_TEMPLATES: 'report_templates',
-            SETTINGS: 'settings',
-            BUSINESSES: 'businesses',
-            LANDING_PAGE_CONFIG: 'landing_page_config',
-            FEEDBACK_MESSAGES: 'feedback_messages',
-            AUDIT_LOGS: 'audit_logs',
-            USER_APPROVALS: 'user_approvals',
-            PAGE_PERMISSIONS: 'page_permissions',
-            FORM_SCHEMAS: 'form_schemas',
-            RAG_SCHEMAS: 'rag_schemas',
-            LLM_PROVIDERS: 'llm_providers',
-            PLANS: 'plans',
-            PLAN_ASSIGNMENTS: 'plan_assignments',
-            REPORTS_POWERBI: 'reports_powerbi',
-            API_CONNECTORS: 'api_connectors',
-            API_INGESTS: 'api_ingests',
-            ROLES: 'roles',
-            PERMISSIONS: 'permissions',
-            ROLE_PERMISSIONS: 'role_permissions',
-            USER_ROLES: 'user_roles',
-            USER_PERMISSIONS: 'user_permissions',
-            RAG_CHROMA_IDS: 'rag_chroma_ids',
-            AUDIT_BATCHES: 'audit_batches',
-            EMAIL_VERIFICATIONS: 'email_verifications',
-            INDICATORS: 'indicators',
-            PASSWORD_RESETS: 'password_resets',
-            AUDIT_EVENTS: 'audit_events',
-            ACTUAL_TABLES: 'actual_tables',
-            ACTUAL_TABLE_ROWS: 'actual_table_rows',
-        };
-
-        if (tableNames[prop]) {
-            return `${prefix}${tableNames[prop]}`;
-        }
-        return target[prop];
-    }
-});
-
-/**
- * Get table name with prefix
- * @param {string} tableName - The base table name (without prefix)
- * @returns {string} - The full table name with prefix
- */
-export function getTableName(tableName) {
-    const prefix = getPrefix();
-    return `${prefix}${tableName}`;
-}
-
-/**
- * Get the current table prefix
- * @returns {string} - The TABLE_PREFIX environment variable value
- */
-export function getTablePrefix() {
-    return getPrefix();
-}
-
-export default {
-    tables,
-    getTableName,
-    getTablePrefix,
-    getPrefix,
+export const tables = {
+  ACTIVITIES: 'activities',
+  ACTIVITY_REPORTS: 'activity_reports',
+  ACTIVITY_ROLES: 'activity_roles',
+  ACTUAL_TABLE_ROWS: 'actual_table_rows',
+  ACTUAL_TABLES: 'actual_tables',
+  ANSWERS: 'answers',
+  API_CONNECTORS: 'api_connectors',
+  API_INGESTS: 'api_ingests',
+  AUDIT_BATCHES: 'audit_batches',
+  AUDIT_EVENTS: 'audit_events',
+  BUSINESSES: 'businesses',
+  DATASET_CONTENT: 'dataset_content',
+  DATASETS: 'datasets',
+  EMAIL_VERIFICATIONS: 'email_verifications',
+  FACILITIES: 'facilities',
+  FEEDBACK_MESSAGES: 'feedback_messages',
+  FORM_SCHEMAS: 'form_schemas',
+  INDICATORS: 'indicators',
+  LANDING_PAGE_CONFIG: 'landing_page_config',
+  LLM_PROVIDERS: 'llm_providers',
+  PAGE_PERMISSIONS: 'page_permissions',
+  PASSWORD_RESETS: 'password_resets',
+  PERMISSIONS: 'permissions',
+  PLAN_ASSIGNMENTS: 'plan_assignments',
+  PLANS: 'plans',
+  PROGRAMS: 'programs',
+  QUESTIONS: 'questions',
+  RAG_CHROMA_IDS: 'rag_chroma_ids',
+  RAG_SCHEMAS: 'rag_schemas',
+  REPORT_TEMPLATES: 'report_templates',
+  REPORTS_POWERBI: 'reports_powerbi',
+  ROLE_PERMISSIONS: 'role_permissions',
+  ROLES: 'roles',
+  SETTINGS: 'settings',
+  UPLOADED_DOCS: 'uploaded_docs',
+  USER_APPROVALS: 'user_approvals',
+  USER_PERMISSIONS: 'user_permissions',
+  USER_ROLES: 'user_roles',
+  USERS: 'users'
 };
