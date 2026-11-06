@@ -203,19 +203,6 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
 
     // Build the evaluation context from all answers and field name map
     const evaluationContext = buildEvaluationContext(allAnswers, fieldNameMap);
-    
-    // Debug logging for option filtering
-    if (question.questionText?.includes('Facility Name') && question.options) {
-      console.log(`[DEBUG RenderQuestion FACILITY_NAME]`, {
-        questionText: question.questionText,
-        fieldName: question.fieldName,
-        totalOptions: question.options?.length,
-        hasShowif: question.options?.some(o => o.showif),
-        firstOption: question.options?.[0],
-        fieldNameMap,
-        evaluationContext
-      });
-    }
 
     switch (question.answerType) {
         case AnswerType.TEXT:
@@ -259,16 +246,6 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
             const radioFilteredOptions = filterOptionsByCondition(question.options || [], evaluationContext);
             return (
                 <div>
-                    {question.questionText?.includes('Facility Name') && (
-                      <div className="text-xs text-gray-500 bg-yellow-50 p-2 mb-2 border border-yellow-200 rounded">
-                        <div>DEBUG: {question.questionText}</div>
-                        <div>Total options: {question.options?.length}</div>
-                        <div>Filtered options: {radioFilteredOptions.length}</div>
-                        <div>q2 value: {evaluationContext.q2}</div>
-                        <div>State value: {evaluationContext.state}</div>
-                        <div>Context keys: {Object.keys(evaluationContext).join(', ')}</div>
-                      </div>
-                    )}
                     {radioFilteredOptions?.map((opt) => (
                         <MInput
                             key={`${question.id}-radio-${opt.value}`}
