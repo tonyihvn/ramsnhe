@@ -162,29 +162,66 @@ const SearchableSelect: React.FC<{
     );
 };
 
-const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any> }) => {
+const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {}, fieldNameMap = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any>; fieldNameMap?: Record<string, any> }) => {
     // Local state/hooks used by some input types (e.g. location picker)
     const [showLocationMap, setShowLocationMap] = useState(false);
     const handleLocationClick = () => setShowLocationMap(s => !s);
 
+    // Determine if field is read-only
+    const isReadOnly = question.metadata && question.metadata.isReadOnly;
+    const effectiveDisabled = disabled || isReadOnly;
+
+    // Apply default/selected values when value is empty
+    const getDisplayValue = () => {
+      if (value) return value;
+      // For dropdowns/radio/checkbox with selectedValue
+      if ([AnswerType.DROPDOWN, AnswerType.RADIO].includes(question.answerType) && question.metadata && question.metadata.selectedValue) {
+        return question.metadata.selectedValue;
+      }
+      // For text/textarea/number with defaultValue
+      if ([AnswerType.TEXT, AnswerType.TEXTAREA, AnswerType.NUMBER].includes(question.answerType) && question.metadata && question.metadata.defaultValue) {
+        return question.metadata.defaultValue;
+      }
+      return value;
+    };
+
+    const displayValue = getDisplayValue();
+
+    // Build a context that includes both question IDs and field names for condition evaluation
+    // This ensures conditions can reference fields by either their ID or field name
+    const buildEvaluationContext = (baseAnswers: Record<string, any>, fieldNames: Record<string, any>): Record<string, any> => {
+      const context: Record<string, any> = { ...baseAnswers };
+      
+      // Add field names from the fieldNameMap as references to their values
+      // This allows conditions to use q2, q3, etc. format
+      if (fieldNames && Object.keys(fieldNames).length > 0) {
+        Object.assign(context, fieldNames);
+      }
+      
+      return context;
+    };
+
+    // Build the evaluation context from all answers and field name map
+    const evaluationContext = buildEvaluationContext(allAnswers, fieldNameMap);
+
     switch (question.answerType) {
         case AnswerType.TEXT:
-            return <MInput label={question.questionText} type="text" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            return <MInput label={question.questionText} type="text" value={displayValue || ''} onChange={onChange} disabled={!!effectiveDisabled} />;
         case AnswerType.TEXTAREA:
-            return <MInput label={question.questionText} type="textarea" value={value || ''} onChange={onChange} rows={4} disabled={!!disabled} />;
+            return <MInput label={question.questionText} type="textarea" value={displayValue || ''} onChange={onChange} rows={4} disabled={!!effectiveDisabled} />;
         case AnswerType.NUMBER:
-            return <MInput label={question.questionText} type="number" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            return <MInput label={question.questionText} type="number" value={displayValue || ''} onChange={onChange} disabled={!!effectiveDisabled} />;
         case AnswerType.DATE:
-            return <MInput label={question.questionText} type="date" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            return <MInput label={question.questionText} type="date" value={displayValue || ''} onChange={onChange} disabled={!!effectiveDisabled} />;
         case AnswerType.TIME:
-            return <MInput label={question.questionText} type="time" value={value || ''} onChange={onChange} disabled={!!disabled} />;
+            return <MInput label={question.questionText} type="time" value={displayValue || ''} onChange={onChange} disabled={!!effectiveDisabled} />;
         case AnswerType.DROPDOWN:
-            const filteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+            const filteredOptions = filterOptionsByCondition(question.options || [], evaluationContext);
             if (question.metadata && question.metadata.searchable) {
                 return (
                     <SearchableSelect
                         options={filteredOptions.map(o => ({ value: o.value as any, label: o.label, score: o.score }))}
-                        value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
+                        value={(displayValue && typeof displayValue === 'object' && 'value' in displayValue) ? displayValue.value : (displayValue || '')}
                         onChange={(val: any) => {
                             if (val && typeof val === 'object' && 'value' in val) onChange(val);
                             else {
@@ -194,7 +231,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                             }
                         }}
                         placeholder="Select..."
-                        disabled={!!disabled}
+                        disabled={!!effectiveDisabled}
                     />
                 );
             }
@@ -202,7 +239,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                 <MInput
                     label={question.questionText}
                     type="select"
-                    value={(value && typeof value === 'object' && 'value' in value) ? value.value : (value || '')}
+                    value={(displayValue && typeof displayValue === 'object' && 'value' in displayValue) ? displayValue.value : (displayValue || '')}
                     onChange={(val: any) => {
                         const sel = filteredOptions.find(o => String(o.value) === String(val));
                         if (sel && sel.score !== undefined) onChange({ value: val, score: Number(sel.score) });
@@ -210,11 +247,11 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                     }}
                     options={filteredOptions.map(o => ({ value: o.value as any, label: o.label }))}
                     placeholder="Select..."
-                    disabled={!!disabled}
+                    disabled={!!effectiveDisabled}
                 />
             );
         case AnswerType.RADIO:
-            const radioFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
+            const radioFilteredOptions = filterOptionsByCondition(question.options || [], evaluationContext);
             return (
                 <div>
                     {radioFilteredOptions?.map((opt) => (
@@ -223,19 +260,19 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                             type="radio"
                             name={question.id}
                             label={opt.label}
-                            value={(() => { if (value && typeof value === 'object' && 'value' in value) return String(value.value) === String(opt.value); return String(value) === String(opt.value); })()}
+                            value={(() => { if (displayValue && typeof displayValue === 'object' && 'value' in displayValue) return String(displayValue.value) === String(opt.value); return String(displayValue) === String(opt.value); })()}
                             onChange={(v) => {
                                 if (opt && opt.score !== undefined) onChange({ value: opt.value, score: Number(opt.score) });
                                 else onChange(opt.value);
                             }}
-                            disabled={!!disabled}
+                            disabled={!!effectiveDisabled}
                         />
                     ))}
                 </div>
             );
         case AnswerType.CHECKBOX:
-            const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], allAnswers);
-            const currentVals = Array.isArray(value) ? value : [];
+            const checkboxFilteredOptions = filterOptionsByCondition(question.options || [], evaluationContext);
+            const currentVals = Array.isArray(displayValue) ? displayValue : (Array.isArray(value) ? value : []);
             const handleCheck = (val: string, checked: boolean) => {
                 if (checked) onChange([...currentVals, val]);
                 else onChange(currentVals.filter((v: string) => v !== val));
@@ -244,7 +281,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                 <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">{question.questionText}</label>
                     {checkboxFilteredOptions?.map((opt) => (
-                        <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!disabled} />
+                        <MInput key={`${question.id}-checkbox-${opt.value}`} type="checkbox" name={`${question.id}-${opt.value}`} label={opt.label} value={currentVals.includes(opt.value)} onChange={(v) => handleCheck(opt.value as string, v)} disabled={!!effectiveDisabled} />
                     ))}
                 </div>
             );
@@ -263,7 +300,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
             };
             return (
                 <div>
-                    <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} disabled={!!disabled} />
+                    <MInput type="file" label={question.questionText} onChange={(files) => handleFile(files)} disabled={!!effectiveDisabled} />
                     {fileVal && fileVal.dataUrl && fileVal.dataUrl !== '' && (
                         <div className="mt-2">
                             <div className="text-xs text-gray-500">Uploaded: {fileVal.filename}</div>
@@ -277,31 +314,31 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
         case AnswerType.COMPUTED:
             // Show computed/calculated value as read-only output.
             // If a function is present, try to invoke it safely to get the result; otherwise display the value as a string.
-            let displayValue: any = value;
-            if (typeof displayValue === 'function') {
+            let computedDisplayValue: any = value;
+            if (typeof computedDisplayValue === 'function') {
                 try {
-                    const res = displayValue();
-                    displayValue = (res === undefined || res === null) ? String(displayValue) : res;
+                    const res = computedDisplayValue();
+                    computedDisplayValue = (res === undefined || res === null) ? String(computedDisplayValue) : res;
                 } catch (e) {
-                    displayValue = String(displayValue);
+                    computedDisplayValue = String(computedDisplayValue);
                 }
             }
-            if (typeof displayValue === 'string' && /=>|function\s*\(/.test(displayValue)) {
-                const after = displayValue.replace(/^[\s\S]*}\s*/, '').trim();
+            if (typeof computedDisplayValue === 'string' && /=>|function\s*\(/.test(computedDisplayValue)) {
+                const after = computedDisplayValue.replace(/^[\s\S]*}\s*/, '').trim();
                 if (after) {
-                    if (/^-?\d+(?:\.\d+)?$/.test(after)) displayValue = Number(after);
+                    if (/^-?\d+(?:\.\d+)?$/.test(after)) computedDisplayValue = Number(after);
                     else {
-                        try { displayValue = JSON.parse(after); } catch (e) { displayValue = after; }
+                        try { computedDisplayValue = JSON.parse(after); } catch (e) { computedDisplayValue = after; }
                     }
                 } else {
-                    displayValue = null;
+                    computedDisplayValue = null;
                 }
             }
-            const isEmpty = displayValue === undefined || displayValue === null || displayValue === '';
+            const isEmpty = computedDisplayValue === undefined || computedDisplayValue === null || computedDisplayValue === '';
             return (
                 <div className="bg-gray-100 border border-gray-200 rounded px-3 py-2 text-gray-700">
                     <span className="font-semibold">{question.questionText}:</span>{' '}
-                    <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(displayValue)}</span>
+                    <span>{isEmpty ? <span className="italic text-gray-400">(no value)</span> : String(computedDisplayValue)}</span>
                 </div>
             );
         case AnswerType.PARAGRAPH:
@@ -320,15 +357,16 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                         <MInput
                             label={question.questionText}
                             type="text"
-                            value={value || ''}
+                            value={displayValue || ''}
                             onChange={onChange}
                             placeholder="Click 'Pick on Map' to select location"
-                            disabled={!!disabled}
+                            disabled={!!effectiveDisabled}
                         />
                         <button
                             type="button"
                             onClick={handleLocationClick}
                             className="px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                            disabled={!!effectiveDisabled}
                         >
                             Pick on Map
                         </button>
@@ -336,7 +374,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
                     {showLocationMap && (
                         <div className="mt-4 border border-gray-300 rounded overflow-hidden">
                             <LocationMapPicker
-                                value={value}
+                                value={displayValue}
                                 onChange={(lat, lng) => {
                                     onChange(`${lat.toString()},${lng.toString()}`);
                                     setShowLocationMap(false);
@@ -1269,8 +1307,15 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                         {(() => {
                                             // build fieldName -> value map for visibility/computed evaluation
                                             const fieldMapLocal: Record<string, any> = {};
+                                            let globalQuestionIndex = 1; // Track questions across all pages/sections for q1, q2, q3 naming
                                             (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
-                                                if (qq && qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
+                                                if (qq) {
+                                                    // Add by fieldName if it exists
+                                                    if (qq.fieldName) fieldMapLocal[qq.fieldName] = answers[qq.id];
+                                                    // Also add by sequential position (q1, q2, q3, etc.) for easier condition referencing
+                                                    fieldMapLocal[`q${globalQuestionIndex}`] = answers[qq.id];
+                                                    globalQuestionIndex++;
+                                                }
                                             })));
 
                                             if (!section.isRepeatable) {
@@ -1307,7 +1352,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                                 <div key={q.id} className={colClass}>
                                                                     {/* Render the question input; label is provided by the input component itself to avoid duplication */}
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={answers} />
+                                                                    <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={answers} fieldNameMap={fieldMapLocal} />
                                                                     {/* Show reviewer comment field below if enabled (but not for paragraph elements) */}
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
                                                                         <div className="mt-2">
@@ -1346,11 +1391,16 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                         </div>
                                                     </div>
                                                     <div className="grid grid-cols-12 gap-4">
-                                                        {section.questions.map(q => {
+                                                        {section.questions.map((q, qIdx) => {
                                                             // Create row-specific fieldMap for visibility evaluation in grouped questions
                                                             const rowFieldMap: Record<string, any> = { ...fieldMapLocal };
                                                             Object.keys(row).forEach(key => {
                                                                 rowFieldMap[key] = row[key];
+                                                            });
+                                                            
+                                                            // Also add sequential field names for this section's questions (q1, q2, q3 within section)
+                                                            section.questions.forEach((sq, sqIdx) => {
+                                                                rowFieldMap[`q${sqIdx + 1}`] = row[sq.id];
                                                             });
 
                                                             // visibility for repeated rows uses row-specific fieldMap
@@ -1372,7 +1422,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                             return (
                                                                 <div key={`${q.id}_${rowIndex}`} className={colClass}>
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
-                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={row} />
+                                                                    <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={row} fieldNameMap={rowFieldMap} />
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
                                                                         <div className="mt-2">
                                                                             <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
