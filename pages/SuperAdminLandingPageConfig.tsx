@@ -260,6 +260,10 @@ const SuperAdminLandingPageConfig: React.FC = () => {
 
       if (!response.ok) throw new Error('Failed to save configuration');
       setSuccess('Configuration saved successfully!');
+      
+      // Reload config from backend to ensure values are persisted correctly
+      await loadConfig();
+      
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save configuration');
@@ -594,7 +598,7 @@ const SuperAdminLandingPageConfig: React.FC = () => {
                       <label className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
                         <input
                           type="checkbox"
-                          checked={config.allowNewRegistrations !== false}
+                          checked={config.allowNewRegistrations === true}
                           onChange={(e) => handleChange('allowNewRegistrations', e.target.checked)}
                           className="w-5 h-5 rounded"
                         />
