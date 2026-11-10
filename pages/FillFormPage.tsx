@@ -190,12 +190,29 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
     // Build a context that includes both question IDs and field names for condition evaluation
     // This ensures conditions can reference fields by either their ID or field name
     const buildEvaluationContext = (baseAnswers: Record<string, any>, fieldNames: Record<string, any>): Record<string, any> => {
-      const context: Record<string, any> = { ...baseAnswers };
+      const context: Record<string, any> = {};
+      
+      // Process baseAnswers and extract values from objects
+      Object.entries(baseAnswers).forEach(([key, val]) => {
+        if (val && typeof val === 'object' && 'value' in val) {
+          // If it's an object with a 'value' property (e.g., {value: "...", score: ...}), extract the value
+          context[key] = val.value;
+        } else {
+          context[key] = val;
+        }
+      });
       
       // Add field names from the fieldNameMap as references to their values
       // This allows conditions to use q2, q3, etc. format
       if (fieldNames && Object.keys(fieldNames).length > 0) {
-        Object.assign(context, fieldNames);
+        Object.entries(fieldNames).forEach(([key, val]) => {
+          if (val && typeof val === 'object' && 'value' in val) {
+            // If it's an object with a 'value' property, extract the value
+            context[key] = val.value;
+          } else {
+            context[key] = val;
+          }
+        });
       }
       
       return context;
@@ -1399,12 +1416,24 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                             // Create row-specific fieldMap for visibility evaluation in grouped questions
                                                             const rowFieldMap: Record<string, any> = { ...fieldMapLocal };
                                                             Object.keys(row).forEach(key => {
-                                                                rowFieldMap[key] = row[key];
+                                                                const val = row[key];
+                                                                // Extract value from objects like {value: "...", score: ...}
+                                                                if (val && typeof val === 'object' && 'value' in val) {
+                                                                  rowFieldMap[key] = val.value;
+                                                                } else {
+                                                                  rowFieldMap[key] = val;
+                                                                }
                                                             });
                                                             
                                                             // Also add sequential field names for this section's questions (q1, q2, q3 within section)
                                                             section.questions.forEach((sq, sqIdx) => {
-                                                                rowFieldMap[`q${sqIdx + 1}`] = row[sq.id];
+                                                                const val = row[sq.id];
+                                                                // Extract value from objects like {value: "...", score: ...}
+                                                                if (val && typeof val === 'object' && 'value' in val) {
+                                                                  rowFieldMap[`q${sqIdx + 1}`] = val.value;
+                                                                } else {
+                                                                  rowFieldMap[`q${sqIdx + 1}`] = val;
+                                                                }
                                                             });
 
                                                             // visibility for repeated rows uses row-specific fieldMap
