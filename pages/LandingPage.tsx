@@ -73,8 +73,9 @@ const LandingPage: React.FC = () => {
 
   const loadConfig = async () => {
     try {
-      // Load universal landing page config
-      const response = await fetch('/api/landing-page-config');
+      // Load universal landing page config with cache-busting to ensure fresh data from server
+      const cacheBust = `?t=${Date.now()}`;
+      const response = await fetch(`/api/landing-page-config${cacheBust}`);
       if (response.ok) {
         const data = await response.json();
         setConfig(data.config || data);
@@ -104,9 +105,10 @@ const LandingPage: React.FC = () => {
   const heroSubtitle = config?.heroSubtitle || 'Transform your data into insights';
   const primaryColor = config?.primaryColor || '#2563eb';
   const secondaryColor = config?.secondaryColor || '#1e40af';
-  // Use landing topbar colors from settings if available, otherwise fall back to config
-  const navBackgroundColor = (settings as any)?.landingTopbarBgColor || config?.navBackgroundColor || '#1f2937';
-  const navTextColor = (settings as any)?.landingTopbarTextColor || config?.navTextColor || '#ffffff';
+  // IMPORTANT: Landing topbar colors MUST come from config only (not theme settings)
+  // This ensures they're stored in the landing-page-config table and persist across all devices
+  const navBackgroundColor = config?.navBackgroundColor || '#1f2937';
+  const navTextColor = config?.navTextColor || '#ffffff';
   const appName = config?.appName || 'DQAi';
   const carouselItems = config?.carouselItems || [];
   const heroFeaturedImages = config?.heroFeaturedImages || [];

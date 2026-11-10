@@ -1631,7 +1631,30 @@ const SettingsPage: React.FC = () => {
                                     swalError('Failed to Save', txt);
                                     return;
                                 }
-                                swalSuccess('Success', 'Color settings saved to database');
+                                
+                                // Reload theme settings from database to ensure persistence across all devices
+                                // This ensures the saved colors are immediately reflected in the current session
+                                try {
+                                    const settingsRes = await fetch('/api/app/settings', { credentials: 'include' });
+                                    if (settingsRes.ok) {
+                                        const payload = await settingsRes.json();
+                                        if (payload && typeof payload === 'object') {
+                                            const merge: any = {};
+                                            const themeKeys = ['primaryColor', 'sidebarBg', 'navTextColor', 'logoColor', 'textColor', 'fontFamily', 'navbarBg', 'logoDataUrl', 'logoText', 'fontSize', 'logoWidth', 'organizationName', 'backgroundImage', 'topbarBgColor', 'topbarTextColor', 'sidebarMenuBgColor', 'sidebarMenuTextColor', 'settingsTabsBgColor', 'settingsTabsTextColor', 'settingsTabsActiveBgColor', 'settingsTabsActiveTextColor', 'generateSiteBgColor', 'generateSiteTextColor', 'landingTopbarBgColor', 'landingTopbarTextColor'];
+                                            themeKeys.forEach(k => {
+                                                if (k in payload) merge[k] = payload[k];
+                                            });
+                                            if (Object.keys(merge).length > 0) {
+                                                // Update theme context with fresh data from database
+                                                setSettings(merge);
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.warn('Failed to reload theme settings after save:', e);
+                                }
+                                
+                                swalSuccess('Success', 'Color settings saved to database and applied immediately');
                             } catch (e) {
                                 console.error('Failed to save color settings', e);
                                 swalError('Failed', 'Failed to save color settings: ' + String(e));
@@ -1639,7 +1662,7 @@ const SettingsPage: React.FC = () => {
                         }}>Save Colors</Button>
                         <Button variant="secondary" onClick={() => {
                             window.location.reload();
-                        }}>Reload to See Changes</Button>
+                        }}>Reload Page to Reset</Button>
                     </div>
 
                     <div className="mt-6 p-4 bg-blue-50 rounded border border-blue-200">

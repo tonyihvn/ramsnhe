@@ -63,6 +63,86 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     const [users, setUsers] = useState<User[]>([]);
     const [reports, setReports] = useState<ActivityReport[]>([]);
 
+    // Function to refresh all business data from the server
+    const refreshBusinessData = async () => {
+        if (!currentUser) {
+            setPrograms([]);
+            setActivities([]);
+            setFacilities([]);
+            setUsers([]);
+            setReports([]);
+            return;
+        }
+
+        try {
+            async function safeJson(res: Response) {
+                try {
+                    const txt = await res.text();
+                    if (!txt) return null;
+                    return JSON.parse(txt);
+                } catch (e) {
+                    console.warn('Failed to parse JSON response', e);
+                    return null;
+                }
+            }
+
+            // Add cache-busting parameter to force fresh data from server
+            const cacheBust = `?t=${Date.now()}`;
+
+            // Fetch Programs - backend filters by req.session.businessId
+            const progRes = await fetch(`${API_URL}/programs${cacheBust}`, { credentials: 'include' });
+            if (progRes.ok) {
+                const j = await safeJson(progRes);
+                if (j) setPrograms(j);
+            } else {
+                setPrograms([]);
+            }
+
+            // Fetch Activities - backend filters by req.session.businessId
+            const actRes = await fetch(`${API_URL}/activities${cacheBust}`, { credentials: 'include' });
+            if (actRes.ok) {
+                const j = await safeJson(actRes);
+                if (j) setActivities(j);
+            } else {
+                setActivities([]);
+            }
+
+            // Fetch Facilities - backend filters by req.session.businessId
+            const facRes = await fetch(`${API_URL}/facilities${cacheBust}`, { credentials: 'include' });
+            if (facRes.ok) {
+                const j = await safeJson(facRes);
+                if (j) setFacilities(j);
+            } else {
+                setFacilities([]);
+            }
+
+            // Fetch Users - backend filters by req.session.businessId
+            const usersRes = await fetch(`${API_URL}/users${cacheBust}`, { credentials: 'include' });
+            if (usersRes.ok) {
+                const j = await safeJson(usersRes);
+                if (j) setUsers(j);
+            } else {
+                setUsers([]);
+            }
+
+            // Fetch Reports - backend filters by req.session.businessId
+            const reportsRes = await fetch(`${API_URL}/reports${cacheBust}`, { credentials: 'include' });
+            if (reportsRes.ok) {
+                const j = await safeJson(reportsRes);
+                if (j) setReports(j);
+            } else {
+                setReports([]);
+            }
+        } catch (error) {
+            console.error("Failed to refresh business data:", error);
+            setPrograms([]);
+            setActivities([]);
+            setFacilities([]);
+            setUsers([]);
+            setReports([]);
+        }
+    };
+
     // Initial Data Fetch
     useEffect(() => {
         const fetchData = async () => {
@@ -106,87 +186,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
     // Fetch business-scoped data when currentUser changes
     useEffect(() => {
-        const fetchBusinessData = async () => {
-            if (!currentUser) {
-                setPrograms([]);
-                setActivities([]);
-                setFacilities([]);
-                setUsers([]);
-                setReports([]);
-                return;
-            }
-
-            try {
-                async function safeJson(res: Response) {
-                    try {
-                        const txt = await res.text();
-                        if (!txt) return null;
-                        return JSON.parse(txt);
-                    } catch (e) {
-                        console.warn('Failed to parse JSON response', e);
-                        return null;
-                    }
-                }
-
-                // Add cache-busting parameter to force fresh data from server
-                const cacheBust = `?t=${Date.now()}`;
-
-                // Fetch Programs - backend filters by req.session.businessId
-                const progRes = await fetch(`${API_URL}/programs${cacheBust}`, { credentials: 'include' });
-                if (progRes.ok) {
-                    const j = await safeJson(progRes);
-                    if (j) setPrograms(j);
-                } else {
-                    setPrograms([]);
-                }
-
-                // Fetch Activities - backend filters by req.session.businessId
-                const actRes = await fetch(`${API_URL}/activities${cacheBust}`, { credentials: 'include' });
-                if (actRes.ok) {
-                    const j = await safeJson(actRes);
-                    if (j) setActivities(j);
-                } else {
-                    setActivities([]);
-                }
-
-                // Fetch Facilities - backend filters by req.session.businessId
-                const facRes = await fetch(`${API_URL}/facilities${cacheBust}`, { credentials: 'include' });
-                if (facRes.ok) {
-                    const j = await safeJson(facRes);
-                    if (j) setFacilities(j);
-                } else {
-                    setFacilities([]);
-                }
-
-                // Fetch Users - backend filters by req.session.businessId
-                const usersRes = await fetch(`${API_URL}/users${cacheBust}`, { credentials: 'include' });
-                if (usersRes.ok) {
-                    const j = await safeJson(usersRes);
-                    if (j) setUsers(j);
-                } else {
-                    setUsers([]);
-                }
-
-                // Fetch Reports - backend filters by req.session.businessId
-                const reportsRes = await fetch(`${API_URL}/reports${cacheBust}`, { credentials: 'include' });
-                if (reportsRes.ok) {
-                    const j = await safeJson(reportsRes);
-                    if (j) setReports(j);
-                } else {
-                    setReports([]);
-                }
-
-            } catch (error) {
-                console.error("Failed to fetch business-scoped data.", error);
-                // Clear state on error to avoid stale data
-                setPrograms([]);
-                setActivities([]);
-                setFacilities([]);
-                setUsers([]);
-                setReports([]);
-            }
-        };
-        fetchBusinessData();
+        refreshBusinessData();
     }, [currentUser?.id]);
 
     const login = async (email: string, password: string) => {
@@ -203,6 +203,11 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 try { localStorage.setItem('intelliform_current_user', JSON.stringify(user)); } catch (e) { }
                 // record login event locally and try to flush
                 try { addAuditEvent({ type: 'login', userId: user.id, email: user.email, method: 'password' }); await flushAudit(user.id); } catch (e) { /* ignore */ }
+                
+                // Immediately refresh all business data after successful login
+                // This ensures data is loaded from the database without requiring a page reload
+                setTimeout(() => refreshBusinessData(), 100);
+                
                 return user;
             } else {
                 const txt = await res.text();

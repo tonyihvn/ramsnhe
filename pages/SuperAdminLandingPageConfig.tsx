@@ -259,12 +259,13 @@ const SuperAdminLandingPageConfig: React.FC = () => {
       });
 
       if (!response.ok) throw new Error('Failed to save configuration');
-      setSuccess('Configuration saved successfully!');
+      
+      setSuccess('Configuration saved successfully! Topbar colors will appear on all devices immediately.');
       
       // Reload config from backend to ensure values are persisted correctly
       await loadConfig();
       
-      setTimeout(() => setSuccess(''), 3000);
+      setTimeout(() => setSuccess(''), 5000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save configuration');
     } finally {
