@@ -120,7 +120,7 @@ const LoginPage: React.FC = () => {
           const data = await response.json();
           const config = data.config || data;
           setLandingConfig(config);
-          setAllowNewRegistrations(config.allowNewRegistrations !== false);
+          setAllowNewRegistrations(config.allowNewRegistrations === true);
           setLockedOrgId(config.lockedOrganizationId || config.locked_organization_id || null);
         }
       } catch (e) {
