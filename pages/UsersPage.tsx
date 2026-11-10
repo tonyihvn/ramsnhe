@@ -109,25 +109,85 @@ const UsersPage: React.FC = () => {
 
     // Save roles/permissions assignments
     const { assignedRoles, assignedPermissions, ...userData } = toSave as any;
-    saveUser(userData as User);
-    // Assign roles
-    if (assignedRoles && assignedRoles.length > 0) {
-      fetch('/api/admin/roles/assign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ userId: userData.id, roleIds: assignedRoles })
-      });
+    
+    // For new users, we need to save them first to get an ID, then assign roles/permissions
+    // For existing users, we can save and assign in parallel since ID already exists
+    if (!userData.id) {
+      // New user: save first, get ID, then assign roles/permissions
+      try {
+        // Use fetch directly instead of saveUser to get the response
+        const res = await fetch('/api/users', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(userData)
+        });
+        if (res.ok) {
+          const savedUser = await res.json();
+          const userId = savedUser.id;
+          
+          // Now assign roles if any
+          if (assignedRoles && assignedRoles.length > 0) {
+            fetch('/api/admin/roles/assign', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ userId, roleIds: assignedRoles })
+            }).catch(e => console.error('Failed to assign roles', e));
+          }
+          
+          // Assign permissions if any
+          if (assignedPermissions && assignedPermissions.length > 0) {
+            fetch('/api/admin/permissions/assign', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ userId, permissionIds: assignedPermissions })
+            }).catch(e => console.error('Failed to assign permissions', e));
+          }
+          
+          // Refresh the users list
+          try {
+            const users = await (await fetch('/api/users', { credentials: 'include' })).json();
+            // Manually trigger refresh by using useMockData's internal state
+            // For now, just close the modal and the data should refetch automatically
+          } catch (e) { console.error('Failed to refresh users', e); }
+        } else {
+          const errText = await res.text();
+          console.error('Failed to save user:', errText);
+          alert('Failed to save user: ' + errText);
+          return;
+        }
+      } catch (e) {
+        console.error('Error saving new user:', e);
+        alert('Failed to save user: ' + String(e));
+        return;
+      }
+    } else {
+      // Existing user: save normally with saveUser
+      saveUser(userData as User);
+      
+      // Assign roles (can do in parallel for existing users)
+      if (assignedRoles && assignedRoles.length > 0) {
+        fetch('/api/admin/roles/assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ userId: userData.id, roleIds: assignedRoles })
+        }).catch(e => console.error('Failed to assign roles', e));
+      }
+      
+      // Assign permissions
+      if (assignedPermissions && assignedPermissions.length > 0) {
+        fetch('/api/admin/permissions/assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ userId: userData.id, permissionIds: assignedPermissions })
+        }).catch(e => console.error('Failed to assign permissions', e));
+      }
     }
-    // Assign permissions
-    if (assignedPermissions && assignedPermissions.length > 0) {
-      fetch('/api/admin/permissions/assign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ userId: userData.id, permissionIds: assignedPermissions })
-      });
-    }
+    
     setIsModalOpen(false);
   };
 
