@@ -2681,8 +2681,10 @@ async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
                 PRIMARY KEY (user_id, permission_id)
             )`);
             await q(`CREATE TABLE IF NOT EXISTS "${prefix}settings" (
-                key TEXT PRIMARY KEY,
-                value JSONB
+                key TEXT NOT NULL,
+                business_id INTEGER,
+                value JSONB,
+                PRIMARY KEY (key, business_id)
             )`);
             await q(`CREATE TABLE IF NOT EXISTS "${prefix}llm_providers" (
                 id SERIAL PRIMARY KEY,
@@ -2839,8 +2841,10 @@ async function createAppTablesInTarget(cfg, prefix = 'dqai_') {
                 PRIMARY KEY (user_id, permission_id)
             )`);
             await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}settings\` (
-                \`key\` TEXT PRIMARY KEY,
-                value JSON
+                \`key\` TEXT NOT NULL,
+                business_id INT,
+                value JSON,
+                PRIMARY KEY (\`key\`, business_id)
             )`);
             await exec(`CREATE TABLE IF NOT EXISTS \`${prefix}llm_providers\` (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3401,7 +3405,17 @@ app.get('/api/app/settings', async (req, res) => {
 // Get app settings for admins (same as /api/app/settings but restricted to admins)
 app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
-        const businessId = req.session?.businessId || null;
+        const userId = req.session?.userId;
+        let businessId = req.session?.businessId || null;
+        
+        // Get user's business_id from database
+        if (userId) {
+            const userRes = await pool.query(`SELECT business_id FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [userId]);
+            if (userRes.rows && userRes.rows[0]) {
+                businessId = userRes.rows[0].business_id;
+            }
+        }
+        
         // Query for business-specific settings first, then fallback to NULL (global) settings
         // COALESCE picks business settings if they exist, otherwise global settings
         const result = await pool.query(`
@@ -3432,8 +3446,23 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
-        const businessId = req.session?.businessId || null;
+        const userId = req.session?.userId;
         const payload = req.body || {};
+        
+        // Get user's business_id from database
+        let businessId = null;
+        if (userId) {
+            const userRes = await pool.query(`SELECT business_id FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [userId]);
+            if (userRes.rows && userRes.rows[0]) {
+                businessId = userRes.rows[0].business_id;
+            }
+        }
+        
+        // Fallback to session businessId if available
+        if (!businessId && req.session?.businessId) {
+            businessId = req.session.businessId;
+        }
+        
         for (const [k, v] of Object.entries(payload)) {
             // Convert the JS value to a JSON string and cast to jsonb on the SQL side.
             // Using `$2::jsonb` avoids PostgreSQL's "polymorphic type unknown" error
