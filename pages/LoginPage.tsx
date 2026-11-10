@@ -44,6 +44,10 @@ const LoginPage: React.FC = () => {
   const [regMessage, setRegMessage] = useState<string | null>(null);
   const [regError, setRegError] = useState<string | null>(null);
   const [landingConfig, setLandingConfig] = useState<any>(null);
+  const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  const [appName, setAppName] = useState('DQAi');
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [navBackgroundColor, setNavBackgroundColor] = useState('#ffffff');
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -111,9 +115,10 @@ const LoginPage: React.FC = () => {
     setRegLoading(false);
   };
 
-  // Fetch landing page config to check if registrations are allowed and get styling
+  // Unified effect: load landing config and consolidate with theme settings
+  // This prevents flickering by ensuring all UI properties update together
   React.useEffect(() => {
-    const fetchConfig = async () => {
+    const loadAndConsolidateConfig = async () => {
       try {
         const response = await fetch('/api/landing-page-config');
         if (response.ok) {
@@ -122,30 +127,54 @@ const LoginPage: React.FC = () => {
           setLandingConfig(config);
           setAllowNewRegistrations(config.allowNewRegistrations === true);
           setLockedOrgId(config.lockedOrganizationId || config.locked_organization_id || null);
+          setAppName(config.appName || 'DQAi');
+          setLogoUrl(config.logoUrl || null);
+          setNavBackgroundColor(config.navBackgroundColor || config.nav_background_color || '#ffffff');
+          
+          // Priority: Landing page hero images > Theme settings background image
+          const heroFeaturedImages = config.heroFeaturedImages || config.hero_featured_images || [];
+          const heroImage = (heroFeaturedImages && heroFeaturedImages.length > 0) ? heroFeaturedImages[0] : null;
+          
+          if (heroImage) {
+            setBackgroundImage(heroImage);
+            console.log('✓ Background image loaded from landing page config:', { size: (heroImage.length / 1024).toFixed(2) + ' KB' });
+          } else if (settings?.backgroundImage) {
+            setBackgroundImage(settings.backgroundImage);
+            console.log('✓ Background image loaded from theme settings:', { size: (settings.backgroundImage.length / 1024).toFixed(2) + ' KB' });
+          } else {
+            setBackgroundImage(null);
+            console.log('✗ No background image available (landing page or theme settings)');
+          }
+        } else {
+          setAllowNewRegistrations(true);
+          // Fallback to theme settings if landing config fails
+          if (settings?.backgroundImage) {
+            setBackgroundImage(settings.backgroundImage);
+            console.log('✓ Background image loaded from theme settings (fallback):', { size: (settings.backgroundImage.length / 1024).toFixed(2) + ' KB' });
+          }
         }
       } catch (e) {
-        // Default to allowing registrations if fetch fails
+        console.warn('Failed to load landing page config, using theme settings:', e);
         setAllowNewRegistrations(true);
+        // Fallback to theme settings if fetch fails
+        if (settings?.backgroundImage) {
+          setBackgroundImage(settings.backgroundImage);
+          console.log('✓ Background image loaded from theme settings (error fallback):', { size: (settings.backgroundImage.length / 1024).toFixed(2) + ' KB' });
+        }
       }
     };
-    fetchConfig();
-  }, []);
-
-  // Log background image for debugging
-  React.useEffect(() => {
-    if (settings?.backgroundImage) {
-      console.log('✓ Background image loaded from settings:', { size: (settings.backgroundImage.length / 1024).toFixed(2) + ' KB' });
-    } else {
-      console.log('✗ No background image in settings');
-    }
+    
+    loadAndConsolidateConfig();
   }, [settings?.backgroundImage]);
 
-  // Determine background image and app name
-  const heroFeaturedImages = landingConfig?.heroFeaturedImages || landingConfig?.hero_featured_images || [];
-  const backgroundImage = (heroFeaturedImages && heroFeaturedImages.length > 0) ? heroFeaturedImages[0] : settings?.backgroundImage;
-  const appName = landingConfig?.appName || 'DQAi';
-  const logoUrl = landingConfig?.logoUrl;
-  const navBackgroundColor = landingConfig?.navBackgroundColor || landingConfig?.nav_background_color || '#ffffff';
+  // Debug: Log whenever background image changes
+  React.useEffect(() => {
+    if (backgroundImage) {
+      console.log('✓ Background image state updated:', { size: (backgroundImage.length / 1024).toFixed(2) + ' KB' });
+    } else {
+      console.log('✗ Background image is null or undefined');
+    }
+  }, [backgroundImage]);
 
   return (
     <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: backgroundImage ? `url(${backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center', backgroundColor: '#f3f4f6' }}>
