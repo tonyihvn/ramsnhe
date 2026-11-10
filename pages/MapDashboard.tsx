@@ -259,7 +259,7 @@ const MapDashboard: React.FC = () => {
           <div style={{ flex: 1, position: 'relative' }}>
             {/* Filter row above map */}
             {/* Single floating card with collapsible filter sections */}
-            <FloatingCard storageKey="floating_card_filters" defaultLeft={24} defaultTop={80} defaultWidth={420} defaultHeight={520}>
+            <FloatingCard storageKey="floating_card_filters" defaultLeft={24} defaultTop={80} defaultWidth={420} defaultHeight={520} title="Filters">
               <FiltersCardContent
                 programs={programs}
                 activities={activities}

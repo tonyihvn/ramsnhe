@@ -206,7 +206,11 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 
                 // Immediately refresh all business data after successful login
                 // This ensures data is loaded from the database without requiring a page reload
-                setTimeout(() => refreshBusinessData(), 100);
+                // We create a temporary state to trigger the refresh effect
+                setCurrentUser(user);
+                // Use a micro-task to ensure state is updated before refresh
+                await new Promise(resolve => setTimeout(resolve, 50));
+                await refreshBusinessData();
                 
                 return user;
             } else {

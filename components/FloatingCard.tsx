@@ -9,9 +9,10 @@ type Props = {
   defaultHeight?: number;
   minWidth?: number;
   minHeight?: number;
+  title?: string;
 };
 
-const FloatingCard: React.FC<Props> = ({ children, storageKey, defaultLeft = 40, defaultTop = 40, defaultWidth = 360, defaultHeight = 420, minWidth = 240, minHeight = 120 }) => {
+const FloatingCard: React.FC<Props> = ({ children, storageKey, defaultLeft = 40, defaultTop = 40, defaultWidth = 360, defaultHeight = 420, minWidth = 240, minHeight = 120, title = 'Map Dashboard' }) => {
   const [pos, setPos] = useState<{ left: number; top: number }>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -138,7 +139,7 @@ const FloatingCard: React.FC<Props> = ({ children, storageKey, defaultLeft = 40,
       }}
     >
       <div onMouseDown={onHeaderDown} onPointerDown={onHeaderPointerDown} style={{ cursor: 'grab', padding: '8px 10px', borderBottom: '1px solid #eee', background: 'linear-gradient(180deg,#ffffff,#fafafa)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontWeight: 700 }}>Map Dashboard</div>
+        <div style={{ fontWeight: 700 }}>{title}</div>
         <div style={{ fontSize: 12, color: '#6b7280' }}>Drag / Resize</div>
       </div>
       <div style={{ padding: 10, overflow: 'auto', flex: 1 }}>{children}</div>

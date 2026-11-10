@@ -378,7 +378,7 @@ export const MapView = ({ fullScreen = false, filters = {} }: { fullScreen?: boo
       <div style={{ display: 'flex', gap: 12 }}>
         {/* Main content area (map/form) */}
         <div style={{ flex: 1, position: 'relative' }}>
-            <FloatingCard storageKey="floating_card_mapview" defaultLeft={32} defaultTop={48} defaultWidth={420} defaultHeight={520}>
+            <FloatingCard storageKey="floating_card_mapview" defaultLeft={32} defaultTop={48} defaultWidth={420} defaultHeight={520} title="Controls">
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <div style={{ fontWeight: 700 }}>Controls</div>
                 <div style={{ fontSize: 12, color: '#6b7280' }}>Drag / Resize card</div>
