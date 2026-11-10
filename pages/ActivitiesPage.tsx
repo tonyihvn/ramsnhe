@@ -285,59 +285,62 @@ const ActivitiesPage: React.FC = () => {
                   </div>
 
                   {/* mobile overflow */}
-                  <div className="sm:hidden relative">
+                  <div className="sm:hidden">
                     <button onClick={() => setOpenActionsId(openActionsId === activity.id ? null : activity.id)} className="px-2 py-1 border rounded">⋯</button>
                     {openActionsId === activity.id && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white border rounded shadow p-2" style={{ zIndex: 9999 }}>
-                        <ActivityActionButtonsWrapper
-                          activity={activity}
-                          currentUser={currentUser}
-                          canEdit={canEdit}
-                          isMobile={true}
-                          onEdit={() => {
-                            openModal(activity);
-                            setOpenActionsId(null);
-                          }}
-                          onDelete={async () => {
-                            const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' });
-                            if (ok) {
-                              deleteActivity(activity.id);
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setOpenActionsId(null)} />
+                        <div className="fixed right-4 top-1/2 transform -translate-y-1/2 w-48 bg-white border rounded shadow-lg p-2 z-50">
+                          <ActivityActionButtonsWrapper
+                            activity={activity}
+                            currentUser={currentUser}
+                            canEdit={canEdit}
+                            isMobile={true}
+                            onEdit={() => {
+                              openModal(activity);
                               setOpenActionsId(null);
-                            }
-                          }}
-                          onDuplicate={() => { duplicateActivity(activity.id); setOpenActionsId(null); }}
-                          onViewData={() => {
-                            navigate(`/activities/dashboard/${activity.id}`);
-                            setOpenActionsId(null);
-                          }}
-                          onBuildForm={() => {
-                            navigate(`/activities/build/${activity.id}`);
-                            setOpenActionsId(null);
-                          }}
-                          onBuildReport={() => {
-                            navigate(`/reports/builder?activityId=${activity.id}`);
-                            setOpenActionsId(null);
-                          }}
-                          onCopyLink={() => {
-                            const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
-                            navigator.clipboard.writeText(full);
-                            setOpenActionsId(null);
-                            swalToast('Link copied to clipboard', 'success');
-                          }}
-                          onQRCode={() => {
-                            const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
-                            setShareUrl(full);
-                            setQrModalOpen(true);
-                            setOpenActionsId(null);
-                          }}
-                          onEmbed={() => {
-                            const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
-                            setShareUrl(full);
-                            setEmbedModalOpen(true);
-                            setOpenActionsId(null);
-                          }}
-                        />
-                      </div>
+                            }}
+                            onDelete={async () => {
+                              const ok = await confirm({ title: 'Delete activity?', text: 'This will delete the activity and its data.' });
+                              if (ok) {
+                                deleteActivity(activity.id);
+                                setOpenActionsId(null);
+                              }
+                            }}
+                            onDuplicate={() => { duplicateActivity(activity.id); setOpenActionsId(null); }}
+                            onViewData={() => {
+                              navigate(`/activities/dashboard/${activity.id}`);
+                              setOpenActionsId(null);
+                            }}
+                            onBuildForm={() => {
+                              navigate(`/activities/build/${activity.id}`);
+                              setOpenActionsId(null);
+                            }}
+                            onBuildReport={() => {
+                              navigate(`/reports/builder?activityId=${activity.id}`);
+                              setOpenActionsId(null);
+                            }}
+                            onCopyLink={() => {
+                              const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                              navigator.clipboard.writeText(full);
+                              setOpenActionsId(null);
+                              swalToast('Link copied to clipboard', 'success');
+                            }}
+                            onQRCode={() => {
+                              const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                              setShareUrl(full);
+                              setQrModalOpen(true);
+                              setOpenActionsId(null);
+                            }}
+                            onEmbed={() => {
+                              const full = `${window.location.origin}/#/standalone/fill/${activity.id}`;
+                              setShareUrl(full);
+                              setEmbedModalOpen(true);
+                              setOpenActionsId(null);
+                            }}
+                          />
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
