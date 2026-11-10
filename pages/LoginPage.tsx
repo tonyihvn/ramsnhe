@@ -151,17 +151,16 @@ const LoginPage: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundImage: backgroundImage ? `url(${backgroundImage})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center', backgroundColor: '#f3f4f6' }}>
       <div className="max-w-md w-full space-y-8 bg-white bg-opacity-90 p-10 rounded-lg shadow-md" style={{ boxShadow: '0 6px 18px rgba(0,0,0,0.15)', backdropFilter: 'blur(4px)' }}>
         <div>
-          <div className="mx-auto h-12 w-12 text-primary-600 flex justify-center">
-            {logoUrl ? <img src={logoUrl} alt="logo" className="w-12 h-12 object-contain" /> : (settings?.logoDataUrl ? <img src={settings.logoDataUrl!} alt="logo" className="w-12 h-12 object-contain" /> : (
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12">
+          <div className="mx-auto h-32 w-32 text-primary-600 flex justify-center">
+            {logoUrl ? <img src={logoUrl} alt="logo" className="w-32 h-32 object-contain" /> : (settings?.logoDataUrl ? <img src={settings.logoDataUrl!} alt="logo" className="w-32 h-32 object-contain" /> : (
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-32 h-32">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
               </svg>
             ))}
           </div>
         </div>
         <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in</h2>
-        <div className="mt-2 text-center">
-          <div className="text-sm text-gray-600">{settings?.logoText || ''}</div>
+        <div className="mt-4 text-center">
           <div className="mt-1"><Typewriter text={appName} /></div>
         </div>
         <p className="mt-2 text-center text-sm text-gray-600">
