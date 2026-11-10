@@ -11,6 +11,7 @@ import RichTextEditor from '../components/ui/RichTextEditor';
 import { apiFetch, getApiBase } from '../utils/api';
 import { useMockData } from '../hooks/useMockData';
 import { resolveCellReferenceFromContext } from '../utils/formulaEvaluator';
+import { startColumnResize, ColumnWidth, INITIAL_COLUMN_WIDTH, loadColumnWidths, saveColumnWidths } from '../utils/columnResizer';
 
 const ReportViewPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>();
@@ -60,6 +61,8 @@ const ReportViewPage: React.FC = () => {
   const [submittedAnswersExpanded, setSubmittedAnswersExpanded] = useState(true); // Track collapsed state for Submitted Answers section
   const [actualTablesExpanded, setActualTablesExpanded] = useState(true); // Track collapsed state for Actual Tables section
   const [uploadedFilesExpanded, setUploadedFilesExpanded] = useState(true); // Track collapsed state for Uploaded Files section
+  const [docColumnWidths, setDocColumnWidths] = useState<Record<string, ColumnWidth>>({}); // Track column widths per document
+  const [tableColumnWidths, setTableColumnWidths] = useState<Record<string, ColumnWidth>>({}); // Track column widths per actual table
 
   // Actual tables editing states
   const [editingTableId, setEditingTableId] = useState<string | null>(null); // Currently editing table
@@ -2454,8 +2457,8 @@ const ReportViewPage: React.FC = () => {
                                     {editingDocData.length > 0 && (docColumnOrder[editingDocId || ''] || Object.keys(editingDocData[0]))
                                       .filter(key => !(deletedDocColumns[editingDocId || '']?.has(key)))
                                       .map((key, displayColIdx) => (
-                                        <th key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700 relative">
-                                          <div className="absolute top-1 right-1">
+                                        <th key={key} data-column-key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700 relative" style={{ width: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, minWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, overflow: 'hidden' }}>
+                                          <div className="absolute top-1 right-8">
                                             <button
                                               onClick={() => {
                                                 setDeletedDocColumns(prev => ({
@@ -2477,6 +2480,22 @@ const ReportViewPage: React.FC = () => {
                                               ✕
                                             </button>
                                           </div>
+                                          {/* Column Resize Handle */}
+                                          <div
+                                            className="absolute top-0 right-0 w-1 h-full bg-gray-300 hover:bg-blue-500 cursor-col-resize"
+                                            onMouseDown={(e) => {
+                                              startColumnResize(e, key, (colKey, newWidth) => {
+                                                setDocColumnWidths(prev => ({
+                                                  ...prev,
+                                                  [editingDocId || '']: {
+                                                    ...(prev[editingDocId || ''] || {}),
+                                                    [colKey]: newWidth
+                                                  }
+                                                }));
+                                              });
+                                            }}
+                                            title="Drag to resize column"
+                                          />
                                           <div className="flex flex-col gap-1 pr-6">
                                             <div>
                                               <div className="font-medium">{key}</div>
@@ -2681,7 +2700,9 @@ const ReportViewPage: React.FC = () => {
                                           return (
                                             <td
                                               key={cellKey}
+                                              data-column-key={key}
                                               className="border border-gray-300 px-3 py-2 relative group"
+                                              style={{ width: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, minWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, overflow: 'hidden' }}
                                               onMouseDown={(e: React.MouseEvent) => {
                                                 // onMouseDown fires BEFORE input loses focus on blur
                                                 // This ensures editingModeRef still has the correct value

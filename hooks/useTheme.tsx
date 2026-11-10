@@ -137,7 +137,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
                     const userRes = await fetch('/api/current_user', { credentials: 'include' });
                     if (userRes.ok) {
                         const userData = await userRes.json();
-                        const role = (userData && (userData.role || '')).toString().toLowerCase();
+                        const role = userData?.role ? String(userData.role).toLowerCase() : '';
                         isUserAdmin = role === 'admin' || role === 'super-admin' || role === 'super_admin';
                     }
                 } catch (e) {

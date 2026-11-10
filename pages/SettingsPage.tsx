@@ -1590,27 +1590,6 @@ const SettingsPage: React.FC = () => {
                                 </div>
                             </div>
                         </div>
-
-                        {/* Landing Page Topbar Colors */}
-                        <div className="pb-6">
-                            <h4 className="text-md font-medium mb-4">Landing Page Topbar</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Background Color</label>
-                                    <div className="flex gap-3 items-center">
-                                        <input type="color" value={(settings as any).landingTopbarBgColor || '#1f2937'} onChange={e => setSettings({ ...(settings as any), landingTopbarBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
-                                        <input type="text" value={(settings as any).landingTopbarBgColor || '#1f2937'} onChange={e => setSettings({ ...(settings as any), landingTopbarBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#1f2937" />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Text Color</label>
-                                    <div className="flex gap-3 items-center">
-                                        <input type="color" value={(settings as any).landingTopbarTextColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), landingTopbarTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
-                                        <input type="text" value={(settings as any).landingTopbarTextColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), landingTopbarTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#ffffff" />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
 
                     <div className="mt-8 flex gap-3 border-t pt-6">
@@ -1682,9 +1661,6 @@ const SettingsPage: React.FC = () => {
                             </div>
                             <div style={{ backgroundColor: (settings as any).generateSiteBgColor || '#ffffff', color: (settings as any).generateSiteTextColor || '#000000', padding: '8px', borderRadius: '4px' }}>
                                 Generate Site (Background & Text)
-                            </div>
-                            <div style={{ backgroundColor: (settings as any).landingTopbarBgColor || '#1f2937', color: (settings as any).landingTopbarTextColor || '#ffffff', padding: '8px', borderRadius: '4px' }}>
-                                Landing Page Topbar (Background & Text)
                             </div>
                         </div>
                     </div>
