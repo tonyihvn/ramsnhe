@@ -71,8 +71,9 @@
     color: white !important;
   }
 
-  header,
-  nav,
+  /* Apply app theme colors to nav elements ONLY within the app, NOT on landing page */
+  .app-container header,
+  .app-container nav,
   .nav-wrapper,
   .navbar,
   .app-topnav {

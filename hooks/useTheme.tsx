@@ -106,7 +106,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         root.style.setProperty('--app-font-size', (settings as any).fontSize || '14px');
         root.style.setProperty('--logo-width', (settings as any).logoWidth || '40px');
         root.style.setProperty('--navbar-bg', settings.navbarBg || '#ffffff');
-        // Apply new color settings
+        // Apply new color settings (for app UI, not landing page)
         root.style.setProperty('--topbar-bg', (settings as any).topbarBgColor || '#ffffff');
         root.style.setProperty('--topbar-text', (settings as any).topbarTextColor || '#111827');
         root.style.setProperty('--sidebar-menu-bg', (settings as any).sidebarMenuBgColor || '#ffffff');
@@ -117,8 +117,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         root.style.setProperty('--settings-tabs-active-text', (settings as any).settingsTabsActiveTextColor || '#1e40af');
         root.style.setProperty('--generate-site-bg', (settings as any).generateSiteBgColor || '#3b82f6');
         root.style.setProperty('--generate-site-text', (settings as any).generateSiteTextColor || '#ffffff');
-        root.style.setProperty('--landing-topbar-bg', (settings as any).landingTopbarBgColor || '#ffffff');
-        root.style.setProperty('--landing-topbar-text', (settings as any).landingTopbarTextColor || '#111827');
+        // NOTE: Landing page colors are NOT set here - they come only from landing-page-config endpoint
+        // This prevents tenant settings from affecting the global landing page
         // Apply absolute font-size to root so most elements scale if they don't reference the CSS var
         try { root.style.fontSize = (settings as any).fontSize || '14px'; } catch (e) { }
         if (settings.logoDataUrl) root.style.setProperty('--logo-image', `url(${settings.logoDataUrl})`);
