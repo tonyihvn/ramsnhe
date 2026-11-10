@@ -19,7 +19,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const contentMarginClass = collapsed ? 'md:ml-20' : 'md:ml-64';
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-gray-100 app-container">
       <Sidebar collapsed={collapsed} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
       <div className={`flex-1 flex flex-col overflow-y-hidden ${contentMarginClass}`}>
         <Header collapsed={collapsed} onToggleSidebar={() => setCollapsed(c => !c)} onToggleMobileSidebar={() => setMobileOpen(o => !o)} />
