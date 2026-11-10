@@ -127,6 +127,20 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (business) {
+      setFormData(business);
+    } else {
+      setFormData({
+        name: '',
+        phone: '',
+        email: '',
+        address: '',
+        website: ''
+      });
+    }
+  }, [business]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({
       ...formData,
