@@ -437,6 +437,31 @@ const ActivitiesPage: React.FC = () => {
               <option value="User">User</option>
             </select>
           </div>
+          {(currentActivity as any).responseType === 'User' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">User Roles</label>
+              <p className="text-xs text-gray-500 mb-2">Select which user roles will appear in the dropdown when this form is filled. Leave empty to show all users.</p>
+              <div className="space-y-2 mt-2 border border-gray-300 rounded-md p-3 bg-gray-50">
+                {['Admin', 'Form Builder', 'Data Collector', 'Viewer', 'Responder'].map(role => (
+                  <label key={role} className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={(currentActivity as any).userRoles?.includes(role) || false}
+                      onChange={(e) => {
+                        const currentRoles = (currentActivity as any).userRoles || [];
+                        const newRoles = e.target.checked
+                          ? [...currentRoles, role]
+                          : currentRoles.filter((r: string) => r !== role);
+                        setCurrentActivity({ ...currentActivity, userRoles: newRoles.length > 0 ? newRoles : undefined });
+                      }}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700">{role}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </div>

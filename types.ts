@@ -19,6 +19,7 @@ export interface Activity {
   createdBy: string;
   programId: string;
   responseType?: string;
+  userRoles?: string[]; // Selected user roles that will appear in dropdown when responseType is 'User'
   category: string;
   status: 'Draft' | 'Published' | 'Archived';
   formDefinition?: FormDefinition;

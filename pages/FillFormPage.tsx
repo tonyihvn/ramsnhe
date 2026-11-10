@@ -470,6 +470,14 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const search = new URLSearchParams(location.search);
     const qReportId = search.get('reportId');
 
+    // Filter users by selected roles if activity has userRoles defined
+    const getFilteredUsers = () => {
+        if (!activity?.userRoles || activity.userRoles.length === 0) {
+            return users;
+        }
+        return users.filter(u => activity.userRoles?.includes(u.role));
+    };
+
     const handleAnswerChange = (questionId: string, value: any) => {
         setAnswers(prev => ({ ...prev, [questionId]: value }));
     };
@@ -1618,7 +1626,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 ) : String(activity.responseType || '').toLowerCase() === 'user' ? (
                                     <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
                                         <option value="">Select user...</option>
-                                        {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
+                                        {getFilteredUsers().map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
                                     </select>
                                 ) : (
                                     <div className="space-y-2">
@@ -1628,7 +1636,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                         </select>
                                         <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
                                             <option value="">(Optional) Select user...</option>
-                                            {users.map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
+                                            {getFilteredUsers().map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
                                         </select>
                                     </div>
                                 )}
