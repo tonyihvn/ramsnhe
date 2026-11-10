@@ -14,6 +14,23 @@ type ThemeSettings = {
     logoWidth?: string;
     organizationName?: string;
     backgroundImage?: string | null;
+    // Topbar menu colors
+    topbarBgColor?: string;
+    topbarTextColor?: string;
+    // Left sidebar menu colors
+    sidebarMenuBgColor?: string;
+    sidebarMenuTextColor?: string;
+    // Settings tabs menu colors
+    settingsTabsBgColor?: string;
+    settingsTabsTextColor?: string;
+    settingsTabsActiveBgColor?: string;
+    settingsTabsActiveTextColor?: string;
+    // Generate site text colors
+    generateSiteBgColor?: string;
+    generateSiteTextColor?: string;
+    // Landing page topbar colors
+    landingTopbarBgColor?: string;
+    landingTopbarTextColor?: string;
 };
 
 const DEFAULT: ThemeSettings = {
@@ -30,6 +47,18 @@ const DEFAULT: ThemeSettings = {
     , logoWidth: '100%'
     , organizationName: 'Federal Ministry of Health and Social Welfare (FMOH&SW)'
     , backgroundImage: null
+    , topbarBgColor: '#ffffff'
+    , topbarTextColor: '#111827'
+    , sidebarMenuBgColor: '#ffffff'
+    , sidebarMenuTextColor: '#111827'
+    , settingsTabsBgColor: '#f3f4f6'
+    , settingsTabsTextColor: '#6b7280'
+    , settingsTabsActiveBgColor: '#eff6ff'
+    , settingsTabsActiveTextColor: '#1e40af'
+    , generateSiteBgColor: '#3b82f6'
+    , generateSiteTextColor: '#ffffff'
+    , landingTopbarBgColor: '#ffffff'
+    , landingTopbarTextColor: '#111827'
 };
 
 const STORAGE_KEY = 'intelliform_theme_settings_backup';
@@ -77,6 +106,19 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         root.style.setProperty('--app-font-size', (settings as any).fontSize || '14px');
         root.style.setProperty('--logo-width', (settings as any).logoWidth || '40px');
         root.style.setProperty('--navbar-bg', settings.navbarBg || '#ffffff');
+        // Apply new color settings
+        root.style.setProperty('--topbar-bg', (settings as any).topbarBgColor || '#ffffff');
+        root.style.setProperty('--topbar-text', (settings as any).topbarTextColor || '#111827');
+        root.style.setProperty('--sidebar-menu-bg', (settings as any).sidebarMenuBgColor || '#ffffff');
+        root.style.setProperty('--sidebar-menu-text', (settings as any).sidebarMenuTextColor || '#111827');
+        root.style.setProperty('--settings-tabs-bg', (settings as any).settingsTabsBgColor || '#f3f4f6');
+        root.style.setProperty('--settings-tabs-text', (settings as any).settingsTabsTextColor || '#6b7280');
+        root.style.setProperty('--settings-tabs-active-bg', (settings as any).settingsTabsActiveBgColor || '#eff6ff');
+        root.style.setProperty('--settings-tabs-active-text', (settings as any).settingsTabsActiveTextColor || '#1e40af');
+        root.style.setProperty('--generate-site-bg', (settings as any).generateSiteBgColor || '#3b82f6');
+        root.style.setProperty('--generate-site-text', (settings as any).generateSiteTextColor || '#ffffff');
+        root.style.setProperty('--landing-topbar-bg', (settings as any).landingTopbarBgColor || '#ffffff');
+        root.style.setProperty('--landing-topbar-text', (settings as any).landingTopbarTextColor || '#111827');
         // Apply absolute font-size to root so most elements scale if they don't reference the CSS var
         try { root.style.fontSize = (settings as any).fontSize || '14px'; } catch (e) { }
         if (settings.logoDataUrl) root.style.setProperty('--logo-image', `url(${settings.logoDataUrl})`);
@@ -116,7 +158,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
                                 Object.assign(merge, payload.theme);
                             } else {
                                 // Look for top-level theme property keys
-                                const themeKeys = ['primaryColor', 'sidebarBg', 'navTextColor', 'logoColor', 'textColor', 'fontFamily', 'navbarBg', 'logoDataUrl', 'logoText', 'fontSize', 'logoWidth', 'organizationName', 'backgroundImage'];
+                                const themeKeys = ['primaryColor', 'sidebarBg', 'navTextColor', 'logoColor', 'textColor', 'fontFamily', 'navbarBg', 'logoDataUrl', 'logoText', 'fontSize', 'logoWidth', 'organizationName', 'backgroundImage', 'topbarBgColor', 'topbarTextColor', 'sidebarMenuBgColor', 'sidebarMenuTextColor', 'settingsTabsBgColor', 'settingsTabsTextColor', 'settingsTabsActiveBgColor', 'settingsTabsActiveTextColor', 'generateSiteBgColor', 'generateSiteTextColor', 'landingTopbarBgColor', 'landingTopbarTextColor'];
                                 themeKeys.forEach(k => {
                                     if (k in payload) (merge as any)[k] = (payload as any)[k];
                                 });

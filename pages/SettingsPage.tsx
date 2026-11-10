@@ -1114,20 +1114,21 @@ const SettingsPage: React.FC = () => {
                 <h1 className="text-2xl font-bold">Settings</h1>
             </div>
 
-            <div className="bg-white rounded shadow p-2">
+            <div className="bg-white rounded shadow p-2" style={{ backgroundColor: 'var(--settings-tabs-bg)', color: 'var(--settings-tabs-text)' }}>
                 <nav className="flex space-x-2">
-                    <button onClick={() => setTab('database')} className={`px-3 py-2 rounded ${tab === 'database' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Database</button>
-                    <button onClick={() => setTab('dbms')} className={`px-3 py-2 rounded ${tab === 'dbms' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>DBMS</button>
-                    <button onClick={() => setTab('llm')} className={`px-3 py-2 rounded ${tab === 'llm' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>LLM</button>
-                    <button onClick={() => setTab('rag')} className={`px-3 py-2 rounded ${tab === 'rag' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>RAG</button>
-                    <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded ${tab === 'theme' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Theme</button>
-                    <button onClick={() => setTab('app')} className={`px-3 py-2 rounded ${tab === 'app' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>App</button>
-                    <button onClick={() => setTab('email')} className={`px-3 py-2 rounded ${tab === 'email' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Email / SMTP</button>
-                    <button onClick={() => setTab('datasets')} className={`px-3 py-2 rounded ${tab === 'datasets' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Datasets</button>
-                    <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded ${tab === 'permissions' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Roles & Permissions</button>
-                    <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded ${tab === 'audit' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Audit Trails</button>
-                    <button onClick={() => setTab('forms')} className={`px-3 py-2 rounded ${tab === 'forms' ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50'}`}>Form Builders</button>
-                    <a href="#/connectors" className="px-3 py-2 rounded text-gray-600 hover:bg-gray-50">API Connectors</a>
+                    <button onClick={() => setTab('database')} className={`px-3 py-2 rounded`} style={tab === 'database' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Database</button>
+                    <button onClick={() => setTab('dbms')} className={`px-3 py-2 rounded`} style={tab === 'dbms' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>DBMS</button>
+                    <button onClick={() => setTab('llm')} className={`px-3 py-2 rounded`} style={tab === 'llm' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>LLM</button>
+                    <button onClick={() => setTab('rag')} className={`px-3 py-2 rounded`} style={tab === 'rag' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>RAG</button>
+                    <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded`} style={tab === 'theme' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Theme</button>
+                    <button onClick={() => setTab('colors')} className={`px-3 py-2 rounded`} style={tab === 'colors' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Colors</button>
+                    <button onClick={() => setTab('app')} className={`px-3 py-2 rounded`} style={tab === 'app' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>App</button>
+                    <button onClick={() => setTab('email')} className={`px-3 py-2 rounded`} style={tab === 'email' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Email / SMTP</button>
+                    <button onClick={() => setTab('datasets')} className={`px-3 py-2 rounded`} style={tab === 'datasets' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Datasets</button>
+                    <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded`} style={tab === 'permissions' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Roles & Permissions</button>
+                    <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded`} style={tab === 'audit' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Audit Trails</button>
+                    <button onClick={() => setTab('forms')} className={`px-3 py-2 rounded`} style={tab === 'forms' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Form Builders</button>
+                    <a href="#/connectors" className="px-3 py-2 rounded" style={{ color: 'var(--settings-tabs-text)' }}>API Connectors</a>
                 </nav>
             </div>
 
@@ -1480,6 +1481,189 @@ const SettingsPage: React.FC = () => {
                     <div className="space-y-3">
                         <p className="text-sm text-gray-500">Configure SMTP used for password resets and notifications.</p>
                         <SMTPSettings />
+                    </div>
+                </Card>
+            )}
+
+            {tab === 'colors' && (
+                <Card>
+                    <h3 className="text-lg font-medium mb-4">Color Settings</h3>
+                    <p className="text-sm text-gray-600 mb-6">Customize the colors for various UI elements. All changes are saved to the database and persist across all devices.</p>
+
+                    <div className="space-y-8">
+                        {/* Topbar Colors */}
+                        <div className="border-b pb-6">
+                            <h4 className="text-md font-medium mb-4">Topbar Menu</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Background Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).topbarBgColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), topbarBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).topbarBgColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), topbarBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#ffffff" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Text Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).topbarTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), topbarTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).topbarTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), topbarTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#000000" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Left Sidebar Colors */}
+                        <div className="border-b pb-6">
+                            <h4 className="text-md font-medium mb-4">Left Sidebar Menu</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Background Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).sidebarMenuBgColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), sidebarMenuBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).sidebarMenuBgColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), sidebarMenuBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#ffffff" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Text Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).sidebarMenuTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), sidebarMenuTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).sidebarMenuTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), sidebarMenuTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#000000" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Settings Tabs Colors */}
+                        <div className="border-b pb-6">
+                            <h4 className="text-md font-medium mb-4">Settings Tabs Menu</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Background Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).settingsTabsBgColor || '#f3f4f6'} onChange={e => setSettings({ ...(settings as any), settingsTabsBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).settingsTabsBgColor || '#f3f4f6'} onChange={e => setSettings({ ...(settings as any), settingsTabsBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#f3f4f6" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Text Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).settingsTabsTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), settingsTabsTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).settingsTabsTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), settingsTabsTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#000000" />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Active Tab Background Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).settingsTabsActiveBgColor || '#fef3c7'} onChange={e => setSettings({ ...(settings as any), settingsTabsActiveBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).settingsTabsActiveBgColor || '#fef3c7'} onChange={e => setSettings({ ...(settings as any), settingsTabsActiveBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#fef3c7" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Active Tab Text Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).settingsTabsActiveTextColor || '#92400e'} onChange={e => setSettings({ ...(settings as any), settingsTabsActiveTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).settingsTabsActiveTextColor || '#92400e'} onChange={e => setSettings({ ...(settings as any), settingsTabsActiveTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#92400e" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Generate Site Colors */}
+                        <div className="border-b pb-6">
+                            <h4 className="text-md font-medium mb-4">Generate Site</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Background Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).generateSiteBgColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), generateSiteBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).generateSiteBgColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), generateSiteBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#ffffff" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Text Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).generateSiteTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), generateSiteTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).generateSiteTextColor || '#000000'} onChange={e => setSettings({ ...(settings as any), generateSiteTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#000000" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Landing Page Topbar Colors */}
+                        <div className="pb-6">
+                            <h4 className="text-md font-medium mb-4">Landing Page Topbar</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Background Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).landingTopbarBgColor || '#1f2937'} onChange={e => setSettings({ ...(settings as any), landingTopbarBgColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).landingTopbarBgColor || '#1f2937'} onChange={e => setSettings({ ...(settings as any), landingTopbarBgColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#1f2937" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Text Color</label>
+                                    <div className="flex gap-3 items-center">
+                                        <input type="color" value={(settings as any).landingTopbarTextColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), landingTopbarTextColor: e.target.value })} className="w-12 h-10 border rounded cursor-pointer" />
+                                        <input type="text" value={(settings as any).landingTopbarTextColor || '#ffffff'} onChange={e => setSettings({ ...(settings as any), landingTopbarTextColor: e.target.value })} className="flex-1 p-2 border rounded text-sm" placeholder="#ffffff" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-8 flex gap-3 border-t pt-6">
+                        <Button onClick={async () => {
+                            try {
+                                const res = await fetch('/api/admin/settings', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    credentials: 'include',
+                                    body: JSON.stringify(settings)
+                                });
+                                if (res.status === 401) {
+                                    swalError('Not Authorized', 'Please login as Admin to persist settings.');
+                                    return;
+                                }
+                                if (!res.ok) {
+                                    const txt = await res.text();
+                                    swalError('Failed to Save', txt);
+                                    return;
+                                }
+                                swalSuccess('Success', 'Color settings saved to database');
+                            } catch (e) {
+                                console.error('Failed to save color settings', e);
+                                swalError('Failed', 'Failed to save color settings: ' + String(e));
+                            }
+                        }}>Save Colors</Button>
+                        <Button variant="secondary" onClick={() => {
+                            window.location.reload();
+                        }}>Reload to See Changes</Button>
+                    </div>
+
+                    <div className="mt-6 p-4 bg-blue-50 rounded border border-blue-200">
+                        <h5 className="font-medium text-blue-900 mb-2">Preview</h5>
+                        <div className="space-y-2 text-sm">
+                            <div style={{ backgroundColor: (settings as any).topbarBgColor || '#ffffff', color: (settings as any).topbarTextColor || '#000000', padding: '8px', borderRadius: '4px' }}>
+                                Topbar Menu (Background & Text)
+                            </div>
+                            <div style={{ backgroundColor: (settings as any).sidebarMenuBgColor || '#ffffff', color: (settings as any).sidebarMenuTextColor || '#000000', padding: '8px', borderRadius: '4px' }}>
+                                Left Sidebar Menu (Background & Text)
+                            </div>
+                            <div style={{ backgroundColor: (settings as any).settingsTabsBgColor || '#f3f4f6', color: (settings as any).settingsTabsTextColor || '#000000', padding: '8px', borderRadius: '4px', marginBottom: '4px' }}>
+                                Settings Tabs (Inactive)
+                            </div>
+                            <div style={{ backgroundColor: (settings as any).settingsTabsActiveBgColor || '#fef3c7', color: (settings as any).settingsTabsActiveTextColor || '#92400e', padding: '8px', borderRadius: '4px' }}>
+                                Settings Tabs (Active)
+                            </div>
+                            <div style={{ backgroundColor: (settings as any).generateSiteBgColor || '#ffffff', color: (settings as any).generateSiteTextColor || '#000000', padding: '8px', borderRadius: '4px' }}>
+                                Generate Site (Background & Text)
+                            </div>
+                            <div style={{ backgroundColor: (settings as any).landingTopbarBgColor || '#1f2937', color: (settings as any).landingTopbarTextColor || '#ffffff', padding: '8px', borderRadius: '4px' }}>
+                                Landing Page Topbar (Background & Text)
+                            </div>
+                        </div>
                     </div>
                 </Card>
             )}

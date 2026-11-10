@@ -118,7 +118,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
   const mobileDrawer = mobileOpen ? (
     <div className="fixed inset-0 z-40 md:hidden">
       <div className="fixed inset-0 bg-black opacity-30" onClick={onClose} />
-      <aside className={`relative w-64 bg-white h-full shadow-xl z-50`}>
+      <aside className="relative w-64 h-full shadow-xl z-50" style={{ backgroundColor: 'var(--sidebar-menu-bg)', color: 'var(--sidebar-menu-text)' }}>
         <div className="flex flex-col h-full">
           <div className="flex items-center px-4 py-4">
             {settings?.logoDataUrl ? (
@@ -181,8 +181,8 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
   return (
     <>
       {mobileDrawer}
-      <aside className={`app-sidebar hidden md:flex ${sidebarWidthClass} md:flex-col md:fixed md:inset-y-0 transition-all bg-white z-20`} style={{ backgroundColor: '#ffffff' }}>
-        <div className="app-sidebar-inner flex flex-col flex-grow overflow-y-auto border-r border-gray-200 h-full" style={{ backgroundColor: '#ffffff' }}>
+      <aside className={`app-sidebar hidden md:flex ${sidebarWidthClass} md:flex-col md:fixed md:inset-y-0 transition-all z-20 border-r border-gray-200`} style={{ backgroundColor: 'var(--sidebar-menu-bg)', color: 'var(--sidebar-menu-text)' }}>
+        <div className="app-sidebar-inner flex flex-col flex-grow overflow-y-auto h-full">
           <div className="flex flex-col items-center flex-shrink-0 px-4" style={{ paddingTop: 0, paddingBottom: 0, margin: 0 }}>
             {settings?.logoDataUrl ? (
               <img src={settings.logoDataUrl} alt="logo" className="object-contain block" style={{ width: 'var(--logo-width)', height: 'var(--logo-width)', margin: 0, padding: 0, display: 'block' }} />
@@ -191,7 +191,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
             )}
             {!collapsed && (
               <div style={{ marginTop: 0, padding: 0, textAlign: 'center' }}>
-                <div className="font-bold text-gray-800" style={{ color: 'var(--logo-color)', fontSize: 'var(--app-font-size)', margin: 0, padding: 0 }}>{settings?.logoText || ''}</div>
+                <div className="font-bold" style={{ color: 'var(--logo-color)', fontSize: 'var(--app-font-size)', margin: 0, padding: 0 }}>{settings?.logoText || ''}</div>
               </div>
             )}
           </div>

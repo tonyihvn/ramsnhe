@@ -28,7 +28,7 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
   };
 
   return (
-    <header className="relative bg-white shadow-sm z-10">
+    <header className="relative shadow-sm z-10" style={{ backgroundColor: 'var(--topbar-bg)', color: 'var(--topbar-text)' }}>
       <div className="px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Mobile: show centered logo above menu row */}
@@ -40,20 +40,21 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
             )}
           </div>
           <div className="flex items-center space-x-4">
-            <button onClick={() => (onToggleMobileSidebar ? onToggleMobileSidebar() : onToggleSidebar && onToggleSidebar())} className="p-2 rounded-md text-gray-600 hover:bg-gray-100 md:hidden">
+            <button onClick={() => (onToggleMobileSidebar ? onToggleMobileSidebar() : onToggleSidebar && onToggleSidebar())} className="p-2 rounded-md hover:opacity-75" style={{ color: 'var(--topbar-text)' }}>
               <Bars3Icon className="h-6 w-6" />
             </button>
-            <button onClick={onToggleSidebar} className="p-2 rounded-md text-gray-600 hover:bg-gray-100 hidden md:inline-flex" title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+            <button onClick={onToggleSidebar} className="p-2 rounded-md hover:opacity-75 hidden md:inline-flex" title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} style={{ color: 'var(--topbar-text)' }}>
               <Bars3Icon className="h-6 w-6" />
             </button>
             <div className="flex items-center space-x-3">
-              <h2 className="text-xl font-semibold text-gray-800 hidden md:block">Welcome, {currentUser?.firstName}</h2>
+              <h2 className="text-xl font-semibold hidden md:block">Welcome, {currentUser?.firstName}</h2>
             </div>
           </div>
           <div className="flex items-center space-x-4">
             <button
               type="button"
-              className="p-1 rounded-full text-gray-400 hover:text-gray-500 focus:outline-none"
+              className="p-1 rounded-full hover:opacity-75 focus:outline-none"
+              style={{ color: 'var(--topbar-text)' }}
             >
               <span className="sr-only">View notifications</span>
               <BellIcon className="h-6 w-6" aria-hidden="true" />
@@ -64,11 +65,11 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
                 {currentUser?.profileImage ? (
                   <img src={currentUser.profileImage} alt="profile" className="h-8 w-8 rounded-full object-cover" />
                 ) : (
-                  <UserCircleIcon className="h-8 w-8 text-gray-400" />
+                  <UserCircleIcon className="h-8 w-8" style={{ color: 'var(--topbar-text)' }} />
                 )}
                 <div className="ml-2 text-sm hidden sm:block text-left">
-                  <div className="font-medium text-gray-700">{currentUser?.firstName} {currentUser?.lastName}</div>
-                  <div className="text-gray-500"><RoleBadge small={true} /></div>
+                  <div className="font-medium">{currentUser?.firstName} {currentUser?.lastName}</div>
+                  <div style={{ opacity: 0.7 }}><RoleBadge small={true} /></div>
                 </div>
               </button>
 

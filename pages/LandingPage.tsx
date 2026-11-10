@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Button from '../components/ui/Button';
+import { useTheme } from '../hooks/useTheme';
 
 interface LandingConfig {
   appName?: string;
@@ -51,6 +52,7 @@ interface LandingConfig {
 }
 
 const LandingPage: React.FC = () => {
+  const { settings } = useTheme();
   const [config, setConfig] = useState<LandingConfig | null>(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [heroImageIndex, setHeroImageIndex] = useState(0);
@@ -102,8 +104,9 @@ const LandingPage: React.FC = () => {
   const heroSubtitle = config?.heroSubtitle || 'Transform your data into insights';
   const primaryColor = config?.primaryColor || '#2563eb';
   const secondaryColor = config?.secondaryColor || '#1e40af';
-  const navBackgroundColor = config?.navBackgroundColor || '#ffffff';
-  const navTextColor = config?.navTextColor || '#374151';
+  // Use landing topbar colors from settings if available, otherwise fall back to config
+  const navBackgroundColor = (settings as any)?.landingTopbarBgColor || config?.navBackgroundColor || '#1f2937';
+  const navTextColor = (settings as any)?.landingTopbarTextColor || config?.navTextColor || '#ffffff';
   const appName = config?.appName || 'DQAi';
   const carouselItems = config?.carouselItems || [];
   const heroFeaturedImages = config?.heroFeaturedImages || [];
