@@ -3468,13 +3468,33 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
             // Using `$2::jsonb` avoids PostgreSQL's "polymorphic type unknown" error
             // which can occur when calling functions like to_jsonb($2) with an unknown param type.
             const jsonString = JSON.stringify(v);
-            await pool.query(
-                `INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ($1, $2::jsonb, $3) ON CONFLICT (key, business_id) DO UPDATE SET value = $2::jsonb`,
-                [k, jsonString, businessId]
-            );
+            
+            try {
+                await pool.query(
+                    `INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ($1, $2::jsonb, $3) ON CONFLICT (key, business_id) DO UPDATE SET value = $2::jsonb`,
+                    [k, jsonString, businessId]
+                );
+            } catch (insertErr) {
+                // If conflict resolution fails, try UPDATE first, then INSERT
+                const updateRes = await pool.query(
+                    `UPDATE ${tables.SETTINGS} SET value = $2::jsonb WHERE key = $1 AND business_id IS NOT DISTINCT FROM $3`,
+                    [k, jsonString, businessId]
+                );
+                
+                if (updateRes.rowCount === 0) {
+                    // If no row was updated, insert a new one
+                    await pool.query(
+                        `INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ($1, $2::jsonb, $3)`,
+                        [k, jsonString, businessId]
+                    );
+                }
+            }
         }
         res.json({ success: true });
-    } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save settings' }); }
+    } catch (e) { 
+        console.error('Settings save error:', e);
+        res.status(500).json({ error: 'Failed to save settings', details: e.message }); 
+    }
 });
 
 // Admin: detect local Ollama models (server-side probe to avoid CORS issues)

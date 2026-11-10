@@ -3174,6 +3174,8 @@ const ReportViewPage: React.FC = () => {
 const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: any) => void }> = ({ doc, search = '', onSaved }) => {
   const [content, setContent] = useState<any[]>(Array.isArray(doc.file_content) ? doc.file_content : []);
   const [edited, setEdited] = useState<Record<string, any>>({});
+  const [columnWidths, setColumnWidths] = useState<ColumnWidth>({});
+  const tableRef = React.useRef<HTMLTableElement>(null);
 
   useEffect(() => setContent(Array.isArray(doc.file_content) ? doc.file_content : []), [doc]);
 
@@ -3184,6 +3186,17 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
     }
     return Array.from(cols);
   }, [content]);
+
+  // Initialize column widths
+  useEffect(() => {
+    if (columns.length > 0 && Object.keys(columnWidths).length === 0) {
+      const widths: ColumnWidth = {};
+      columns.forEach(col => {
+        widths[col] = INITIAL_COLUMN_WIDTH;
+      });
+      setColumnWidths(widths);
+    }
+  }, [columns, columnWidths]);
 
   const filtered = content.filter(r => {
     if (!search) return true;
@@ -3209,23 +3222,66 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
+      <table ref={tableRef} className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50"><tr>
-          <th className="px-4 py-2 text-left">#</th>
-          {columns.map(c => <th key={c} className="px-4 py-2 text-left">{c}</th>)}
+          <th className="px-4 py-2 text-left w-12">#</th>
+          {columns.map(c => (
+            <th 
+              key={c} 
+              data-column-key={c}
+              className="px-4 py-2 text-left relative" 
+              style={{ 
+                width: columnWidths[c] || INITIAL_COLUMN_WIDTH,
+                minWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
+                overflow: 'hidden'
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span>{c}</span>
+                {/* Column Resize Handle */}
+                <div
+                  className="absolute top-0 right-0 w-1 h-full bg-gray-300 hover:bg-blue-500 cursor-col-resize"
+                  onMouseDown={(e) => {
+                    startColumnResize(e, c, (colKey, newWidth) => {
+                      setColumnWidths(prev => ({
+                        ...prev,
+                        [colKey]: newWidth
+                      }));
+                    });
+                  }}
+                  title="Drag to resize column"
+                />
+              </div>
+            </th>
+          ))}
         </tr></thead>
         <tbody className="bg-white divide-y divide-gray-200">
           {filtered.map((row, ri) => (
             <tr key={ri}>
-              <td className="px-4 py-2 text-sm">{ri}</td>
+              <td className="px-4 py-2 text-sm text-gray-500">{ri + 1}</td>
               {columns.map(c => (
-                <td key={c} className="px-4 py-2 text-sm">
-                  <input className="w-full border rounded p-1 text-sm" defaultValue={row[c] ?? ''} onBlur={e => {
-                    const newVal = e.target.value;
-                    if (String(row[c] ?? '') !== newVal) {
-                      saveCell(ri, c, newVal);
-                    }
-                  }} />
+                <td 
+                  key={c} 
+                  className="px-4 py-2 text-sm"
+                  style={{ 
+                    width: columnWidths[c] || INITIAL_COLUMN_WIDTH,
+                    minWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
+                    maxWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  <input 
+                    className="w-full border rounded p-1 text-sm" 
+                    defaultValue={row[c] ?? ''} 
+                    onBlur={e => {
+                      const newVal = e.target.value;
+                      if (String(row[c] ?? '') !== newVal) {
+                        saveCell(ri, c, newVal);
+                      }
+                    }} 
+                  />
                 </td>
               ))}
             </tr>
