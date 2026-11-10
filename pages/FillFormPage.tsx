@@ -446,7 +446,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const history = useNavigate();
     const activityId = activityIdOverride || activityIdParam;
     const { getActivity, saveReport, currentUser, facilities, users, reports } = useMockData();
-    const activity = getActivity(activityId || '');
+    
+    // State for activity fetching
+    const [activity, setActivity] = useState<Activity | undefined>(undefined);
+    const [activityLoading, setActivityLoading] = useState(true);
+    const [activityError, setActivityError] = useState<string | null>(null);
+    
     const formDef: FormDefinition | undefined = activity?.formDefinition;
 
     // Initialize all hooks BEFORE any conditional returns (required by React Rules of Hooks)
@@ -469,6 +474,57 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const location = useLocation();
     const search = new URLSearchParams(location.search);
     const qReportId = search.get('reportId');
+
+    // Fetch activity from cache or backend
+    React.useEffect(() => {
+        if (!activityId) {
+            setActivityError('No activity ID provided');
+            setActivityLoading(false);
+            return;
+        }
+
+        // First try to get from cache
+        const cachedActivity = getActivity(activityId);
+        if (cachedActivity) {
+            setActivity(cachedActivity);
+            setActivityLoading(false);
+            setActivityError(null);
+            return;
+        }
+
+        // If not in cache, fetch from API
+        setActivityLoading(true);
+        setActivityError(null);
+        (async () => {
+            try {
+                const res = await fetch(`/api/activities/${activityId}`, { credentials: 'include' });
+                if (res.ok) {
+                    const fetchedActivity = await res.json();
+                    setActivity(fetchedActivity);
+                    setActivityError(null);
+                } else if (res.status === 404) {
+                    setActivityError('Activity not found');
+                } else {
+                    setActivityError(`Failed to load activity: ${res.statusText}`);
+                }
+            } catch (e) {
+                console.error('Failed to fetch activity:', e);
+                setActivityError('Failed to load activity');
+            } finally {
+                setActivityLoading(false);
+            }
+        })();
+    }, [activityId]);
+
+    // Also refetch if activity appears in cache later
+    React.useEffect(() => {
+        if (!activityId || activity) return;
+        const cachedActivity = getActivity(activityId);
+        if (cachedActivity) {
+            setActivity(cachedActivity);
+            setActivityLoading(false);
+        }
+    }, [reports]); // Re-check when reports update (activities might have been fetched)
 
     // Filter users by selected roles if activity has userRoles defined
     const getFilteredUsers = () => {
@@ -556,22 +612,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 return result;
             }
 
-            // Otherwise, use the legacy approach with just fieldMap
-            let processedFormula = formula;
+            // Use safer evaluation approach with variable passing instead of string substitution
             const cellRefPattern = /report\d+(?:\.\d+)?_[A-Z]{1,3}_[A-Z]+\d+/g;
-            const cellMatches = formula.match(cellRefPattern) || [];
-
-            for (const cellRef of cellMatches) {
-                // Cell reference should be in fieldMap if it's available
-                const cellValue = fieldMap[cellRef];
-                // If found, replace with the value; if not found, try to use as-is
-                if (cellValue !== undefined && cellValue !== null) {
-                    // If numeric, use the number directly; otherwise wrap in quotes
-                    const replacement = typeof cellValue === 'number' ? cellValue : JSON.stringify(cellValue);
-                    processedFormula = processedFormula.replace(new RegExp('\\b' + cellRef + '\\b', 'g'), replacement);
-                }
-            }
-
             const varNames = Object.keys(fieldMap || {}).filter(n => !n.match(cellRefPattern));
             const args = varNames.map(n => {
                 const v = fieldMap[n];
@@ -579,10 +621,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 if (typeof v === 'string' && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
                 return v;
             });
-            // Provide helpers: age, parseDate, diffDays
-            // Build function: function(...vars, age, parseDate, diffDays) { return <formula>; }
+            
+            // Build the function with variable parameters (safer than string substitution)
+            // The formula uses variable names directly, e.g., "!!gender && gender==='Female'"
             // eslint-disable-next-line no-new-func
-            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${processedFormula}; } catch(e){ return null; }`);
+            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ return null; }`);
             return fn(...args, age, parseDate, diffDays);
         } catch (err) {
             console.error('Error evaluating formula', formula, err);
@@ -1235,7 +1278,36 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         });
     }, [formDef]);
 
-    if (!activity) return <div>Activity not found.</div>;
+    // Show loading state while activity is loading
+    if (activityLoading) {
+        return (
+            <div className="p-6 text-center">
+                <div className="inline-block">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                    <p className="mt-4 text-gray-600">Loading form...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Show error if activity could not be loaded
+    if (activityError || !activity) {
+        return (
+            <div className="p-6">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <h2 className="text-lg font-semibold text-red-800">Error Loading Activity</h2>
+                    <p className="text-red-600 mt-2">{activityError || 'Activity not found.'}</p>
+                    <button 
+                        onClick={() => history('/activities')}
+                        className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                        Back to Activities
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     // Only allow filling if activity is Published
     if (!standaloneMode && String(activity.status || '').toLowerCase() !== 'published') {
         return <div className="p-6">This activity is not published. Form filling is disabled.</div>;
