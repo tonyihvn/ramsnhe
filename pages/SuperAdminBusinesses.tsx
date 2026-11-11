@@ -76,12 +76,12 @@ const SuperAdminBusinesses: React.FC = () => {
         )}
 
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold">Businesses</h2>
+          <h2 className="text-2xl font-bold">Organizations</h2>
           <button
             onClick={() => { setEditingBusiness(null); setShowForm(!showForm); }}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
           >
-            + New Business
+            + New Organization
           </button>
         </div>
 
@@ -173,7 +173,7 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 mb-6 border border-gray-200">
-      <h3 className="text-lg font-bold mb-4">{business?.id ? 'Edit' : 'Create'} Business</h3>
+      <h3 className="text-lg font-bold mb-4">{business?.id ? 'Edit' : 'Create'} Organization</h3>
 
       {error && <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">{error}</div>}
 
@@ -181,7 +181,7 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
         <input
           type="text"
           name="name"
-          placeholder="Business Name"
+          placeholder="Organization Name"
           value={formData.name}
           onChange={handleChange}
           required
@@ -228,7 +228,7 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
           disabled={loading}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >
-          {loading ? 'Saving...' : 'Save Business'}
+          {loading ? 'Saving...' : 'Save Organization'}
         </button>
       </div>
     </form>
