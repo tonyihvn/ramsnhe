@@ -36,6 +36,7 @@ BEGIN
       'uploaded_docs',
       'datasets',
       'dataset_content',
+      'rag_chroma_ids',
       'rag_schemas',
       'reports_powerbi',
       'report_templates',
@@ -98,6 +99,7 @@ BEGIN
   DROP TABLE IF EXISTS dqai_reports_powerbi CASCADE;
   DROP TABLE IF EXISTS dqai_dataset_content CASCADE;
   DROP TABLE IF EXISTS dqai_datasets CASCADE;
+  DROP TABLE IF EXISTS dqai_rag_chroma_ids CASCADE;
   DROP TABLE IF EXISTS dqai_rag_schemas CASCADE;
   DROP TABLE IF EXISTS dqai_uploaded_docs CASCADE;
   DROP TABLE IF EXISTS dqai_answers CASCADE;
