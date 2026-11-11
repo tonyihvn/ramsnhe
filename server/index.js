@@ -1713,14 +1713,28 @@ app.delete('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) =
     }
 });
 
-// TABLE_PREFIX can be set in the environment to create an additional set
-// of tables with that prefix on startup. We do NOT rewrite runtime SQL;
-// the application continues to reference the default 'dqai_' tables unless
-// code is explicitly changed. Use the prefixed tables for migration or
-// parallel installations when needed.
+// TABLE_PREFIX configuration - ensures all tables use the configured prefix
+// Default: 'dqai_' if not set in environment
+// Production/Multi-tenant: 'dqatb_' (set in .env)
+//
+// All table creation in initDb() uses the tables object from tablePrefix.js
+// which automatically applies the prefix. This ensures:
+// 1. All tables are created with the prefix
+// 2. All queries use the prefixed tables
+// 3. No duplicate tables with/without prefix
+//
+// Migration 005_drop_all_non_prefixed_tables.sql removes any old non-prefixed tables
 const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqai_');
 
-// Initialize database schema if tables don't exist
+/**
+ * Initialize database schema if tables don't exist
+ * 
+ * Creates all application tables using the configured TABLE_PREFIX
+ * Example: with TABLE_PREFIX='dqatb_', creates dqatb_users, dqatb_activities, etc.
+ * 
+ * This ensures that on first run, the app creates ONLY prefixed tables.
+ * Subsequent migrations consolidate any old tables and drop non-prefixed tables.
+ */
 async function initDb() {
     const queries = [
         // Create BUSINESSES table FIRST since other tables reference it
