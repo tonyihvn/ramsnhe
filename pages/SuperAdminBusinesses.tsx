@@ -62,8 +62,8 @@ const SuperAdminBusinesses: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <SuperAdminNav 
-        title="Manage Businesses" 
+      <SuperAdminNav
+        title="Manage Organizations"
         subtitle="Create, edit, and manage business organizations"
       />
 
@@ -97,9 +97,8 @@ const SuperAdminBusinesses: React.FC = () => {
                 <p className="text-sm text-gray-600 mb-2">{business.email}</p>
                 <p className="text-sm text-gray-500 mb-4">{business.address}</p>
                 <div className="flex justify-between">
-                  <span className={`px-3 py-1 rounded text-sm font-medium ${
-                    business.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                  }`}>
+                  <span className={`px-3 py-1 rounded text-sm font-medium ${business.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                    }`}>
                     {business.status}
                   </span>
                   <button onClick={() => handleEditBusiness(business)} className="text-blue-600 hover:underline">Edit</button>
@@ -175,7 +174,7 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 mb-6 border border-gray-200">
       <h3 className="text-lg font-bold mb-4">{business?.id ? 'Edit' : 'Create'} Business</h3>
-      
+
       {error && <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">{error}</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

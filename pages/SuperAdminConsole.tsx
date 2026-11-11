@@ -51,9 +51,9 @@ const SuperAdminConsole: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <SuperAdminNav 
-        title="Super Admin Console" 
-        subtitle="Manage businesses, users, and system settings"
+      <SuperAdminNav
+        title="Super Admin Console"
+        subtitle="Manage organizations, users, and system settings"
       />
 
       {/* Note: activeTab state is no longer used since navigation is handled by routes.
@@ -157,7 +157,7 @@ const OverviewTab: React.FC<{ stats: any; loading: boolean }> = ({ stats, loadin
 };
 
 /**
- * Businesses Tab - Manage businesses
+ * Businesses Tab - Manage Organizations
  */
 const BusinessesTab: React.FC = () => {
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -196,7 +196,7 @@ const BusinessesTab: React.FC = () => {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Manage Businesses</h2>
+        <h2 className="text-2xl font-bold">Manage Organizations</h2>
         <button
           onClick={() => { setEditingBusiness(null); setShowForm(!showForm); }}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -217,9 +217,8 @@ const BusinessesTab: React.FC = () => {
               <p className="text-sm text-gray-600 mb-2">{business.email}</p>
               <p className="text-sm text-gray-500 mb-4">{business.address}</p>
               <div className="flex justify-between">
-                <span className={`px-3 py-1 rounded text-sm font-medium ${
-                  business.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                }`}>
+                <span className={`px-3 py-1 rounded text-sm font-medium ${business.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                  }`}>
                   {business.status}
                 </span>
                 <button onClick={() => handleEditBusiness(business)} className="text-blue-600 hover:underline">Edit</button>
@@ -278,7 +277,7 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
     <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg border border-gray-200 mb-6">
       <h3 className="text-lg font-bold mb-4">{business ? 'Edit Business' : 'New Business'}</h3>
       {error && <div className="text-red-600 text-sm mb-4">{error}</div>}
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <input
           type="text"
@@ -314,7 +313,7 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
-      
+
       <textarea
         name="address"
         placeholder="Address"
@@ -377,25 +376,23 @@ const UserManagementTab: React.FC = () => {
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-2xl font-bold mb-4">User Management</h2>
       <p className="text-gray-600 mb-6">Manage users, approve accounts, and assign roles</p>
-      
+
       <div className="flex gap-4 mb-6 border-b border-gray-200">
         <button
           onClick={() => setActiveTab('all-users')}
-          className={`py-2 px-4 font-medium border-b-2 ${
-            activeTab === 'all-users'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-600 hover:text-gray-800'
-          }`}
+          className={`py-2 px-4 font-medium border-b-2 ${activeTab === 'all-users'
+            ? 'border-blue-600 text-blue-600'
+            : 'border-transparent text-gray-600 hover:text-gray-800'
+            }`}
         >
           View All Users ({users.length})
         </button>
         <button
           onClick={() => setActiveTab('pending')}
-          className={`py-2 px-4 font-medium border-b-2 ${
-            activeTab === 'pending'
-              ? 'border-green-600 text-green-600'
-              : 'border-transparent text-gray-600 hover:text-gray-800'
-          }`}
+          className={`py-2 px-4 font-medium border-b-2 ${activeTab === 'pending'
+            ? 'border-green-600 text-green-600'
+            : 'border-transparent text-gray-600 hover:text-gray-800'
+            }`}
         >
           Pending Approvals ({pendingApprovals.length})
         </button>
@@ -426,9 +423,8 @@ const UserManagementTab: React.FC = () => {
                     <td className="px-4 py-3">{user.business_name || 'N/A'}</td>
                     <td className="px-4 py-3">{user.role || 'User'}</td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        user.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                      }`}>
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${user.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                        }`}>
                         {user.status || 'Active'}
                       </span>
                     </td>
@@ -496,7 +492,7 @@ const LandingPageConfigTab: React.FC = () => {
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-2xl font-bold mb-4">Landing Page Configuration</h2>
       <p className="text-gray-600 mb-6">Customize the public landing page for each business</p>
-      
+
       {loading ? (
         <div className="text-center py-8">Loading...</div>
       ) : (
@@ -589,7 +585,7 @@ const FeedbackTab: React.FC = () => {
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Feedback & Contact Messages</h2>
-      
+
       {loading ? (
         <div className="text-center py-8">Loading...</div>
       ) : feedback.length === 0 ? (
@@ -605,9 +601,8 @@ const FeedbackTab: React.FC = () => {
                   <h3 className="font-bold text-lg">{msg.subject}</h3>
                   <p className="text-sm text-gray-600">{msg.sender_name} &lt;{msg.sender_email}&gt;</p>
                 </div>
-                <span className={`px-3 py-1 rounded text-sm font-medium ${
-                  msg.status === 'New' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
-                }`}>
+                <span className={`px-3 py-1 rounded text-sm font-medium ${msg.status === 'New' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                  }`}>
                   {msg.status}
                 </span>
               </div>
@@ -633,7 +628,7 @@ const PlansTab: React.FC = () => {
   const [showAssignmentModal, setShowAssignmentModal] = React.useState(false);
   const [editingPlan, setEditingPlan] = React.useState<any>(null);
   const [businesses, setBusinesses] = React.useState<any[]>([]);
-  
+
   const [newPlan, setNewPlan] = React.useState({
     name: '',
     description: '',
@@ -754,21 +749,19 @@ const PlansTab: React.FC = () => {
       <div className="flex space-x-4 border-b border-gray-200">
         <button
           onClick={() => setPlanTab('plans')}
-          className={`pb-4 px-1 font-medium ${
-            planTab === 'plans'
-              ? 'border-b-2 border-blue-600 text-blue-600'
-              : 'text-gray-600 hover:text-gray-800'
-          }`}
+          className={`pb-4 px-1 font-medium ${planTab === 'plans'
+            ? 'border-b-2 border-blue-600 text-blue-600'
+            : 'text-gray-600 hover:text-gray-800'
+            }`}
         >
           📋 Plans ({plans.length})
         </button>
         <button
           onClick={() => setPlanTab('assignments')}
-          className={`pb-4 px-1 font-medium ${
-            planTab === 'assignments'
-              ? 'border-b-2 border-blue-600 text-blue-600'
-              : 'text-gray-600 hover:text-gray-800'
-          }`}
+          className={`pb-4 px-1 font-medium ${planTab === 'assignments'
+            ? 'border-b-2 border-blue-600 text-blue-600'
+            : 'text-gray-600 hover:text-gray-800'
+            }`}
         >
           🔗 Assignments ({assignments.length})
         </button>
@@ -798,9 +791,8 @@ const PlansTab: React.FC = () => {
                       <h4 className="text-lg font-bold text-gray-800">{plan.name}</h4>
                       <p className="text-gray-600 text-sm">{plan.description}</p>
                     </div>
-                    <span className={`px-3 py-1 rounded text-xs font-semibold ${
-                      plan.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                    }`}>
+                    <span className={`px-3 py-1 rounded text-xs font-semibold ${plan.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                      }`}>
                       {plan.status}
                     </span>
                   </div>
@@ -877,9 +869,8 @@ const PlansTab: React.FC = () => {
                         {assign.expires_at ? new Date(assign.expires_at).toLocaleDateString() : 'Never'}
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`px-3 py-1 rounded text-xs font-semibold ${
-                          assign.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                        }`}>
+                        <span className={`px-3 py-1 rounded text-xs font-semibold ${assign.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                          }`}>
                           {assign.status}
                         </span>
                       </td>
@@ -897,7 +888,7 @@ const PlansTab: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-md w-full p-6 space-y-4">
             <h3 className="text-xl font-bold text-gray-800">{editingPlan ? 'Edit Plan' : 'Create New Plan'}</h3>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Plan Name</label>
               <input
@@ -989,7 +980,7 @@ const PlansTab: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-md w-full p-6 space-y-4">
             <h3 className="text-xl font-bold text-gray-800">Assign Plan to Business</h3>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Business</label>
               <select
