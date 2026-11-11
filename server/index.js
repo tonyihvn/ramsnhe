@@ -8,10 +8,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, '..', '.env');
-console.log('[startup] dotenv attempting to load from:', envPath);
-const result = dotenv.config({ path: envPath });
-console.log('[startup] dotenv result:', result.parsed ? 'SUCCESS - env loaded' : 'FAILED - env not loaded');
-console.log('[startup] process.env.TABLE_PREFIX immediately after dotenv:', process.env.TABLE_PREFIX);
+dotenv.config({ path: envPath });
 
 import express from 'express';
 import { Pool } from 'pg';
@@ -19,9 +16,6 @@ import cors from 'cors';
 import { tables } from './tablePrefix.js';
 import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
-
-console.log('[startup] TABLE_PREFIX from env:', process.env.TABLE_PREFIX);
-console.log('[startup] First table name (USERS):', tables.USERS);
 
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
