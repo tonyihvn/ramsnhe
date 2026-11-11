@@ -17,8 +17,8 @@ export async function initializeStartup(pool) {
   try {
     console.log('[startup] Initializing startup configuration...');
     
-    // Run any pending migrations
-    await runMigrations(pool);
+    // Migrations are already run in index.js via runMigrations()
+    // No need to run them again here
     
     // Ensure multi-tenancy tables and structures exist
     await setupMultiTenancy(pool);
@@ -26,51 +26,6 @@ export async function initializeStartup(pool) {
     console.log('[startup] Startup initialization complete');
   } catch (error) {
     console.error('[startup] Error during initialization:', error);
-    throw error;
-  }
-}
-
-/**
- * Run database migrations from the migrations directory
- * @param {Pool} pool - PostgreSQL connection pool
- */
-async function runMigrations(pool) {
-  try {
-    const migrationsDir = path.join(__dirname, 'migrations');
-    
-    // Check if migrations directory exists
-    if (!fs.existsSync(migrationsDir)) {
-      console.log('[migrations] No migrations directory found - skipping migrations');
-      return;
-    }
-    
-    const files = fs.readdirSync(migrationsDir)
-      .filter(f => f.endsWith('.sql'))
-      .sort();
-    
-    for (const file of files) {
-      const filePath = path.join(migrationsDir, file);
-      const sql = fs.readFileSync(filePath, 'utf-8');
-      
-      console.log(`[migrations] Running migration: ${file}`);
-      
-      // Split by semicolon and run each statement
-      const statements = sql.split(';').filter(s => s.trim());
-      for (const statement of statements) {
-        if (statement.trim()) {
-          try {
-            await pool.query(statement);
-          } catch (error) {
-            // Some migrations may fail if already applied - log but don't fail
-            console.warn(`[migrations] Statement in ${file} failed (may be already applied):`, error.message);
-          }
-        }
-      }
-    }
-    
-    console.log('[migrations] All migrations completed');
-  } catch (error) {
-    console.error('[migrations] Error running migrations:', error);
     throw error;
   }
 }
