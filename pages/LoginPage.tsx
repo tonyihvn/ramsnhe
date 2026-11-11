@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { useMetadata } from '../contexts/MetadataContext';
 import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
@@ -25,7 +25,7 @@ const Typewriter: React.FC<{ text?: string }> = ({ text }) => {
 };
 
 const LoginPage: React.FC = () => {
-  const { login } = useMockData();
+  const { login } = useData();
   const { meta } = useMetadata();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');

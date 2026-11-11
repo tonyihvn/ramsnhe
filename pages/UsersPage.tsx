@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Card from '../components/ui/Card';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import Button from '../components/ui/Button';
 import DataTable from '../components/ui/DataTable';
 import Modal from '../components/ui/Modal';
@@ -11,7 +11,7 @@ import { User } from '../types';
 import { FormSchema } from '../components/FormBuilder';
 
 const UsersPage: React.FC = () => {
-  const { users, saveUser, deleteUser, currentUser, facilities } = useMockData();
+  const { users, saveUser, deleteUser, currentUser, facilities } = useData();
   const [userSchema, setUserSchema] = useState<FormSchema | null>(null);
   const [allRoles, setAllRoles] = useState<{ id: number, name: string }[]>([]);
   const [allPermissions, setAllPermissions] = useState<{ id: number, name: string }[]>([]);
@@ -149,7 +149,7 @@ const UsersPage: React.FC = () => {
           // Refresh the users list
           try {
             const users = await (await fetch('/api/users', { credentials: 'include' })).json();
-            // Manually trigger refresh by using useMockData's internal state
+            // Manually trigger refresh by using useData's internal state
             // For now, just close the modal and the data should refetch automatically
           } catch (e) { console.error('Failed to refresh users', e); }
         } else {

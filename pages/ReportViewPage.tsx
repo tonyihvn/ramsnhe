@@ -9,14 +9,14 @@ import { confirm as swalConfirm, success as swalSuccess, error as swalError } fr
 import Swal from 'sweetalert2';
 import RichTextEditor from '../components/ui/RichTextEditor';
 import { apiFetch, getApiBase } from '../utils/api';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { resolveCellReferenceFromContext } from '../utils/formulaEvaluator';
 import { startColumnResize, ColumnWidth, INITIAL_COLUMN_WIDTH, loadColumnWidths, saveColumnWidths } from '../utils/columnResizer';
 
 const ReportViewPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<any>(null);
   const [answers, setAnswers] = useState<any[]>([]);

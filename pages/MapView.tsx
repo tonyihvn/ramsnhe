@@ -4,7 +4,7 @@ import FacilityCard from '../components/FacilityCard';
 import ClusterLayer from '../components/ClusterLayer';
 import MapControls from '../components/MapControls';
 import FloatingCard from '../components/FloatingCard';
-import { DataProvider } from '../hooks/useMockData';
+import { DataProvider } from '../hooks/useData';
 import { MetadataProvider } from '../contexts/MetadataContext';
 
 import { MapContainer, TileLayer, Popup, useMap } from 'react-leaflet';

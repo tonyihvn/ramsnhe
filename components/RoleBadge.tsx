@@ -1,10 +1,10 @@
 import React from 'react';
 import { useMetadata } from '../contexts/MetadataContext';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 
 const RoleBadge: React.FC<{ small?: boolean }> = ({ small = false }) => {
   const { meta } = useMetadata();
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
 
   if (!currentUser) return null;
 

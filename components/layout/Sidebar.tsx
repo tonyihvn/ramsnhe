@@ -2,7 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { DocumentPlusIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import navigationStatic from './navigation';
-import { useMockData } from '../../hooks/useMockData';
+import { useData } from '../../hooks/useData';
 import { useTheme } from '../../hooks/useTheme';
 import { useEffect, useState } from 'react';
 import BusinessSelector from './BusinessSelector';
@@ -13,7 +13,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
   const location = useLocation();
   const sidebarWidthClass = collapsed ? 'md:w-20' : 'md:w-64';
   const { settings } = useTheme();
-  const { activities, currentUser } = useMockData();
+  const { activities, currentUser } = useData();
   const [activitiesOpen, setActivitiesOpen] = React.useState(false);
   const [datasetsOpen, setDatasetsOpen] = React.useState(false);
   const [datasetsList, setDatasetsList] = useState<any[] | null>(null);

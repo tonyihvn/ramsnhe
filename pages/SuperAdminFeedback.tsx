@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { useNavigate } from 'react-router-dom';
 import SuperAdminNav from '../components/SuperAdminNav';
 
 const SuperAdminFeedback: React.FC = () => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const navigate = useNavigate();
   const [feedback, setFeedback] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

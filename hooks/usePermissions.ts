@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import { useMetadata } from '../contexts/MetadataContext';
-import { useMockData } from './useMockData';
+import { useData } from './useData';
 
 export const usePermissions = () => {
   const { meta } = useMetadata();
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
 
   const perms = useMemo(() => {
     const roleId = currentUser?.role;

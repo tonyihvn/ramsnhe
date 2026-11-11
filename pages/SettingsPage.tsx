@@ -8,7 +8,7 @@ import DatasetsPage from './DatasetsPage';
 import FormBuilder, { FormSchema } from '../components/FormBuilder';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { success as swalSuccess, error as swalError, info as swalInfo } from '../components/ui/swal';
 import Swal from 'sweetalert2';
 
@@ -801,7 +801,7 @@ const RolesList: React.FC = () => {
 };
 
 const UsersList: React.FC = () => {
-    const { currentUser } = useMockData();
+    const { currentUser } = useData();
     const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
     const [users, setUsers] = useState<any[]>([]);
     const [roles, setRoles] = useState<any[]>([]);

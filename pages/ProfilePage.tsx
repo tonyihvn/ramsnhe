@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { useTheme } from '../hooks/useTheme';
 
 type RoleItem = { role_id: number, name: string };
 
 const ProfilePage: React.FC = () => {
-    const { currentUser, saveUser, facilities } = useMockData();
+    const { currentUser, saveUser, facilities } = useData();
     const { settings } = useTheme();
     const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' });
     const [profileImage, setProfileImage] = useState<string | null>(null);

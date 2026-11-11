@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import Card from '../components/ui/Card';
 import { FolderIcon, ClipboardDocumentListIcon, BuildingOfficeIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
@@ -24,7 +24,7 @@ const StatCard = ({ title, value, icon, to }: { title: string; value: number; ic
 
 
 const DashboardPage: React.FC = () => {
-  const { programs, activities, facilities, users, currentUser } = useMockData();
+  const { programs, activities, facilities, users, currentUser } = useData();
   
   // Check if user is admin or super admin
   const userRole = String(currentUser?.role || '').toLowerCase().trim();

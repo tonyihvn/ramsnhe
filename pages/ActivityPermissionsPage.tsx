@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 interface ActivityRolePermission {
@@ -20,7 +20,7 @@ interface ActivityRolePermission {
 
 const ActivityPermissionsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { activities, currentUser } = useMockData();
+  const { activities, currentUser } = useData();
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<ActivityRolePermission[]>([]);
   const [allRoles, setAllRoles] = useState<{ id: number; name: string }[]>([]);

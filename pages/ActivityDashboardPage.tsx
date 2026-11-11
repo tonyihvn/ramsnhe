@@ -5,7 +5,7 @@ import Card from '../components/ui/Card';
 import DataTable from '../components/ui/DataTable';
 import { confirm, error as swalError, success as swalSuccess } from '../components/ui/swal';
 import { useActivityPermissions } from '../hooks/useActivityPermissions';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { Bar, Pie, Line, Scatter } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -26,7 +26,7 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElemen
 const ActivityDashboardPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const { checkPermission, permissions } = useActivityPermissions(activityId);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);

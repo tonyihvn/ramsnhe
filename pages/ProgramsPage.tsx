@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useTheme } from '../hooks/useTheme';
 import Card from '../components/ui/Card';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import { PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
@@ -10,7 +10,7 @@ import { Program } from '../types';
 import { useNavigate } from 'react-router-dom';
 
 const ProgramsPage: React.FC = () => {
-  const { programs, saveProgram, deleteProgram, currentUser } = useMockData();
+  const { programs, saveProgram, deleteProgram, currentUser } = useData();
   const { settings } = useTheme();
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
   const [isModalOpen, setIsModalOpen] = useState(false);

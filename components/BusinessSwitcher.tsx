@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
 
 interface Business {
@@ -8,7 +8,7 @@ interface Business {
 }
 
 const BusinessSwitcher: React.FC = () => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const [open, setOpen] = useState(false);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [currentBusiness, setCurrentBusiness] = useState<Business | null>(null);

@@ -3,12 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import DataTable from '../components/ui/DataTable';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 
 const FacilityDashboardPage: React.FC = () => {
   const { facilityId } = useParams<{ facilityId: string }>();
   const navigate = useNavigate();
-  const { facilities, reports, users, activities } = useMockData();
+  const { facilities, reports, users, activities } = useData();
   const [facility, setFacility] = useState<any | null>(null);
   const [indicators, setIndicators] = useState<any[]>([]);
   const [computedIndicators, setComputedIndicators] = useState<any>({});

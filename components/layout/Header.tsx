@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BellIcon, UserCircleIcon, ArrowRightOnRectangleIcon, Bars3Icon } from '@heroicons/react/24/outline';
-import { useMockData } from '../../hooks/useMockData';
+import { useData } from '../../hooks/useData';
 import RoleBadge from '../RoleBadge';
 import { useTheme } from '../../hooks/useTheme';
 
 const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onToggleMobileSidebar?: () => void }> = ({ collapsed, onToggleSidebar, onToggleMobileSidebar }) => {
-  const { currentUser, logout } = useMockData();
+  const { currentUser, logout } = useData();
   const navigate = useNavigate();
   const { settings } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);

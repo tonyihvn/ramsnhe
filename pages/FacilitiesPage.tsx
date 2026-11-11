@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Card from '../components/ui/Card';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import Button from '../components/ui/Button';
 import DataTable from '../components/ui/DataTable';
 import Modal from '../components/ui/Modal';
@@ -11,7 +11,7 @@ import { FormSchema } from '../components/FormBuilder';
 import * as ExcelJS from 'exceljs';
 
 const FacilitiesPage: React.FC = () => {
-  const { facilities, saveFacility, deleteFacility, currentUser } = useMockData();
+  const { facilities, saveFacility, deleteFacility, currentUser } = useData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentFacility, setCurrentFacility] = useState<Partial<Facility>>({});
   const [facilitySchema, setFacilitySchema] = useState<FormSchema | null>(null);

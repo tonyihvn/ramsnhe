@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { useServerPreferences } from '../hooks/useServerPreferences';
 import { FormDefinition, FormPage, FormSection, Question, AnswerType } from '../types';
 import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
@@ -419,7 +419,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 const BuildFormPage: React.FC = () => {
   const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
-  const { getActivity, getFormDefinition, saveFormDefinition, currentUser } = useMockData();
+  const { getActivity, getFormDefinition, saveFormDefinition, currentUser } = useData();
   const { getPreference, setPreference } = useServerPreferences();
   const [activity, setActivity] = useState(getActivity(activityId || ''));
   const [formDef, setFormDef] = useState<FormDefinition | undefined>(getFormDefinition(activityId || ''));

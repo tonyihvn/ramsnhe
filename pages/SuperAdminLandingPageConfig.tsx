@@ -2,12 +2,12 @@
 import React, { useState, useEffect } from 'react';
 import { CKEditor } from '@ckeditor/ckeditor5-react';
 import ClassicEditor from '@ckeditor/ckeditor5-build-classic';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import { useNavigate } from 'react-router-dom';
 import SuperAdminNav from '../components/SuperAdminNav';
 
 const SuperAdminLandingPageConfig: React.FC = () => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const navigate = useNavigate();
   const [config, setConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);

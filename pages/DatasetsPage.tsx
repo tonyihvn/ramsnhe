@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import DataTable from '../components/ui/DataTable';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 
 const DatasetsPage: React.FC = () => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
   const [datasets, setDatasets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);

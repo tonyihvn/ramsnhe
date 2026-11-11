@@ -10,10 +10,10 @@ import CanvasEditor from '../components/ui/CanvasEditor';
 import ImageCropper from '../components/ui/ImageCropper';
 import ShapeStyleEditor from '../components/ui/ShapeStyleEditor';
 import { apiFetch, getApiBase } from '../utils/api';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 
 const ReportBuilderPage: React.FC = () => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
   const [templates, setTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);

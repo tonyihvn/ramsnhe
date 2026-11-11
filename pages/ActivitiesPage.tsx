@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useTheme } from '../hooks/useTheme';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { confirm, error as swalError, toast as swalToast } from '../components/ui/swal';
@@ -111,7 +111,7 @@ const ActivityActionButtonsWrapper: React.FC<{
 };
 
 const ActivitiesPage: React.FC = () => {
-  const { activities, programs, saveActivity, deleteActivity, currentUser } = useMockData();
+  const { activities, programs, saveActivity, deleteActivity, currentUser } = useData();
   const { settings } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();

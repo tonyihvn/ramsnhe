@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMockData } from './useMockData';
+import { useData } from './useData';
 
 export interface ActivityRolePermission {
   activity_id: string;
@@ -21,7 +21,7 @@ export interface OriginalRolePermission {
 }
 
 export const useActivityPermissions = (activityId?: string) => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const [permissions, setPermissions] = useState<ActivityRolePermission[]>([]);
   const [originalPermissions, setOriginalPermissions] = useState<OriginalRolePermission | null>(null);
   const [loading, setLoading] = useState(false);

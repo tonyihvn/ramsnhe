@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import Card from '../components/ui/Card';
-import { useMockData } from '../hooks/useMockData';
+import { useData } from '../hooks/useData';
 import Modal from '../components/ui/Modal';
 import Button from '../components/ui/Button';
 import { DocumentMagnifyingGlassIcon, EyeIcon } from '@heroicons/react/24/outline';
@@ -10,8 +10,8 @@ import { useNavigate } from 'react-router-dom';
 import ConversationPanel from '../components/ui/ConversationPanel';
 
 const ReportsPage: React.FC = () => {
-  const { reports, activities, users, getFormDefinition } = useMockData();
-  const { facilities } = useMockData();
+  const { reports, activities, users, getFormDefinition } = useData();
+  const { facilities } = useData();
   const navigate = useNavigate();
 
   const getActivityTitle = (id: string) => activities.find(a => a.id === id)?.title || id;

@@ -4,6 +4,16 @@ import { addAuditEvent, flushAudit } from './useAudit';
 import { error as swalError, toast as swalToast } from '../components/ui/swal';
 import { Program, Activity, Facility, User, ActivityReport, FormDefinition } from '../types';
 
+/**
+ * Main Data Hook - Provides access to all application data from PostgreSQL backend
+ * 
+ * This hook fetches all data exclusively from the backend database.
+ * NO mock data is used in this application - all data is real database data.
+ * 
+ * Previously named "useMockData" (misleading name) - now properly named "useData"
+ * to reflect that it provides real backend data via REST API.
+ */
+
 // Context Definition
 interface DataContextType {
     currentUser: User | null;
@@ -47,8 +57,6 @@ const DataContext = createContext<DataContextType | undefined>(undefined);
 // can route requests to the backend without CORS issues.
 const API_URL = ((import.meta as any)?.env?.VITE_API_URL) || '/api';
 const AUTH_URL = ((import.meta as any)?.env?.VITE_AUTH_URL) || '/auth';
-
-// No mock data: app must use backend Postgres for all data
 
 export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<User | null>(() => {
@@ -403,10 +411,13 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return createElement(DataContext.Provider, { value: value }, children);
 };
 
-export const useMockData = () => {
+export const useData = () => {
     const context = useContext(DataContext);
     if (context === undefined) {
-        throw new Error('useMockData must be used within a DataProvider');
+        throw new Error('useData must be used within a DataProvider');
     }
     return context;
 };
+
+// Legacy export for backward compatibility (will be removed)
+export const useMockData = useData;

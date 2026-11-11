@@ -39,12 +39,12 @@ import SuperAdminBusinesses from './pages/SuperAdminBusinesses';
 import SuperAdminFeedback from './pages/SuperAdminFeedback';
 import PaymentApprovalPage from './pages/PaymentApprovalPage';
 import AccountApprovalPage from './pages/AccountApprovalPage';
-import { DataProvider, useMockData } from './hooks/useMockData';
+import { DataProvider, useData } from './hooks/useData';
 import { ThemeProvider } from './hooks/useTheme';
 import ErrorBoundary from './components/ErrorBoundary';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   if (!currentUser) {
     return <Navigate to="/login" replace />;
   }
@@ -52,7 +52,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 };
 
 const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const isAdmin = currentUser && (
     String(currentUser.role || '').toLowerCase() === 'admin' ||
     String(currentUser.role || '').toLowerCase() === 'super-admin' ||
@@ -65,7 +65,7 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser } = useMockData();
+  const { currentUser } = useData();
   const isSuperAdmin = currentUser && (String(currentUser.role || '').toLowerCase() === 'super-admin' || String(currentUser.role || '').toLowerCase() === 'super_admin');
   if (!isSuperAdmin) {
     return <Navigate to="/login" replace />;
