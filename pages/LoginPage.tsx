@@ -115,6 +115,28 @@ const LoginPage: React.FC = () => {
     setRegLoading(false);
   };
 
+  // Helper: Normalize image URLs/data URIs
+  const normalizeImageUrl = (image: string | null): string | null => {
+    if (!image) return null;
+    
+    // Already a valid data URI
+    if (image.startsWith('data:')) return image;
+    
+    // URL path - HTTP/HTTPS URLs or absolute paths
+    if (image.startsWith('http://') || image.startsWith('https://')) return image;
+    
+    // File upload path - check for /uploads/ or similar patterns
+    if (image.startsWith('/uploads/') || image.startsWith('/public/') || 
+        (image.startsWith('/') && image.includes('.'))) {
+      return image;
+    }
+    
+    // Raw base64 data - add data URI prefix
+    if (image) return `data:image/jpeg;base64,${image}`;
+    
+    return null;
+  };
+
   // Unified effect: load landing config and consolidate with theme settings
   // This prevents flickering by ensuring all UI properties update together
   React.useEffect(() => {
@@ -136,25 +158,20 @@ const LoginPage: React.FC = () => {
           let heroImage = (heroFeaturedImages && heroFeaturedImages.length > 0) ? heroFeaturedImages[0] : null;
           
           if (heroImage) {
-            // Ensure base64 string has proper data URI prefix if it's raw base64
-            if (heroImage && !heroImage.startsWith('data:')) {
-              heroImage = `data:image/jpeg;base64,${heroImage}`;
-            }
+            heroImage = normalizeImageUrl(heroImage);
             setBackgroundImage(heroImage);
             console.log('✓ Background image loaded from landing page config:', { 
-              size: (heroImage.length / 1024).toFixed(2) + ' KB',
-              hasDataPrefix: heroImage.startsWith('data:')
+              size: (heroImage?.length || 0 / 1024).toFixed(2) + ' KB',
+              hasDataPrefix: heroImage?.startsWith('data:') || false,
+              isUrl: heroImage?.startsWith('/') || heroImage?.startsWith('http') || false
             });
           } else if (settings?.backgroundImage) {
-            let bgImage = settings.backgroundImage;
-            // Ensure base64 string has proper data URI prefix if it's raw base64
-            if (bgImage && !bgImage.startsWith('data:') && !bgImage.startsWith('http')) {
-              bgImage = `data:image/jpeg;base64,${bgImage}`;
-            }
+            const bgImage = normalizeImageUrl(settings.backgroundImage);
             setBackgroundImage(bgImage);
             console.log('✓ Background image loaded from theme settings:', { 
-              size: (bgImage.length / 1024).toFixed(2) + ' KB',
-              hasDataPrefix: bgImage.startsWith('data:')
+              size: (bgImage?.length || 0 / 1024).toFixed(2) + ' KB',
+              hasDataPrefix: bgImage?.startsWith('data:') || false,
+              isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
             });
           } else {
             setBackgroundImage(null);
@@ -164,15 +181,12 @@ const LoginPage: React.FC = () => {
           setAllowNewRegistrations(true);
           // Fallback to theme settings if landing config fails
           if (settings?.backgroundImage) {
-            let bgImage = settings.backgroundImage;
-            // Ensure base64 string has proper data URI prefix if it's raw base64
-            if (bgImage && !bgImage.startsWith('data:') && !bgImage.startsWith('http')) {
-              bgImage = `data:image/jpeg;base64,${bgImage}`;
-            }
+            const bgImage = normalizeImageUrl(settings.backgroundImage);
             setBackgroundImage(bgImage);
             console.log('✓ Background image loaded from theme settings (fallback):', { 
-              size: (bgImage.length / 1024).toFixed(2) + ' KB',
-              hasDataPrefix: bgImage.startsWith('data:')
+              size: (bgImage?.length || 0 / 1024).toFixed(2) + ' KB',
+              hasDataPrefix: bgImage?.startsWith('data:') || false,
+              isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
             });
           }
         }
@@ -181,15 +195,12 @@ const LoginPage: React.FC = () => {
         setAllowNewRegistrations(true);
         // Fallback to theme settings if fetch fails
         if (settings?.backgroundImage) {
-          let bgImage = settings.backgroundImage;
-          // Ensure base64 string has proper data URI prefix if it's raw base64
-          if (bgImage && !bgImage.startsWith('data:') && !bgImage.startsWith('http')) {
-            bgImage = `data:image/jpeg;base64,${bgImage}`;
-          }
+          const bgImage = normalizeImageUrl(settings.backgroundImage);
           setBackgroundImage(bgImage);
           console.log('✓ Background image loaded from theme settings (error fallback):', { 
-            size: (bgImage.length / 1024).toFixed(2) + ' KB',
-            hasDataPrefix: bgImage.startsWith('data:')
+            size: (bgImage?.length || 0 / 1024).toFixed(2) + ' KB',
+            hasDataPrefix: bgImage?.startsWith('data:') || false,
+            isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
           });
         }
       }
