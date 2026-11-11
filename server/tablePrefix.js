@@ -2,11 +2,31 @@
 // These are the table names used throughout the application
 // Using constants here makes it easy to maintain and update table references
 
-// Get the TABLE_PREFIX from environment, defaulting to 'dqai_'
-const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqai_').toString().trim();
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Read TABLE_PREFIX directly from .env file if available
+let TABLE_PREFIX_VALUE = 'dqai_';
+try {
+    const envPath = path.join(__dirname, '..', '.env');
+    if (fs.existsSync(envPath)) {
+        const envContent = fs.readFileSync(envPath, 'utf8');
+        const prefixMatch = envContent.match(/^TABLE_PREFIX=(.+)$/m);
+        if (prefixMatch && prefixMatch[1]) {
+            TABLE_PREFIX_VALUE = prefixMatch[1].trim();
+        }
+    }
+} catch (err) {
+    // Fallback to process.env or default
+    TABLE_PREFIX_VALUE = (process.env.TABLE_PREFIX || 'dqai_').toString().trim();
+}
 
 // Helper function to apply prefix to table name
-const prefixTable = (tableName) => `${TABLE_PREFIX}${tableName}`;
+const prefixTable = (tableName, prefix = TABLE_PREFIX_VALUE) => `${prefix}${tableName}`;
 
 export const tables = {
   ACTIVITIES: prefixTable('activities'),

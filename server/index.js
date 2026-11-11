@@ -7,14 +7,21 @@ import { fileURLToPath } from 'url';
 // Set up path helpers (needed for dotenv.config)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+const envPath = path.join(__dirname, '..', '.env');
+console.log('[startup] dotenv attempting to load from:', envPath);
+const result = dotenv.config({ path: envPath });
+console.log('[startup] dotenv result:', result.parsed ? 'SUCCESS - env loaded' : 'FAILED - env not loaded');
+console.log('[startup] process.env.TABLE_PREFIX immediately after dotenv:', process.env.TABLE_PREFIX);
 
 import express from 'express';
 import { Pool } from 'pg';
 import cors from 'cors';
+import { tables } from './tablePrefix.js';
 import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
-import { tables } from './tablePrefix.js';
+
+console.log('[startup] TABLE_PREFIX from env:', process.env.TABLE_PREFIX);
+console.log('[startup] First table name (USERS):', tables.USERS);
 
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
@@ -1727,6 +1734,42 @@ app.delete('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) =
 const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqai_');
 
 /**
+ * Run all pending migrations from the migrations folder
+ * Migrations are SQL files that should be run in order
+ */
+async function runMigrations(pool) {
+    try {
+        const migrationsDir = path.join(__dirname, 'migrations');
+        if (!fs.existsSync(migrationsDir)) {
+            console.log('[migrations] Migrations directory not found');
+            return;
+        }
+
+        const files = fs.readdirSync(migrationsDir)
+            .filter(f => f.endsWith('.sql'))
+            .sort(); // Migrations run in alphabetical order
+
+        console.log(`[migrations] Found ${files.length} migration files`);
+
+        for (const file of files) {
+            try {
+                const filePath = path.join(migrationsDir, file);
+                const sql = fs.readFileSync(filePath, 'utf8');
+                console.log(`[migrations] Running ${file}...`);
+                await pool.query(sql);
+                console.log(`[migrations] ✓ Successfully completed ${file}`);
+            } catch (error) {
+                console.error(`[migrations] ✗ Failed to run ${file}:`, error.message);
+                // Continue with next migration instead of stopping
+            }
+        }
+        console.log('[migrations] All migrations completed');
+    } catch (error) {
+        console.error('[migrations] Error running migrations:', error);
+    }
+}
+
+/**
  * Initialize database schema if tables don't exist
  * 
  * Creates all application tables using the configured TABLE_PREFIX
@@ -2416,6 +2459,10 @@ async function initDb() {
     } catch (e) {
         console.warn('TABLE_PREFIX creation check failed', e && e.message ? e.message : e);
     }
+
+    // Run all migrations to consolidate tables, clean up duplication, and apply schema updates
+    await runMigrations(pool);
+
     // Ensure default admin user exists
     try {
         const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com';
