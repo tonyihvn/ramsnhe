@@ -195,39 +195,52 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
           {/* Vanna DDL Training Tab */}
           {activeTab === 0 && (
             <div className="space-y-4">
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-900">
+                  <strong>ℹ️ Self-Hosted Vanna:</strong> This uses a local, self-hosted Vanna instance. No API key required.
+                </p>
+              </div>
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Vanna API URL</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Vanna Server URL</label>
                 <input
                   type="text"
                   value={settings.vannaApiUrl}
                   onChange={e => handleChange('vannaApiUrl', e.target.value)}
-                  placeholder="https://api.vanna.ai"
+                  placeholder="http://localhost:8000"
                   className="w-full px-3 py-2 border rounded-lg"
                 />
-                <p className="text-xs text-gray-500 mt-1">Vanna API endpoint URL</p>
+                <p className="text-xs text-gray-500 mt-1">Local Vanna server endpoint (e.g., http://localhost:8000 or http://vanna-server.internal)</p>
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Vanna API Key</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Database Connection String</label>
                 <input
-                  type="password"
+                  type="text"
                   value={settings.vannaApiKey}
                   onChange={e => handleChange('vannaApiKey', e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full px-3 py-2 border rounded-lg"
+                  placeholder="postgresql://user:password@localhost:5432/mydb"
+                  className="w-full px-3 py-2 border rounded-lg font-mono text-xs"
                 />
+                <p className="text-xs text-gray-500 mt-1">Connection string for Vanna to access your database (format: driver://user:password@host:port/database)</p>
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Vanna Model</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Database Type</label>
                 <select
                   value={settings.vannaModel}
                   onChange={e => handleChange('vannaModel', e.target.value)}
                   className="w-full px-3 py-2 border rounded-lg"
                 >
-                  <option value="gpt-4">GPT-4</option>
-                  <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                  <option value="claude-3">Claude 3</option>
+                  <option value="postgres">PostgreSQL</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="sqlite">SQLite</option>
+                  <option value="mssql">SQL Server</option>
+                  <option value="oracle">Oracle</option>
+                  <option value="mongodb">MongoDB</option>
                 </select>
               </div>
+
               <label className="flex items-center space-x-2">
                 <input
                   type="checkbox"
@@ -235,21 +248,35 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
                   onChange={e => handleChange('autoTrainDDL', e.target.checked)}
                   className="rounded"
                 />
-                <span className="text-sm font-medium text-gray-700">Auto-train DDL on schedule</span>
+                <span className="text-sm font-medium text-gray-700">Auto-train on DDL changes</span>
               </label>
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Training Interval (hours)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Training Check Interval (hours)</label>
                 <input
                   type="number"
                   value={settings.trainingInterval}
                   onChange={e => handleChange('trainingInterval', parseInt(e.target.value))}
                   min="1"
+                  max="168"
                   className="w-full px-3 py-2 border rounded-lg"
                 />
+                <p className="text-xs text-gray-500 mt-1">How often to check for DDL changes and retrain</p>
               </div>
+
               <Button onClick={() => handleTest('vanna')} disabled={testing === 'vanna'} variant="secondary">
                 {testing === 'vanna' ? 'Testing...' : 'Test Vanna Connection'}
               </Button>
+
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-600">
+                <strong>Setup Instructions:</strong>
+                <ul className="list-disc pl-5 mt-2 space-y-1">
+                  <li>Start self-hosted Vanna server: <code className="bg-white px-1 rounded">docker run -p 8000:8000 vanna-ai/vanna-server</code></li>
+                  <li>Provide your database connection string (no API key needed)</li>
+                  <li>Select your database type</li>
+                  <li>Click "Test Vanna Connection" to verify connectivity</li>
+                </ul>
+              </div>
             </div>
           )}
 

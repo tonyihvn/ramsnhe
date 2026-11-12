@@ -29,7 +29,11 @@ The AI Integrations settings have been successfully integrated into the main **S
 
 #### Per-Organization Configuration
 - Each organization can independently configure:
-  - ✅ Vanna.AI DDL Training settings
+  - ✅ Vanna.AI Self-Hosted (no API key needed - local/free version)
+    - Server URL (http://localhost:8000)
+    - Database connection string
+    - Database type selection
+    - Auto-retraining on DDL changes
   - ✅ LanceDB Vector Store connections
   - ✅ VectorDB provider selection (LanceDB, Pinecone, Weaviate, Milvus)
   - ✅ Embedding Model settings (OpenAI, HuggingFace, Cohere, Azure)
