@@ -9470,7 +9470,7 @@ app.get('/api/public/facility_summary', async (req, res) => {
 // Test SMTP Configuration endpoint - helps diagnose email issues
 app.post('/api/test-smtp', async (req, res) => {
     try {
-        const { host, port, user, pass, from } = req.body;
+        const { host, port, user, pass, from, to } = req.body;
         
         if (!host || !port || !user || !pass) {
             return res.status(400).json({ error: 'Missing SMTP configuration: host, port, user, and pass are required' });
@@ -9490,10 +9490,13 @@ app.post('/api/test-smtp', async (req, res) => {
         // Verify SMTP connection
         await transporter.verify();
         
+        // Determine recipient email (use "to" parameter if provided, otherwise send to sender)
+        const recipientEmail = to ? to.trim() : user.trim();
+        
         // Send a test email
         await transporter.sendMail({
             from: from || user.trim(),
-            to: user.trim(),
+            to: recipientEmail,
             subject: 'SMTP Test Email - DQAi Platform',
             text: 'This is a test email to verify your SMTP configuration is working correctly.',
             html: '<h2>SMTP Configuration Test</h2><p>This is a test email to verify your SMTP configuration is working correctly.</p>'
@@ -9501,8 +9504,8 @@ app.post('/api/test-smtp', async (req, res) => {
         
         res.json({ 
             ok: true, 
-            message: 'SMTP test successful! Email configuration is working correctly.',
-            config: { host, port, user, from: from || user.trim() }
+            message: `SMTP test successful! Test email sent to ${recipientEmail}`,
+            config: { host, port, user, from: from || user.trim(), sentTo: recipientEmail }
         });
     } catch (e) {
         console.error('SMTP test error:', e.message);
