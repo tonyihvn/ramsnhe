@@ -1,0 +1,323 @@
+{
+  "timestamp": "2026-11-12T15:40:27.395Z",
+  "tests": [
+    {
+      "name": "Database Connection",
+      "status": "passed",
+      "result": {
+        "connected": true,
+        "time": "2026-11-12T15:40:27.433Z"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_prompt_contexts",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_prompt_contexts",
+        "exists": true,
+        "columnCount": 9,
+        "columns": "id(integer), business_id(integer), name(character varying), description(text), context_text(text), is_active(boolean), created_by(integer), created_at(timestamp without time zone), updated_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_vanna_training_sessions",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_vanna_training_sessions",
+        "exists": true,
+        "columnCount": 12,
+        "columns": "id(integer), business_id(integer), session_name(character varying), database_type(character varying), ddl_sql(text), status(character varying), error_message(text), trained_on_tables(text), vector_count(integer), created_by(integer), created_at(timestamp without time zone), completed_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_lance_vectors",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_lance_vectors",
+        "exists": true,
+        "columnCount": 10,
+        "columns": "id(integer), business_id(integer), vector_id(character varying), training_session_id(integer), source_type(character varying), source_text(text), source_metadata(jsonb), embedding_model(character varying), vector_dimensions(integer), created_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_ai_conversations",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_ai_conversations",
+        "exists": true,
+        "columnCount": 10,
+        "columns": "id(integer), business_id(integer), session_key(character varying), activity_id(integer), user_id(integer), status(character varying), conversation_metadata(jsonb), created_at(timestamp without time zone), updated_at(timestamp without time zone), expires_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_conversation_messages",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_conversation_messages",
+        "exists": true,
+        "columnCount": 11,
+        "columns": "id(integer), conversation_id(integer), message_role(character varying), message_content(text), vanna_sql_generated(character varying), vanna_sql_context(jsonb), llm_analysis(jsonb), chart_data(jsonb), chart_type(character varying), visualization_metadata(jsonb), created_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_llm_settings",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_llm_settings",
+        "exists": true,
+        "columnCount": 11,
+        "columns": "id(integer), business_id(integer), provider(character varying), api_key(character varying), model_name(character varying), api_endpoint(character varying), temperature(numeric), max_tokens(integer), is_active(boolean), created_at(timestamp without time zone), updated_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "Database Table: dqatb_ai_activity_logs",
+      "status": "passed",
+      "result": {
+        "table": "dqatb_ai_activity_logs",
+        "exists": true,
+        "columnCount": 11,
+        "columns": "id(integer), business_id(integer), user_id(integer), conversation_id(integer), action_type(character varying), action_details(jsonb), status(character varying), error_message(text), processing_time_ms(integer), tokens_used(jsonb), created_at(timestamp without time zone)"
+      }
+    },
+    {
+      "name": "API Route: /api/vanna/prompt-contexts",
+      "status": "passed",
+      "result": {
+        "route": "/api/vanna/prompt-contexts",
+        "status": "defined"
+      }
+    },
+    {
+      "name": "API Route: /api/vanna/llm-settings",
+      "status": "passed",
+      "result": {
+        "route": "/api/vanna/llm-settings",
+        "status": "defined"
+      }
+    },
+    {
+      "name": "API Route: /api/vanna/conversations",
+      "status": "passed",
+      "result": {
+        "route": "/api/vanna/conversations",
+        "status": "defined"
+      }
+    },
+    {
+      "name": "API Route: /api/vanna/training-sessions",
+      "status": "passed",
+      "result": {
+        "route": "/api/vanna/training-sessions",
+        "status": "defined"
+      }
+    },
+    {
+      "name": "LLM Context Service Module",
+      "status": "passed",
+      "result": {
+        "service": "llm-context-service.js",
+        "exists": true
+      }
+    },
+    {
+      "name": "Vanna Service Module",
+      "status": "passed",
+      "result": {
+        "service": "vanna-service.js",
+        "exists": true
+      }
+    },
+    {
+      "name": "LanceDB Vector Service Module",
+      "status": "passed",
+      "result": {
+        "service": "lancedb-service.js",
+        "exists": true
+      }
+    },
+    {
+      "name": "Frontend Component: components/ui/ChatPanel.tsx",
+      "status": "passed",
+      "result": {
+        "component": "components/ui/ChatPanel.tsx",
+        "description": "AI Chat Panel",
+        "lines": 240,
+        "exists": true
+      }
+    },
+    {
+      "name": "Frontend Component: components/ui/AIContextSettings.tsx",
+      "status": "passed",
+      "result": {
+        "component": "components/ui/AIContextSettings.tsx",
+        "description": "AI Context Settings",
+        "lines": 322,
+        "exists": true
+      }
+    },
+    {
+      "name": "Frontend Component: pages/ActivityDashboardPage.tsx",
+      "status": "passed",
+      "result": {
+        "component": "pages/ActivityDashboardPage.tsx",
+        "description": "Activity Dashboard",
+        "lines": 641,
+        "exists": true
+      }
+    },
+    {
+      "name": "Frontend Component: pages/SettingsPage.tsx",
+      "status": "passed",
+      "result": {
+        "component": "pages/SettingsPage.tsx",
+        "description": "Settings Page",
+        "lines": 2404,
+        "exists": true
+      }
+    },
+    {
+      "name": "Default LLM Settings Creation",
+      "status": "passed",
+      "result": {
+        "provider": "cohere",
+        "model": "command-light",
+        "active": true
+      }
+    },
+    {
+      "name": "Default Prompt Contexts",
+      "status": "passed",
+      "result": {
+        "count": 4,
+        "contexts": [
+          "Healthcare Analytics",
+          "Financial Analysis",
+          "Operations & Performance",
+          "Data Quality & Monitoring"
+        ]
+      }
+    },
+    {
+      "name": "AI Conversations Table Structure",
+      "status": "passed",
+      "result": {
+        "tableName": "dqatb_ai_conversations",
+        "totalColumns": 10,
+        "requiredColumns": [
+          "id",
+          "business_id",
+          "user_id",
+          "created_at"
+        ],
+        "allPresent": true,
+        "actualColumns": [
+          "id",
+          "business_id",
+          "session_key",
+          "activity_id",
+          "user_id",
+          "status",
+          "conversation_metadata",
+          "created_at",
+          "updated_at",
+          "expires_at"
+        ]
+      }
+    },
+    {
+      "name": "Conversation Messages Table Structure",
+      "status": "passed",
+      "result": {
+        "tableName": "dqatb_conversation_messages",
+        "totalColumns": 11,
+        "requiredColumns": [
+          "id",
+          "conversation_id",
+          "message_role",
+          "message_content",
+          "created_at"
+        ],
+        "allPresent": true,
+        "actualColumns": [
+          "id",
+          "conversation_id",
+          "message_role",
+          "message_content",
+          "vanna_sql_generated",
+          "vanna_sql_context",
+          "llm_analysis",
+          "chart_data",
+          "chart_type",
+          "visualization_metadata",
+          "created_at"
+        ]
+      }
+    },
+    {
+      "name": "Environment Configuration (.env)",
+      "status": "passed",
+      "result": {
+        "configFile": ".env",
+        "exists": true,
+        "requiredVars": [
+          "NODE_ENV",
+          "DB_USER",
+          "DB_PASSWORD",
+          "DB_HOST",
+          "DB_NAME",
+          "SERVER_PORT",
+          "FRONTEND_PORT"
+        ],
+        "allPresent": true
+      }
+    },
+    {
+      "name": "Package Configuration (package.json)",
+      "status": "passed",
+      "result": {
+        "name": "dqaplus---data-collection-platform",
+        "version": "0.0.0",
+        "scripts": [
+          "dev",
+          "build",
+          "start:server",
+          "server:dev",
+          "migrate"
+        ],
+        "allPresent": true
+      }
+    },
+    {
+      "name": "Docker Configuration (Dockerfile)",
+      "status": "passed",
+      "result": {
+        "file": "Dockerfile",
+        "exists": true,
+        "isValid": true
+      }
+    },
+    {
+      "name": "Docker Compose Configuration",
+      "status": "passed",
+      "result": {
+        "file": "docker-compose.yml",
+        "exists": true
+      }
+    },
+    {
+      "name": "Build Artifacts",
+      "status": "passed",
+      "result": {
+        "distFolder": "dist",
+        "exists": false,
+        "status": "not_built_yet"
+      }
+    }
+  ],
+  "summary": {
+    "total": 28,
+    "passed": 28,
+    "failed": 0,
+    "warnings": 0
+  }
+}

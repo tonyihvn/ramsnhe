@@ -24,6 +24,16 @@ export default defineConfig(({ mode }) => {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
           rewrite: (path) => path,
+        },
+        '/uploads': {
+          target: `http://localhost:${serverPort}`,
+          changeOrigin: true,
+          rewrite: (path) => path,
+        },
+        '/builds': {
+          target: `http://localhost:${serverPort}`,
+          changeOrigin: true,
+          rewrite: (path) => path,
         }
       }
     },

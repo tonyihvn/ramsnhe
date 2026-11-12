@@ -18,6 +18,7 @@ export const appRoutes: { path: string; label?: string }[] = [
     { path: '/reports/builder', label: 'Report Builder' },
     { path: '/reports/:reportId', label: 'Report View' },
     { path: '/settings', label: 'Settings' },
+    { path: '/ai-settings', label: 'AI Settings' },
     { path: '/docs', label: 'Docs' },
     { path: '/profile', label: 'Profile' },
     { path: '/users', label: 'Users' },

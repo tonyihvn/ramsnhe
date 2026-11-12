@@ -16,6 +16,8 @@ import cors from 'cors';
 import { tables } from './tablePrefix.js';
 import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
+import { registerVannaRoutes } from './vanna-routes.js';
+import { runMigrations } from './db-migrator.js';
 
 // Helper: Prepare SMTP configuration with support for self-signed certificates and Gmail app passwords
 function prepareSMTPConfig(smtpConfig) {
@@ -1619,6 +1621,9 @@ const pool = new Pool({
 // Register Super Admin Routes
 registerSuperAdminRoutes(app, pool);
 
+// Register Vanna.AI Routes
+registerVannaRoutes(app, pool);
+
 // Form Schemas API Endpoints (Admin only)
 // POST /api/admin/form-schemas - Save or update a form schema
 app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
@@ -1835,42 +1840,6 @@ app.delete('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) =
 const TABLE_PREFIX = (process.env.TABLE_PREFIX || 'dqai_');
 
 /**
- * Run all pending migrations from the migrations folder
- * Migrations are SQL files that should be run in order
- */
-async function runMigrations(pool) {
-    try {
-        const migrationsDir = path.join(__dirname, 'migrations');
-        if (!fs.existsSync(migrationsDir)) {
-            console.log('[migrations] Migrations directory not found');
-            return;
-        }
-
-        const files = fs.readdirSync(migrationsDir)
-            .filter(f => f.endsWith('.sql'))
-            .sort(); // Migrations run in alphabetical order
-
-        console.log(`[migrations] Found ${files.length} migration files`);
-
-        for (const file of files) {
-            try {
-                const filePath = path.join(migrationsDir, file);
-                const sql = fs.readFileSync(filePath, 'utf8');
-                console.log(`[migrations] Running ${file}...`);
-                await pool.query(sql);
-                console.log(`[migrations] ✓ Successfully completed ${file}`);
-            } catch (error) {
-                console.error(`[migrations] ✗ Failed to run ${file}:`, error.message);
-                // Continue with next migration instead of stopping
-            }
-        }
-        console.log('[migrations] All migrations completed');
-    } catch (error) {
-        console.error('[migrations] Error running migrations:', error);
-    }
-}
-
-/**
  * Initialize database schema if tables don't exist
  * 
  * Creates all application tables using the configured TABLE_PREFIX
@@ -1880,6 +1849,15 @@ async function runMigrations(pool) {
  * Subsequent migrations consolidate any old tables and drop non-prefixed tables.
  */
 async function initDb() {
+    try {
+        console.log('[DB] Running database migrations...');
+        await runMigrations(pool);
+        console.log('[DB] ✅ Migrations completed');
+    } catch (error) {
+        console.error('[DB] Migrations failed:', error);
+        // Continue even if migrations fail, as tables might already exist
+    }
+
     const queries = [
         // Create BUSINESSES table FIRST since other tables reference it
         `CREATE TABLE IF NOT EXISTS ${tables.BUSINESSES} (

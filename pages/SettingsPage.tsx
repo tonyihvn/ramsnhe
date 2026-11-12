@@ -6,6 +6,7 @@ import DataTable from '../components/ui/DataTable';
 import BandEditor from '../components/ui/BandEditor';
 import DatasetsPage from './DatasetsPage';
 import FormBuilder, { FormSchema } from '../components/FormBuilder';
+import AIIntegrationsTab from '../components/AIIntegrationsTab';
 import { useTheme } from '../hooks/useTheme';
 import { appRoutes } from '../appRoutes';
 import { useData } from '../hooks/useData';
@@ -980,7 +981,8 @@ const PermissionsList: React.FC = () => {
 
 const SettingsPage: React.FC = () => {
     const { settings, setSettings, reset } = useTheme();
-    const [tab, setTab] = useState<'database' | 'dbms' | 'llm' | 'rag' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit' | 'email' | 'forms'>('theme');
+    const { currentUser } = useData();
+    const [tab, setTab] = useState<'database' | 'dbms' | 'llm' | 'rag' | 'ai-context' | 'ai-integrations' | 'theme' | 'app' | 'permissions' | 'datasets' | 'audit' | 'email' | 'forms'>('theme');
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [bandsOpen, setBandsOpen] = useState(false);
 
@@ -1120,6 +1122,7 @@ const SettingsPage: React.FC = () => {
                     <button onClick={() => setTab('dbms')} className={`px-3 py-2 rounded`} style={tab === 'dbms' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>DBMS</button>
                     <button onClick={() => setTab('llm')} className={`px-3 py-2 rounded`} style={tab === 'llm' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>LLM</button>
                     <button onClick={() => setTab('rag')} className={`px-3 py-2 rounded`} style={tab === 'rag' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>RAG</button>
+                    <button onClick={() => setTab('ai-context')} className={`px-3 py-2 rounded`} style={tab === 'ai-context' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>AI Context</button>
                     <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded`} style={tab === 'theme' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Theme</button>
                     <button onClick={() => setTab('colors')} className={`px-3 py-2 rounded`} style={tab === 'colors' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Colors</button>
                     <button onClick={() => setTab('app')} className={`px-3 py-2 rounded`} style={tab === 'app' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>App</button>
@@ -1128,6 +1131,7 @@ const SettingsPage: React.FC = () => {
                     <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded`} style={tab === 'permissions' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Roles & Permissions</button>
                     <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded`} style={tab === 'audit' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Audit Trails</button>
                     <button onClick={() => setTab('forms')} className={`px-3 py-2 rounded`} style={tab === 'forms' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Form Builders</button>
+                    <button onClick={() => setTab('ai-integrations')} className={`px-3 py-2 rounded`} style={tab === 'ai-integrations' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>AI Integrations</button>
                     <a href="#/connectors" className="px-3 py-2 rounded" style={{ color: 'var(--settings-tabs-text)' }}>API Connectors</a>
                 </nav>
             </div>
@@ -1239,6 +1243,55 @@ const SettingsPage: React.FC = () => {
                         </div>
                         {/* Removed Context Window Size and Preview Generated Rules per user request — RAG records must include explicit Business Rules */}
                         <RagManager />
+                    </div>
+                </Card>
+            )}
+
+            {tab === 'ai-context' && (
+                <Card>
+                    <h3 className="text-lg font-medium mb-4">AI Context Settings</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">System Context for RAG Responses</label>
+                            <p className="text-sm text-gray-600 mb-3">Enter context information that will be used to help shape RAG responses. This text provides background knowledge and instructions to improve the quality and relevance of AI-generated answers.</p>
+                            <textarea
+                                value={(settings as any).aiContextText || ''}
+                                onChange={e => setSettings({ ...(settings as any), aiContextText: e.target.value })}
+                                className="w-full p-3 border border-gray-300 rounded-md font-mono text-sm"
+                                rows={12}
+                                placeholder="Example: You are an expert data analyst. Focus on accuracy and completeness. Always provide context for your recommendations. Consider both quantitative and qualitative factors..."
+                            />
+                        </div>
+
+                        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+                            <h4 className="font-medium text-sm text-blue-900 mb-2">ℹ️ Usage Guidelines</h4>
+                            <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                                <li>This context will be included with every RAG query to influence responses</li>
+                                <li>Be specific about expertise, tone, and approach</li>
+                                <li>Include relevant domain knowledge and business rules</li>
+                                <li>Avoid extremely long contexts for better performance</li>
+                                <li>Update context when business requirements change</li>
+                            </ul>
+                        </div>
+
+                        <div className="flex gap-2">
+                            <Button onClick={() => {
+                                swalSuccess('Context Saved', 'AI context settings have been saved successfully.');
+                            }}>
+                                Save Context
+                            </Button>
+                            <Button variant="secondary" onClick={() => {
+                                setSettings({ ...(settings as any), aiContextText: '' });
+                                swalSuccess('Context Cleared', 'AI context has been cleared.');
+                            }}>
+                                Clear Context
+                            </Button>
+                        </div>
+
+                        <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+                            <h4 className="font-medium text-sm text-gray-900 mb-2">📊 Character Count</h4>
+                            <p className="text-sm text-gray-700">Current: <strong>{((settings as any).aiContextText || '').length}</strong> characters</p>
+                        </div>
                     </div>
                 </Card>
             )}
@@ -1715,6 +1768,10 @@ const SettingsPage: React.FC = () => {
 
             {tab === 'forms' && (
                 <FormsBuildersSection />
+            )}
+
+            {tab === 'ai-integrations' && currentUser && (
+                <AIIntegrationsTab businessId={currentUser.businessId || 0} />
             )}
         </div>
     );

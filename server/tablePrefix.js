@@ -68,5 +68,16 @@ export const tables = {
   USER_PERMISSIONS: prefixTable('user_permissions'),
   USER_PREFERENCES: prefixTable('user_preferences'),
   USER_ROLES: prefixTable('user_roles'),
-  USERS: prefixTable('users')
+  USERS: prefixTable('users'),
+  // Vanna.AI + LanceDB tables
+  PROMPT_CONTEXTS: prefixTable('prompt_contexts'),
+  VANNA_TRAINING_SESSIONS: prefixTable('vanna_training_sessions'),
+  LANCE_VECTORS: prefixTable('lance_vectors'),
+  AI_CONVERSATIONS: prefixTable('ai_conversations'),
+  CONVERSATION_MESSAGES: prefixTable('conversation_messages'),
+  LLM_SETTINGS: prefixTable('llm_settings'),
+  AI_ACTIVITY_LOGS: prefixTable('ai_activity_logs'),
+  AI_SETTINGS: prefixTable('ai_settings'),
+  VANNA_QUERIES: prefixTable('vanna_queries'),
+  VANNA_ANALYSES: prefixTable('vanna_analyses')
 };
