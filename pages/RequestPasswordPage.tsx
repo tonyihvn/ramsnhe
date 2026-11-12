@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
+import SimpleHeader from '../components/layout/SimpleHeader';
 import { useNavigate } from 'react-router-dom';
 
 const RequestPasswordPage: React.FC = () => {
@@ -34,18 +35,13 @@ const RequestPasswordPage: React.FC = () => {
                 body: JSON.stringify({ email })
             });
             
-            if (r.ok) {
-                const j = await r.json();
+            const j = await r.json();
+            
+            if (r.ok || j.ok) {
                 setMessage(j.message || 'If an account exists with this email, you will receive a password reset link shortly.');
                 setDone(true);
             } else {
-                const txt = await r.text();
-                try {
-                    const j = JSON.parse(txt);
-                    setError(j.error || txt || 'Failed to request password reset');
-                } catch (e) {
-                    setError(txt || 'Failed to request password reset');
-                }
+                setError(j.error || 'Failed to request password reset. Please contact support if the problem persists.');
             }
         } catch (e: any) {
             setError('Error: ' + String(e));
@@ -55,7 +51,9 @@ const RequestPasswordPage: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="min-h-screen flex flex-col bg-gray-50">
+            <SimpleHeader title="Reset Your Password" />
+            <div className="flex-1 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-lg shadow-md">
                 <div>
                     <h2 className="text-2xl font-bold text-center text-gray-900">Forgot Your Password?</h2>
