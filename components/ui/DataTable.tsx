@@ -97,6 +97,16 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
       return visibleColumns.every(col => {
         const f = filters[col.key];
         if (!f || String(f).trim() === '') return true;
+        
+        // For 'name' column, search across firstName, lastName, and email
+        if (col.key === 'name') {
+          const searchText = String(f).toLowerCase();
+          const firstName = String(row.firstName || '').toLowerCase();
+          const lastName = String(row.lastName || '').toLowerCase();
+          const email = String(row.email || '').toLowerCase();
+          return firstName.includes(searchText) || lastName.includes(searchText) || email.includes(searchText);
+        }
+        
         const val = row[col.key];
         if (val === null || typeof val === 'undefined') return false;
         return String(val).toLowerCase().includes(String(f).toLowerCase());
