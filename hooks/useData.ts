@@ -322,7 +322,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
             } catch (e) { console.error(e); try { swalError('Save failed', 'Failed to save user'); } catch (er) { } }
         })();
     };
-    const deleteUser = (id: string) => setUsers(users.filter(u => String(u.id) !== String(id)));
+    const deleteUser = (id: string) => handleDelete(`${API_URL}/admin/users`, id, setUsers);
 
     // Form Def
     const saveFormDefinition = async (activityId: string, formDef: FormDefinition) => {

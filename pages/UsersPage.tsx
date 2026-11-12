@@ -109,86 +109,91 @@ const UsersPage: React.FC = () => {
 
     // Save roles/permissions assignments
     const { assignedRoles, assignedPermissions, ...userData } = toSave as any;
+    const isNewUser = !userData.id;
     
-    // For new users, we need to save them first to get an ID, then assign roles/permissions
-    // For existing users, we can save and assign in parallel since ID already exists
-    if (!userData.id) {
-      // New user: save first, get ID, then assign roles/permissions
-      try {
-        // Use fetch directly instead of saveUser to get the response
-        const res = await fetch('/api/users', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(userData)
-        });
-        if (res.ok) {
-          const savedUser = await res.json();
-          const userId = savedUser.id;
-          
-          // Now assign roles if any
-          if (assignedRoles && assignedRoles.length > 0) {
-            fetch('/api/admin/roles/assign', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ userId, roleIds: assignedRoles })
-            }).catch(e => console.error('Failed to assign roles', e));
-          }
-          
-          // Assign permissions if any
-          if (assignedPermissions && assignedPermissions.length > 0) {
-            fetch('/api/admin/permissions/assign', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ userId, permissionIds: assignedPermissions })
-            }).catch(e => console.error('Failed to assign permissions', e));
-          }
-          
-          // Refresh the users list
-          try {
-            const users = await (await fetch('/api/users', { credentials: 'include' })).json();
-            // Manually trigger refresh by using useData's internal state
-            // For now, just close the modal and the data should refetch automatically
-          } catch (e) { console.error('Failed to refresh users', e); }
-        } else {
-          const errText = await res.text();
-          console.error('Failed to save user:', errText);
-          alert('Failed to save user: ' + errText);
-          return;
-        }
-      } catch (e) {
-        console.error('Error saving new user:', e);
-        alert('Failed to save user: ' + String(e));
+    try {
+      // 1. Save the user (create or update)
+      const userRes = await fetch('/api/users', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData)
+      });
+      
+      if (!userRes.ok) {
+        const errText = await userRes.text();
+        console.error('Failed to save user:', errText);
+        alert('Failed to save user: ' + errText);
         return;
       }
-    } else {
-      // Existing user: save normally with saveUser
-      saveUser(userData as User);
       
-      // Assign roles (can do in parallel for existing users)
+      const savedUser = await userRes.json();
+      const userId = savedUser.id;
+      
+      // 2. Assign roles if provided
       if (assignedRoles && assignedRoles.length > 0) {
-        fetch('/api/admin/roles/assign', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ userId: userData.id, roleIds: assignedRoles })
-        }).catch(e => console.error('Failed to assign roles', e));
+        try {
+          const rolesRes = await fetch('/api/admin/roles/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ userId, roleIds: assignedRoles })
+          });
+          if (!rolesRes.ok) {
+            console.error('Failed to assign roles:', await rolesRes.text());
+          }
+        } catch (e) {
+          console.error('Failed to assign roles', e);
+        }
+      } else if (!isNewUser) {
+        // If editing and no roles selected, clear existing roles
+        try {
+          await fetch(`/api/admin/roles/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ userId, roleIds: [] })
+          });
+        } catch (e) {
+          console.error('Failed to clear roles', e);
+        }
       }
       
-      // Assign permissions
+      // 3. Assign permissions if provided
       if (assignedPermissions && assignedPermissions.length > 0) {
-        fetch('/api/admin/permissions/assign', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ userId: userData.id, permissionIds: assignedPermissions })
-        }).catch(e => console.error('Failed to assign permissions', e));
+        try {
+          const permsRes = await fetch('/api/admin/permissions/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ userId, permissionIds: assignedPermissions })
+          });
+          if (!permsRes.ok) {
+            console.error('Failed to assign permissions:', await permsRes.text());
+          }
+        } catch (e) {
+          console.error('Failed to assign permissions', e);
+        }
+      } else if (!isNewUser) {
+        // If editing and no permissions selected, clear existing permissions
+        try {
+          await fetch(`/api/admin/permissions/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ userId, permissionIds: [] })
+          });
+        } catch (e) {
+          console.error('Failed to clear permissions', e);
+        }
       }
+      
+      // 4. Close modal - the data will auto-refresh on close
+      setIsModalOpen(false);
+    } catch (e) {
+      console.error('Error saving user:', e);
+      alert('Failed to save user: ' + String(e));
     }
-    
-    setIsModalOpen(false);
   };
 
   return (

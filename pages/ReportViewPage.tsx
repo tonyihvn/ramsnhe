@@ -58,9 +58,9 @@ const ReportViewPage: React.FC = () => {
   const formulaInputRef = useRef<HTMLTextAreaElement>(null); // Ref for formula input field
   const [columnDataTypes, setColumnDataTypes] = useState<Record<string, string>>({}); // Maps column name to data type
   const editingModeRef = useRef<'cellName' | 'formula' | null>(null); // Track which input is being edited (using ref to persist through blur events)
-  const [submittedAnswersExpanded, setSubmittedAnswersExpanded] = useState(true); // Track collapsed state for Submitted Answers section
-  const [actualTablesExpanded, setActualTablesExpanded] = useState(true); // Track collapsed state for Actual Tables section
-  const [uploadedFilesExpanded, setUploadedFilesExpanded] = useState(true); // Track collapsed state for Uploaded Files section
+  const [submittedAnswersExpanded, setSubmittedAnswersExpanded] = useState(false); // Track collapsed state for Submitted Answers section
+  const [actualTablesExpanded, setActualTablesExpanded] = useState(false); // Track collapsed state for Actual Tables section
+  const [uploadedFilesExpanded, setUploadedFilesExpanded] = useState(false); // Track collapsed state for Uploaded Files section
   const [docColumnWidths, setDocColumnWidths] = useState<Record<string, ColumnWidth>>({}); // Track column widths per document
   const [tableColumnWidths, setTableColumnWidths] = useState<Record<string, ColumnWidth>>({}); // Track column widths per actual table
 

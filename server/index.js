@@ -17,6 +17,17 @@ import { tables } from './tablePrefix.js';
 import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
 
+// Helper: Prepare SMTP configuration with support for self-signed certificates
+function prepareSMTPConfig(smtpConfig) {
+    if (!smtpConfig) return null;
+    return {
+        ...smtpConfig,
+        tls: {
+            ...smtpConfig.tls,
+            rejectUnauthorized: false // Allow self-signed certificates
+        }
+    };
+}
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
 async function upsertReportAnswers(client, reportId, payload, existingRow, req) {
@@ -3369,7 +3380,7 @@ app.post('/api/admin/test-smtp', requireAdmin, async (req, res) => {
         // dynamic import nodemailer
         try {
             const nm = await import('nodemailer');
-            const transporter = nm.createTransport(smtp);
+            const transporter = nm.createTransport(prepareSMTPConfig(smtp));
             await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to, subject: subject || 'Test', text: text || 'Test message' });
             return res.json({ ok: true });
         } catch (e) {
@@ -3430,7 +3441,7 @@ app.post('/auth/request-password-reset', async (req, res) => {
         
         try {
             const nm = await import('nodemailer');
-            const transporter = nm.createTransport(smtpConfig);
+            const transporter = nm.createTransport(prepareSMTPConfig(smtpConfig));
             const userName = user.first_name && user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name || 'User';
             
             const htmlContent = `
@@ -5125,7 +5136,7 @@ app.post('/auth/register', async (req, res) => {
                 if (smtp) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(smtp);
+                        const transporter = nm.createTransport(prepareSMTPConfig(smtp));
                         const text = `Hello ${u.first_name || ''},\n\nThank you for registering. Please verify your email by clicking the link below:\n\n${verifyUrl}\n\nThis link will expire in 24 hours.`;
                         await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: u.email, subject: 'Verify your email', text });
                     } catch (e) { console.error('Failed to send verification email', e); }
@@ -5152,7 +5163,7 @@ app.post('/auth/register', async (req, res) => {
 
                 if (smtpConfig.host && smtpConfig.auth.user && smtpConfig.auth.pass) {
                     const nm = await import('nodemailer');
-                    const transporter = nm.createTransport(smtpConfig);
+                    const transporter = nm.createTransport(prepareSMTPConfig(smtpConfig));
 
                     const emailContent = `
                     <!DOCTYPE html>
@@ -5926,17 +5937,47 @@ app.get('/api/users', async (req, res) => {
         }
         q += ' ORDER BY created_at DESC';
         const result = await pool.query(q, params);
-        const mapped = result.rows.map(r => {
+        
+        // Fetch roles and permissions for each user
+        const mapped = await Promise.all(result.rows.map(async (r) => {
             const customFields = r.custom_fields ? (typeof r.custom_fields === 'string' ? JSON.parse(r.custom_fields) : r.custom_fields) : null;
+            
+            // Fetch assigned roles
+            let assignedRoles = [];
+            try {
+                const rolesRes = await pool.query(
+                    `SELECT role_id FROM ${tables.USER_ROLES} WHERE user_id = $1`,
+                    [r.id]
+                );
+                assignedRoles = rolesRes.rows.map(row => row.role_id);
+            } catch (e) {
+                console.warn(`Failed to fetch roles for user ${r.id}:`, e.message);
+            }
+            
+            // Fetch assigned permissions
+            let assignedPermissions = [];
+            try {
+                const permsRes = await pool.query(
+                    `SELECT permission_id FROM ${tables.USER_PERMISSIONS} WHERE user_id = $1`,
+                    [r.id]
+                );
+                assignedPermissions = permsRes.rows.map(row => row.permission_id);
+            } catch (e) {
+                console.warn(`Failed to fetch permissions for user ${r.id}:`, e.message);
+            }
+            
             return {
                 ...r,
                 firstName: r.first_name,
                 lastName: r.last_name,
                 profileImage: r.profile_image || null,
                 businessId: r.business_id || null,
+                assignedRoles,
+                assignedPermissions,
                 ...(customFields || {})
             };
-        });
+        }));
+        
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -6062,7 +6103,7 @@ app.post('/api/users', async (req, res) => {
                 if (smtp) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(smtp);
+                        const transporter = nm.createTransport(prepareSMTPConfig(smtp));
                         const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
                         const toList = [u.email];
                         if (adminList) toList.push(adminList);
@@ -6073,7 +6114,7 @@ app.post('/api/users', async (req, res) => {
                 }
             } catch (e) { console.error('Failed to load smtp settings for user-update notification', e); }
 
-            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null });
         } else {
             // only admins may create new users
             const okCreate = await actorIsAdmin();
@@ -6097,7 +6138,7 @@ app.post('/api/users', async (req, res) => {
                 if (smtp) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(smtp);
+                        const transporter = nm.createTransport(prepareSMTPConfig(smtp));
                         const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
                         const toList = [u.email];
                         if (adminList) toList.push(adminList);
@@ -6194,51 +6235,77 @@ app.post('/api/users', async (req, res) => {
                 await pool.query(`INSERT INTO ${tables.AUDIT_EVENTS} (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)`, [actorId || null, u.id, 'create', details]);
             } catch (e) { console.error('Failed to write audit event for user create', e); }
 
-            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null });
         }
-    } catch (e) { console.error(e); res.status(500).send(e.message); }
+    } catch (e) { console.error(e); res.status(500).send(typeof e.message === 'string' ? e.message : String(e)); }
 });
 
 // Delete user (admin only)
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
-    const client = await pool.connect();
     try {
         const id = req.params.id;
         
-        // Start transaction to ensure all deletes succeed together
-        await client.query('BEGIN');
-        
-        // fetch user for audit
-        const ures = await client.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
+        // fetch user for audit before any deletes
+        const ures = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
         const target = ures.rows.length ? ures.rows[0] : null;
         
         if (!target) {
-            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'User not found' });
         }
         
-        // Delete all user-related data in order of dependencies
-        // CASCADE deletes will handle some, but we explicitly delete related data
+        // Delete all user-related data - do NOT use a transaction as try-catch won't prevent abort
+        // Each delete is independent so one failure doesn't affect the others
         
-        // Delete user role assignments
-        await client.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [id]);
+        // Delete user role assignments (known to exist)
+        try {
+            await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [id]);
+        } catch (e) {
+            console.warn('Failed to delete user roles:', e.message);
+        }
         
-        // Delete user preferences
-        try { await client.query(`DELETE FROM ${tables.USER_PREFERENCES} WHERE user_id = $1`, [id]); } catch (e) { /* table may not exist */ }
+        // Delete user permissions (known to exist)
+        try {
+            await pool.query(`DELETE FROM ${tables.USER_PERMISSIONS} WHERE user_id = $1`, [id]);
+        } catch (e) {
+            console.warn('Failed to delete user permissions:', e.message);
+        }
         
-        // Delete user notes/comments if such table exists
-        try { await client.query(`DELETE FROM ${tables.USER_NOTES} WHERE user_id = $1 OR created_by = $1`, [id]); } catch (e) { /* ignore */ }
+        // Delete user preferences (optional table)
+        try {
+            await pool.query(`DELETE FROM ${tables.USER_PREFERENCES} WHERE user_id = $1`, [id]);
+        } catch (e) {
+            console.warn('Failed to delete user preferences (table may not exist):', e.message);
+        }
         
-        // Delete any assignments where this user is assigned
-        try { await client.query(`DELETE FROM ${tables.ASSIGNMENTS} WHERE assigned_to = $1 OR assigned_by = $1`, [id]); } catch (e) { /* ignore */ }
+        // Delete email verifications for this user
+        try {
+            await pool.query(`DELETE FROM ${tables.EMAIL_VERIFICATIONS} WHERE user_id = $1`, [id]);
+        } catch (e) {
+            console.warn('Failed to delete email verifications:', e.message);
+        }
         
-        // Finally delete the user
-        await client.query(`DELETE FROM ${tables.USERS} WHERE id = $1`, [id]);
+        // Delete password reset tokens for this user
+        try {
+            await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE user_id = $1`, [id]);
+        } catch (e) {
+            console.warn('Failed to delete password resets:', e.message);
+        }
         
-        // Commit transaction
-        await client.query('COMMIT');
+        // Delete user approvals
+        try {
+            await pool.query(`DELETE FROM ${tables.USER_APPROVALS} WHERE user_id = $1 OR approved_by = $1`, [id]);
+        } catch (e) {
+            console.warn('Failed to delete user approvals:', e.message);
+        }
         
-        // audit deletion (after commit, so it doesn't rollback)
+        // Finally delete the user record itself
+        const delRes = await pool.query(`DELETE FROM ${tables.USERS} WHERE id = $1`, [id]);
+        
+        if (delRes.rowCount === 0) {
+            return res.status(404).json({ error: 'User not found or already deleted' });
+        }
+        
+        // audit deletion
         try {
             const actorId = req.session && req.session.userId ? req.session.userId : null;
             await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.AUDIT_EVENTS} (
@@ -6255,11 +6322,8 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
         res.json({ ok: true, message: 'User successfully deleted' });
     } catch (e) {
-        try { await client.query('ROLLBACK'); } catch (re) { /* ignore */ }
         console.error('Failed to delete user', e);
         res.status(500).json({ error: 'Failed to delete user: ' + (e.message || String(e)) });
-    } finally {
-        client.release();
     }
 });
 
