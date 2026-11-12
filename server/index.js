@@ -3384,44 +3384,196 @@ app.post('/auth/request-password-reset', async (req, res) => {
     try {
         const { email } = req.body || {};
         if (!email) return res.status(400).json({ ok: false, error: 'Missing email' });
-        const ures = await pool.query(`SELECT id, email, first_name FROM ${tables.USERS} WHERE email = $1`, [email]);
-        if (ures.rows.length === 0) return res.status(404).json({ ok: false, error: 'User not found' });
+        const ures = await pool.query(`SELECT id, email, first_name, last_name FROM ${tables.USERS} WHERE email = $1`, [email]);
+        if (ures.rows.length === 0) {
+            // For security, always return success even if email not found
+            return res.json({ ok: true, message: 'If the email exists, a password reset link has been sent.' });
+        }
         const user = ures.rows[0];
         // ensure password_resets table exists
         await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PASSWORD_RESETS} (user_id INTEGER, token TEXT PRIMARY KEY, expires_at TIMESTAMP)`);
         const token = crypto.randomBytes(24).toString('hex');
         const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
         await pool.query(`INSERT INTO ${tables.PASSWORD_RESETS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [user.id, token, expires]);
-        // load smtp
-        const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp'`);
-        const smtp = sres.rows[0] ? sres.rows[0].value : null;
-        if (!smtp) return res.status(400).json({ ok: false, error: 'SMTP not configured' });
-        const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const resetUrl = `${frontend.replace(/\/$/, '')}/reset-password?token=${token}`;
+        
+        // Try to send via SMTP from settings first
+        let smtpConfig = null;
+        try {
+            const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' LIMIT 1`);
+            if (sres.rows[0] && sres.rows[0].value) {
+                smtpConfig = sres.rows[0].value;
+            }
+        } catch (e) { /* ignore */ }
+        
+        // Fallback to environment variables
+        if (!smtpConfig && process.env.SMTP_HOST) {
+            smtpConfig = {
+                host: process.env.SMTP_HOST,
+                port: parseInt(process.env.SMTP_PORT || '587'),
+                secure: process.env.SMTP_PORT === '465',
+                auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASSWORD
+                },
+                from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER
+            };
+        }
+        
+        if (!smtpConfig) {
+            console.warn('SMTP not configured for password reset');
+            // Still return success for security reasons
+            return res.json({ ok: true, message: 'If the email exists, a password reset link has been sent.' });
+        }
+        
+        const frontend = process.env.FRONTEND_URL || process.env.FRONTEND_HOST || `${req.protocol}://${req.get('host')}`;
+        const resetUrl = `${frontend.replace(/\/$/, '')}/#/reset-password?token=${token}`;
+        
         try {
             const nm = await import('nodemailer');
-            const transporter = nm.createTransport(smtp);
-            const mailText = `Hello ${user.first_name || ''},\n\nYou requested a password reset. Click the link to reset your password: ${resetUrl}\n\nIf you didn't request this, ignore.`;
-            await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: user.email, subject: 'Password Reset', text: mailText });
-        } catch (e) { console.error('Failed to send reset email', e); }
-        return res.json({ ok: true });
-    } catch (e) { console.error('request-password-reset error', e); res.status(500).json({ ok: false, error: String(e) }); }
+            const transporter = nm.createTransport(smtpConfig);
+            const userName = user.first_name && user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name || 'User';
+            
+            const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                    .header h1 { margin: 0; }
+                    .content { background-color: #f5f5f5; padding: 20px; border: 1px solid #ddd; border-radius: 0 0 5px 5px; }
+                    .content p { margin: 10px 0; }
+                    .button { display: inline-block; background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
+                    .button:hover { background-color: #2980b9; }
+                    .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; }
+                    .footer { background-color: #34495e; color: white; padding: 15px; text-align: center; font-size: 12px; border-radius: 0 0 5px 5px; margin-top: 20px; }
+                    code { background-color: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>Password Reset Request</h1>
+                    </div>
+                    <div class="content">
+                        <p>Hello <strong>${userName}</strong>,</p>
+                        
+                        <p>We received a request to reset your password on the <strong>DQAi Data Collection Platform</strong>.</p>
+                        
+                        <p><strong>Click the button below to reset your password:</strong></p>
+                        
+                        <center>
+                            <a href="${resetUrl}" class="button">Reset Password</a>
+                        </center>
+                        
+                        <p>Or copy and paste this link into your browser:</p>
+                        <p><code style="word-break: break-all;">${resetUrl}</code></p>
+                        
+                        <div class="warning">
+                            <p><strong>⚠️ Security Note:</strong></p>
+                            <ul>
+                                <li>This link will expire in 1 hour</li>
+                                <li>If you did not request this reset, please ignore this email</li>
+                                <li>Never share your password reset link with anyone</li>
+                                <li>This is an automated email - do not reply directly</li>
+                            </ul>
+                        </div>
+                        
+                        <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                            If you have any questions or need further assistance, please contact your administrator.
+                        </p>
+                    </div>
+                    <div class="footer">
+                        <p><strong>DQAi Platform</strong></p>
+                        <p>Data Quality Assessment Initiative - Data Collection Platform</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            `;
+            
+            const textContent = `Hello ${userName},
+
+We received a request to reset your password on the DQAi Data Collection Platform.
+
+Click the link below to reset your password:
+${resetUrl}
+
+This link will expire in 1 hour.
+
+If you did not request this reset, please ignore this email.
+
+Best regards,
+DQAi Platform`;
+            
+            await transporter.sendMail({
+                from: smtpConfig.from || smtpConfig.auth?.user || 'no-reply@example.com',
+                to: user.email,
+                subject: 'Password Reset Request - DQAi Platform',
+                html: htmlContent,
+                text: textContent
+            });
+            console.log(`Password reset email sent to ${user.email}`);
+        } catch (e) {
+            console.error('Failed to send reset email', e);
+            // Still return success for security reasons - user can try again if email fails
+        }
+        
+        return res.json({ ok: true, message: 'If the email exists, a password reset link has been sent.' });
+    } catch (e) {
+        console.error('request-password-reset error', e);
+        res.status(500).json({ ok: false, error: String(e) });
+    }
 });
 
 // Password reset: perform reset
 app.post('/auth/reset-password', async (req, res) => {
     try {
         const { token, newPassword } = req.body || {};
-        if (!token || !newPassword) return res.status(400).json({ ok: false, error: 'Missing token or newPassword' });
+        if (!token) return res.status(400).json({ ok: false, error: 'Missing reset token' });
+        if (!newPassword) return res.status(400).json({ ok: false, error: 'Missing new password' });
+        if (newPassword.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters' });
+        
         const tres = await pool.query(`SELECT user_id, expires_at FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
-        if (tres.rows.length === 0) return res.status(400).json({ ok: false, error: 'Invalid token' });
+        if (tres.rows.length === 0) {
+            return res.status(400).json({ ok: false, error: 'Invalid or expired reset token' });
+        }
+        
         const row = tres.rows[0];
-        if (new Date(row.expires_at) < new Date()) return res.status(400).json({ ok: false, error: 'Token expired' });
-        const hash = await bcrypt.hash(newPassword, 10);
-        await pool.query(`UPDATE ${tables.USERS} SET password = $1 WHERE id = $2`, [hash, row.user_id]);
+        if (new Date(row.expires_at) < new Date()) {
+            // Token expired - delete it
+            await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
+            return res.status(400).json({ ok: false, error: 'Reset token has expired. Please request a new password reset.' });
+        }
+        
+        // Hash the new password
+        let hash;
+        try {
+            hash = await bcrypt.hash(newPassword, 10);
+        } catch (e) {
+            console.error('Password hashing failed:', e);
+            return res.status(500).json({ ok: false, error: 'Failed to process password' });
+        }
+        
+        // Update password and clean up token
+        await pool.query(`UPDATE ${tables.USERS} SET password = $1, updated_at = NOW() WHERE id = $2`, [hash, row.user_id]);
         await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
-        return res.json({ ok: true });
-    } catch (e) { console.error('reset-password error', e); res.status(500).json({ ok: false, error: String(e) }); }
+        
+        // Get user info for logging
+        try {
+            const userInfo = await pool.query(`SELECT email FROM ${tables.USERS} WHERE id = $1`, [row.user_id]);
+            if (userInfo.rows[0]) {
+                console.log(`Password reset successfully for user: ${userInfo.rows[0].email}`);
+            }
+        } catch (e) { /* ignore */ }
+        
+        return res.json({ ok: true, message: 'Password has been successfully reset. You can now log in with your new password.' });
+    } catch (e) {
+        console.error('reset-password error', e);
+        res.status(500).json({ ok: false, error: 'Failed to reset password: ' + String(e) });
+    }
 });
 
 // Admin: generic settings store (key/value JSON)
@@ -5949,11 +6101,80 @@ app.post('/api/users', async (req, res) => {
                         const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
                         const toList = [u.email];
                         if (adminList) toList.push(adminList);
-                        const subject = 'Account created';
-                        let text = `Hello ${u.first_name || ''},\n\nAn account has been created for you.`;
-                        if (!password) text += '\n\nNo password was provided. You can set a password using the password reset flow.';
-                        text += '\n\nIf you did not expect this, contact support.';
-                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: toList.join(','), subject, text });
+                        const subject = 'Welcome! Your Account Has Been Created';
+                        
+                        // Build HTML email with credentials if password was provided
+                        let htmlBody = `
+                            <html>
+                                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                                        <h2 style="color: #2c3e50;">Welcome, ${u.first_name || 'User'}!</h2>
+                                        <p>Your account has been successfully created on our platform.</p>
+                        `;
+                        
+                        if (password) {
+                            htmlBody += `
+                                <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                    <h3 style="color: #2c3e50; margin-top: 0;">Your Login Credentials</h3>
+                                    <p><strong>Email:</strong> ${u.email}</p>
+                                    <p><strong>Password:</strong> ${password}</p>
+                                    <p style="color: #e74c3c; font-weight: bold; margin: 15px 0 0 0;">⚠️ Please change your password on first login for security.</p>
+                                </div>
+                            `;
+                        } else {
+                            htmlBody += `
+                                <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                    <h3 style="color: #856404; margin-top: 0;">Set Your Password</h3>
+                                    <p>No password was provided during account creation. You can set a password using the password reset flow:</p>
+                                    <ol>
+                                        <li>Click the "Forgot Password?" link on the login page</li>
+                                        <li>Enter your email address</li>
+                                        <li>Check your email for a password reset link</li>
+                                        <li>Follow the link to create your new password</li>
+                                    </ol>
+                                </div>
+                            `;
+                        }
+                        
+                        htmlBody += `
+                                    <div style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-radius: 4px;">
+                                        <h3 style="color: #2c3e50; margin-top: 0;">Next Steps</h3>
+                                        <ul>
+                                            <li>Log in with your credentials</li>
+                                            <li>Complete your profile if needed</li>
+                                            <li>Contact support if you need assistance</li>
+                                        </ul>
+                                    </div>
+                                    
+                                    <p style="color: #666; font-size: 0.9em; margin-top: 30px;">
+                                        If you did not expect this account creation or have any questions, please contact support.
+                                    </p>
+                                    
+                                    <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+                                    <p style="color: #999; font-size: 0.85em; text-align: center;">
+                                        This is an automated message. Please do not reply to this email.
+                                    </p>
+                                </div>
+                            </body>
+                        </html>
+                        `;
+                        
+                        // Also create plain text version
+                        let textBody = `Hello ${u.first_name || 'User'},\n\nYour account has been successfully created.\n\n`;
+                        if (password) {
+                            textBody += `Your Login Credentials:\nEmail: ${u.email}\nPassword: ${password}\n\n⚠️ Please change your password on first login for security.\n\n`;
+                        } else {
+                            textBody += `Set Your Password:\nNo password was provided. You can set a password using the password reset flow by clicking "Forgot Password?" on the login page.\n\n`;
+                        }
+                        textBody += `If you did not expect this, contact support.`;
+                        
+                        await transporter.sendMail({
+                            from: smtp.from || smtp.user || 'no-reply@example.com',
+                            to: toList.join(','),
+                            subject,
+                            text: textBody,
+                            html: htmlBody
+                        });
                     } catch (e) { console.error('Failed to send user-create email', e); }
                 }
             } catch (e) { console.error('Failed to load smtp settings for user-create notification', e); }
@@ -5980,15 +6201,44 @@ app.post('/api/users', async (req, res) => {
 
 // Delete user (admin only)
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+    const client = await pool.connect();
     try {
         const id = req.params.id;
+        
+        // Start transaction to ensure all deletes succeed together
+        await client.query('BEGIN');
+        
         // fetch user for audit
-        const ures = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
+        const ures = await client.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
         const target = ures.rows.length ? ures.rows[0] : null;
-        // remove role assignments
-        await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [id]);
-        await pool.query(`DELETE FROM ${tables.USERS} WHERE id = $1`, [id]);
-        // audit deletion
+        
+        if (!target) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        // Delete all user-related data in order of dependencies
+        // CASCADE deletes will handle some, but we explicitly delete related data
+        
+        // Delete user role assignments
+        await client.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [id]);
+        
+        // Delete user preferences
+        try { await client.query(`DELETE FROM ${tables.USER_PREFERENCES} WHERE user_id = $1`, [id]); } catch (e) { /* table may not exist */ }
+        
+        // Delete user notes/comments if such table exists
+        try { await client.query(`DELETE FROM ${tables.USER_NOTES} WHERE user_id = $1 OR created_by = $1`, [id]); } catch (e) { /* ignore */ }
+        
+        // Delete any assignments where this user is assigned
+        try { await client.query(`DELETE FROM ${tables.ASSIGNMENTS} WHERE assigned_to = $1 OR assigned_by = $1`, [id]); } catch (e) { /* ignore */ }
+        
+        // Finally delete the user
+        await client.query(`DELETE FROM ${tables.USERS} WHERE id = $1`, [id]);
+        
+        // Commit transaction
+        await client.query('COMMIT');
+        
+        // audit deletion (after commit, so it doesn't rollback)
         try {
             const actorId = req.session && req.session.userId ? req.session.userId : null;
             await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.AUDIT_EVENTS} (
@@ -5999,12 +6249,18 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
                 details JSONB,
                 created_at TIMESTAMP DEFAULT NOW()
             )`);
-            const details = { deleted: true, email: target ? target.email : null, role: target ? target.role : null };
+            const details = { deleted: true, email: target.email, role: target.role };
             await pool.query(`INSERT INTO ${tables.AUDIT_EVENTS} (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)`, [actorId || null, id, 'delete', details]);
         } catch (e) { console.error('Failed to write audit event for user delete', e); }
 
-        res.json({ ok: true });
-    } catch (e) { console.error('Failed to delete user', e); res.status(500).json({ error: 'Failed to delete user' }); }
+        res.json({ ok: true, message: 'User successfully deleted' });
+    } catch (e) {
+        try { await client.query('ROLLBACK'); } catch (re) { /* ignore */ }
+        console.error('Failed to delete user', e);
+        res.status(500).json({ error: 'Failed to delete user: ' + (e.message || String(e)) });
+    } finally {
+        client.release();
+    }
 });
 
 // User Preferences - get a preference

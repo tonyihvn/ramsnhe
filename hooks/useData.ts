@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect, createElement, ReactNode, FC } from 'react';
+import React, { createContext, useContext, useState, useEffect, createElement, ReactNode, FC, useCallback } from 'react';
 import { addAuditEvent, flushAudit } from './useAudit';
 import { error as swalError, toast as swalToast } from '../components/ui/swal';
 import { Program, Activity, Facility, User, ActivityReport, FormDefinition } from '../types';
@@ -72,7 +72,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     const [reports, setReports] = useState<ActivityReport[]>([]);
 
     // Function to refresh all business data from the server
-    const refreshBusinessData = async () => {
+    const refreshBusinessData = useCallback(async () => {
         if (!currentUser) {
             setPrograms([]);
             setActivities([]);
@@ -149,7 +149,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
             setUsers([]);
             setReports([]);
         }
-    };
+    }, [currentUser]);
 
     // Initial Data Fetch
     useEffect(() => {
@@ -195,7 +195,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     // Fetch business-scoped data when currentUser changes
     useEffect(() => {
         refreshBusinessData();
-    }, [currentUser?.id]);
+    }, [refreshBusinessData]);
 
     const login = async (email: string, password: string) => {
         try {
@@ -211,14 +211,6 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 try { localStorage.setItem('intelliform_current_user', JSON.stringify(user)); } catch (e) { }
                 // record login event locally and try to flush
                 try { addAuditEvent({ type: 'login', userId: user.id, email: user.email, method: 'password' }); await flushAudit(user.id); } catch (e) { /* ignore */ }
-                
-                // Immediately refresh all business data after successful login
-                // This ensures data is loaded from the database without requiring a page reload
-                // We create a temporary state to trigger the refresh effect
-                setCurrentUser(user);
-                // Use a micro-task to ensure state is updated before refresh
-                await new Promise(resolve => setTimeout(resolve, 50));
-                await refreshBusinessData();
                 
                 return user;
             } else {
