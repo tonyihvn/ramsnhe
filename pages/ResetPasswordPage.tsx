@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
+import SimpleHeader from '../components/layout/SimpleHeader';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 function useQuery() {
@@ -79,19 +80,21 @@ const ResetPasswordPage: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-lg shadow-md">
-                <div>
-                    <h2 className="text-2xl font-bold text-center text-gray-900">Reset Your Password</h2>
-                    <p className="mt-2 text-center text-sm text-gray-600">Enter a new password for your account</p>
-                </div>
-                
-                {!message ? (
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <MInput
-                            id="newpass"
-                            name="newpass"
-                            type="password"
+        <div className="min-h-screen flex flex-col bg-gray-50">
+            <SimpleHeader title="Reset Your Password" />
+            <div className="flex-1 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-lg shadow-md">
+                    <div>
+                        <h2 className="text-2xl font-bold text-center text-gray-900">Reset Your Password</h2>
+                        <p className="mt-2 text-center text-sm text-gray-600">Enter a new password for your account</p>
+                    </div>
+                    
+                    {!message ? (
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <MInput
+                                id="newpass"
+                                name="newpass"
+                                type="password"
                             label="New Password"
                             value={password}
                             onChange={v => setPassword(v)}
@@ -145,6 +148,7 @@ const ResetPasswordPage: React.FC = () => {
                         </div>
                     </div>
                 )}
+                </div>
             </div>
         </div>
     );
