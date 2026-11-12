@@ -1816,8 +1816,9 @@ function SMTPSettings() {
                         <ul className="list-disc pl-5 mt-2">
                             <li>For Gmail use <strong>Host</strong>: <code>smtp.gmail.com</code>.</li>
                             <li>If using SSL set <strong>Port</strong> to <code>465</code> and <strong>Secure</strong> to true; for STARTTLS use port <code>587</code> and secure=false.</li>
-                            <li>If your Google account has 2-step verification enabled, create an <strong>App Password</strong> and use it as the SMTP password (recommended).</li>
-                            <li>Google blocks simple username/password auth for many accounts; if you see <code>530 Authentication Required</code> obtain an App Password or use OAuth2.</li>
+                            <li><strong>IMPORTANT:</strong> If your Google account has 2-step verification enabled (recommended for security), you <strong>must</strong> create an <strong>App Password</strong> and use it as the SMTP password, NOT your regular Google password.</li>
+                            <li>To create an App Password: Go to <a className="text-primary-600 hover:underline" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer">myaccount.google.com/apppasswords</a>, select "Mail" and "Other (Windows Mail)", then copy the generated 16-character password and paste it as the SMTP password (without spaces).</li>
+                            <li>Error <code>535-5.7.8 Username and Password not accepted</code> means: Check that you're using an App Password (not your regular password), ensure no extra spaces, and verify the email address is correct.</li>
                             <li>After saving settings click <strong>Send test email</strong> and check server logs for nodemailer errors.</li>
                         </ul>
                         <div className="mt-2 text-xs text-gray-500">See: <a className="text-primary-600 hover:underline" href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noreferrer">Google App Passwords</a></div>

@@ -227,3 +227,28 @@ nav .red {
     transform: translateY(-0.9rem) scale(0.86) !important;
     color: var(--primary-color, #3b82f6) !important;
 }
+
+/* Force modal buttons to use their proper styling and not be overridden */
+.materialize-modal button,
+.materialize-modal .inline-flex {
+    background-color: inherit !important;
+}
+
+/* Ensure button variants display correctly inside modals */
+.materialize-modal button[type="button"],
+.materialize-modal button[type="submit"] {
+    /* Let the button's own classes determine its appearance */
+}
+
+/* Specific button styling inside modals to prevent white background override */
+.materialize-modal .bg-primary-600 {
+    background-color: #1e40af !important;
+}
+
+.materialize-modal .bg-primary-100 {
+    background-color: #dbeafe !important;
+}
+
+.materialize-modal .bg-red-600 {
+    background-color: #dc2626 !important;
+}

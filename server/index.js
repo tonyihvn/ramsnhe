@@ -17,16 +17,69 @@ import { tables } from './tablePrefix.js';
 import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
 
-// Helper: Prepare SMTP configuration with support for self-signed certificates
+// Helper: Prepare SMTP configuration with support for self-signed certificates and Gmail app passwords
 function prepareSMTPConfig(smtpConfig) {
     if (!smtpConfig) return null;
-    return {
-        ...smtpConfig,
-        tls: {
-            ...smtpConfig.tls,
-            rejectUnauthorized: false // Allow self-signed certificates
-        }
+    
+    const config = { ...smtpConfig };
+    
+    // Ensure TLS configuration
+    if (!config.tls) {
+        config.tls = {};
+    }
+    config.tls = {
+        ...config.tls,
+        rejectUnauthorized: false // Allow self-signed certificates
     };
+    
+    // Create auth object if user/pass are at top level (from legacy form)
+    if (!config.auth && (config.user || config.pass)) {
+        config.auth = {
+            user: config.user?.trim(),
+            pass: config.pass?.trim()
+        };
+    }
+    
+    // For Gmail: ensure auth credentials are properly formatted
+    if (config.host === 'smtp.gmail.com' || config.host?.includes('gmail')) {
+        // Ensure auth object exists
+        if (!config.auth) {
+            config.auth = {};
+        }
+        
+        // Merge all possible credential sources
+        config.auth = {
+            user: (config.auth.user || config.user || config.email || '').toString().trim(),
+            pass: (config.auth.pass || config.pass || config.password || '').toString().trim()
+        };
+        
+        // Validate that we have credentials
+        if (!config.auth.user || !config.auth.pass) {
+            console.warn('[prepareSMTPConfig] Gmail SMTP config missing user or password credentials');
+        }
+        
+        // Gmail typically uses port 587 (TLS) or 465 (SSL)
+        if (!config.port) {
+            config.port = 587;
+        }
+        
+        // For port 465, use secure connection; for 587 use STARTTLS
+        if (config.port === 465) {
+            config.secure = true;
+        } else if (config.port === 587) {
+            config.secure = false; // Use STARTTLS instead
+        }
+    }
+    
+    // For non-Gmail providers, ensure auth exists if credentials provided
+    if (!config.auth && (config.user || config.pass)) {
+        config.auth = {
+            user: config.user?.trim(),
+            pass: config.pass?.trim()
+        };
+    }
+    
+    return config;
 }
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
@@ -3413,8 +3466,9 @@ app.post('/auth/request-password-reset', async (req, res) => {
             const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' LIMIT 1`);
             if (sres.rows[0] && sres.rows[0].value) {
                 smtpConfig = sres.rows[0].value;
+                console.log('[Password Reset] Using SMTP config from database (host: ' + (smtpConfig.host || 'unknown') + ')');
             }
-        } catch (e) { /* ignore */ }
+        } catch (e) { console.warn('Failed to load SMTP from database:', e.message); }
         
         // Fallback to environment variables
         if (!smtpConfig && process.env.SMTP_HOST) {
@@ -3423,11 +3477,12 @@ app.post('/auth/request-password-reset', async (req, res) => {
                 port: parseInt(process.env.SMTP_PORT || '587'),
                 secure: process.env.SMTP_PORT === '465',
                 auth: {
-                    user: process.env.SMTP_USER,
-                    pass: process.env.SMTP_PASSWORD
+                    user: (process.env.SMTP_USER || '').trim(),
+                    pass: (process.env.SMTP_PASSWORD || '').trim()
                 },
                 from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER
             };
+            console.log('[Password Reset] Using SMTP config from environment variables (host: ' + smtpConfig.host + ')');
         }
         
         if (!smtpConfig) {
@@ -6065,7 +6120,7 @@ app.post('/api/users', async (req, res) => {
 
             if (updates.length === 0) {
                 const u = existing;
-                return res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? JSON.parse(u.custom_fields) : null });
+                return res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null });
             }
 
             const sql = `UPDATE ${tables.USERS} SET ${updates.join(', ')} WHERE id=$${idx} RETURNING *`;

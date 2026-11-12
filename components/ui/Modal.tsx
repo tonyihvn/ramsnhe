@@ -38,7 +38,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
               <h3 className="text-lg leading-6 font-medium text-gray-900" id="modal-title">
                 {title}
               </h3>
-              <button onClick={onClose} className="bg-white rounded-md text-gray-400 hover:text-gray-500 focus:outline-none">
+              <button onClick={onClose} className="rounded-md text-gray-400 hover:text-gray-500 focus:outline-none">
                 <span className="sr-only">Close</span>
                 <XMarkIcon className="h-6 w-6" aria-hidden="true" />
               </button>

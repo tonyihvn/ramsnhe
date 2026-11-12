@@ -29,10 +29,18 @@ const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', size = '
     lg: 'h-5 w-5',
   }
 
+  // Fallback inline styles to ensure colors are applied
+  const variantStyles = {
+    primary: { backgroundColor: '#2563eb', color: '#ffffff' },
+    secondary: { backgroundColor: '#dbeafe', color: '#1d4ed8' },
+    danger: { backgroundColor: '#dc2626', color: '#ffffff' },
+  };
+
   return (
     <button
       type="button"
       className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${props.className || ''}`}
+      style={variantStyles[variant]}
       {...props}
     >
       {leftIcon && <span className={`mr-2 -ml-1 ${iconSizeClasses[size]}`}>{leftIcon}</span>}
