@@ -56,6 +56,8 @@ function prepareSMTPConfig(smtpConfig) {
         // Validate that we have credentials
         if (!config.auth.user || !config.auth.pass) {
             console.warn('[prepareSMTPConfig] Gmail SMTP config missing user or password credentials');
+        } else {
+            console.log('[prepareSMTPConfig] Gmail SMTP configured for user: ' + config.auth.user);
         }
         
         // Gmail typically uses port 587 (TLS) or 465 (SSL)
@@ -66,9 +68,17 @@ function prepareSMTPConfig(smtpConfig) {
         // For port 465, use secure connection; for 587 use STARTTLS
         if (config.port === 465) {
             config.secure = true;
+            console.log('[prepareSMTPConfig] Gmail using port 465 with SSL (secure: true)');
         } else if (config.port === 587) {
             config.secure = false; // Use STARTTLS instead
+            console.log('[prepareSMTPConfig] Gmail using port 587 with TLS (secure: false)');
         }
+        
+        // Ensure tls settings are optimal for Gmail
+        config.tls = {
+            rejectUnauthorized: false,
+            minVersion: 'TLSv1.2'
+        };
     }
     
     // For non-Gmail providers, ensure auth exists if credentials provided
@@ -3583,7 +3593,10 @@ DQAi Platform`;
             });
             console.log(`Password reset email sent to ${user.email}`);
         } catch (e) {
-            console.error('Failed to send reset email', e);
+            console.error('Failed to send reset email Error:', e.message || e);
+            if (e.code) console.error('Error code:', e.code);
+            if (e.response) console.error('SMTP response:', e.response);
+            if (e.command) console.error('SMTP command that failed:', e.command);
             // Still return success for security reasons - user can try again if email fails
         }
         
@@ -9451,6 +9464,58 @@ app.get('/api/public/facility_summary', async (req, res) => {
     } catch (e) {
         console.error('facility_summary error', e);
         res.status(500).json({ error: String(e) });
+    }
+});
+
+// Test SMTP Configuration endpoint - helps diagnose email issues
+app.post('/api/test-smtp', async (req, res) => {
+    try {
+        const { host, port, user, pass, from } = req.body;
+        
+        if (!host || !port || !user || !pass) {
+            return res.status(400).json({ error: 'Missing SMTP configuration: host, port, user, and pass are required' });
+        }
+        
+        const testConfig = {
+            host: host.trim(),
+            port: parseInt(port),
+            secure: parseInt(port) === 465,
+            auth: { user: user.trim(), pass: pass.trim() },
+            tls: { rejectUnauthorized: false, minVersion: 'TLSv1.2' }
+        };
+        
+        const nm = await import('nodemailer');
+        const transporter = nm.createTransport(testConfig);
+        
+        // Verify SMTP connection
+        await transporter.verify();
+        
+        // Send a test email
+        await transporter.sendMail({
+            from: from || user.trim(),
+            to: user.trim(),
+            subject: 'SMTP Test Email - DQAi Platform',
+            text: 'This is a test email to verify your SMTP configuration is working correctly.',
+            html: '<h2>SMTP Configuration Test</h2><p>This is a test email to verify your SMTP configuration is working correctly.</p>'
+        });
+        
+        res.json({ 
+            ok: true, 
+            message: 'SMTP test successful! Email configuration is working correctly.',
+            config: { host, port, user, from: from || user.trim() }
+        });
+    } catch (e) {
+        console.error('SMTP test error:', e.message);
+        res.status(500).json({ 
+            ok: false,
+            error: e.message || String(e),
+            code: e.code || 'UNKNOWN',
+            details: {
+                response: e.response || null,
+                command: e.command || null,
+                code: e.code || null
+            }
+        });
     }
 });
 
