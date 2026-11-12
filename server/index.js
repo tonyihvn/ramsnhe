@@ -3493,6 +3493,9 @@ app.post('/auth/request-password-reset', async (req, res) => {
                 from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER
             };
             console.log('[Password Reset] Using SMTP config from environment variables (host: ' + smtpConfig.host + ')');
+            console.log('[Password Reset] SMTP User: ' + smtpConfig.auth.user);
+            console.log('[Password Reset] SMTP Password length: ' + smtpConfig.auth.pass.length + ' chars');
+            console.log('[Password Reset] SMTP Port: ' + smtpConfig.port);
         }
         
         if (!smtpConfig) {
@@ -9519,6 +9522,72 @@ app.post('/api/test-smtp', async (req, res) => {
                 code: e.code || null
             }
         });
+    }
+});
+
+// Check and clear database SMTP settings - useful for debugging
+app.get('/api/check-smtp-config', async (req, res) => {
+    try {
+        const sres = await pool.query(`SELECT key, value FROM ${tables.SETTINGS} WHERE key = 'smtp'`);
+        
+        if (sres.rows.length === 0) {
+            return res.json({ 
+                ok: true, 
+                message: 'No SMTP config in database. Using environment variables.',
+                database: null,
+                environment: {
+                    host: process.env.SMTP_HOST || 'NOT SET',
+                    port: process.env.SMTP_PORT || 'NOT SET',
+                    user: process.env.SMTP_USER || 'NOT SET',
+                    hasPassword: !!process.env.SMTP_PASSWORD,
+                    passwordLength: process.env.SMTP_PASSWORD ? process.env.SMTP_PASSWORD.length : 0
+                }
+            });
+        }
+        
+        const dbConfig = sres.rows[0].value;
+        res.json({ 
+            ok: true, 
+            message: 'SMTP config found in database',
+            database: {
+                host: dbConfig.host || 'NOT SET',
+                port: dbConfig.port || 'NOT SET',
+                user: dbConfig.auth?.user || 'NOT SET',
+                hasPassword: !!(dbConfig.auth?.pass),
+                passwordLength: dbConfig.auth?.pass ? dbConfig.auth.pass.length : 0
+            },
+            environment: {
+                host: process.env.SMTP_HOST || 'NOT SET',
+                port: process.env.SMTP_PORT || 'NOT SET',
+                user: process.env.SMTP_USER || 'NOT SET',
+                hasPassword: !!process.env.SMTP_PASSWORD,
+                passwordLength: process.env.SMTP_PASSWORD ? process.env.SMTP_PASSWORD.length : 0
+            },
+            note: 'Database config takes priority. If database config is incorrect, delete it to use environment variables.'
+        });
+    } catch (e) {
+        console.error('Check SMTP config error:', e.message);
+        res.status(500).json({ error: String(e) });
+    }
+});
+
+// Delete database SMTP settings - forces use of environment variables
+app.delete('/api/smtp-config', async (req, res) => {
+    try {
+        await pool.query(`DELETE FROM ${tables.SETTINGS} WHERE key = 'smtp'`);
+        res.json({ 
+            ok: true, 
+            message: 'Database SMTP config deleted. Now using environment variables.',
+            environment: {
+                host: process.env.SMTP_HOST || 'NOT SET',
+                port: process.env.SMTP_PORT || 'NOT SET',
+                user: process.env.SMTP_USER || 'NOT SET',
+                hasPassword: !!process.env.SMTP_PASSWORD
+            }
+        });
+    } catch (e) {
+        console.error('Delete SMTP config error:', e.message);
+        res.status(500).json({ error: String(e) });
     }
 });
 
