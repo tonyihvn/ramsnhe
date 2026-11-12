@@ -9,6 +9,7 @@ import DynamicFormRenderer from '../components/DynamicFormRenderer';
 import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { User } from '../types';
 import { FormSchema } from '../components/FormBuilder';
+import * as swal from '../components/ui/swal';
 
 const UsersPage: React.FC = () => {
   const { users, saveUser, deleteUser, currentUser, facilities } = useData();
@@ -90,7 +91,7 @@ const UsersPage: React.FC = () => {
 
   const handleSave = async () => {
     if (!currentUserEdit.firstName || !currentUserEdit.email) {
-      alert('Name and Email are required.');
+      swal.error('Validation Error', 'Name and Email are required.');
       return;
     }
 
@@ -123,7 +124,7 @@ const UsersPage: React.FC = () => {
       if (!userRes.ok) {
         const errText = await userRes.text();
         console.error('Failed to save user:', errText);
-        alert('Failed to save user: ' + errText);
+        swal.error('Save Failed', errText || 'Failed to save user');
         return;
       }
       
@@ -188,11 +189,18 @@ const UsersPage: React.FC = () => {
         }
       }
       
-      // 4. Close modal - the data will auto-refresh on close
+      // 4. Close modal and show success message
       setIsModalOpen(false);
+      
+      // 5. Show success notification
+      if (isNewUser) {
+        swal.success('User Created', `${currentUserEdit.firstName} ${currentUserEdit.lastName} has been successfully created.`);
+      } else {
+        swal.success('User Updated', `${currentUserEdit.firstName} ${currentUserEdit.lastName} has been successfully updated.`);
+      }
     } catch (e) {
       console.error('Error saving user:', e);
-      alert('Failed to save user: ' + String(e));
+      swal.error('Save Failed', 'Failed to save user: ' + String(e));
     }
   };
 

@@ -38,7 +38,8 @@ const ProfilePage: React.FC = () => {
 
     const handleSave = async () => {
         if (!currentUser) return alert('No current user');
-        const payload: any = { id: currentUser.id, firstName: form.firstName, lastName: form.lastName, email: form.email, facilityId: selectedFacility };
+        // Only include fields that users can update - exclude email and facilityId which are admin-only
+        const payload: any = { id: currentUser.id, firstName: form.firstName, lastName: form.lastName };
         if (form.password && form.password.length > 0) payload.password = form.password;
         if (profileImage) payload.profileImage = profileImage;
         await saveUser(payload);
@@ -95,7 +96,8 @@ const ProfilePage: React.FC = () => {
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Email</label>
-                        <input className="mt-1 block w-full p-2 border rounded" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+                        <input className="mt-1 block w-full p-2 border rounded bg-gray-100 cursor-not-allowed" value={form.email} readOnly disabled />
+                        <p className="text-xs text-gray-500 mt-1">Contact an administrator to change your email address</p>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700">New Password</label>
@@ -103,10 +105,11 @@ const ProfilePage: React.FC = () => {
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Facility</label>
-                        <select className="mt-1 block w-full p-2 border rounded" value={selectedFacility || ''} onChange={e => setSelectedFacility(e.target.value)}>
+                        <select className="mt-1 block w-full p-2 border rounded bg-gray-100 cursor-not-allowed" value={selectedFacility || ''} onChange={() => {}} disabled>
                             <option value="">-- None --</option>
                             {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                         </select>
+                        <p className="text-xs text-gray-500 mt-1">Contact an administrator to change your facility assignment</p>
                     </div>
                 </div>
 

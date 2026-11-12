@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useData } from '../hooks/useData';
 import { useNavigate } from 'react-router-dom';
 import SuperAdminNav from '../components/SuperAdminNav';
+import * as swal from '../components/ui/swal';
 
 const SuperAdminUserManagement: React.FC = () => {
   const { currentUser } = useData();
@@ -49,9 +50,14 @@ const SuperAdminUserManagement: React.FC = () => {
         credentials: 'include'
       });
       if (!response.ok) throw new Error('Failed to activate user');
+      
+      const user = users.find(u => u.id === userId);
+      swal.success('User Activated', `${user?.first_name} ${user?.last_name} has been activated.`);
       loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to activate user');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to activate user';
+      setError(errorMsg);
+      swal.error('Activation Failed', errorMsg);
     }
   };
 
@@ -63,9 +69,14 @@ const SuperAdminUserManagement: React.FC = () => {
         credentials: 'include'
       });
       if (!response.ok) throw new Error('Failed to deactivate user');
+      
+      const user = users.find(u => u.id === userId);
+      swal.success('User Deactivated', `${user?.first_name} ${user?.last_name} has been deactivated.`);
       loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to deactivate user');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to deactivate user';
+      setError(errorMsg);
+      swal.error('Deactivation Failed', errorMsg);
     }
   };
 
@@ -314,10 +325,25 @@ const CreateUserForm: React.FC<{ onSuccess: () => void; onCancel: () => void }> 
         credentials: 'include',
         body: JSON.stringify(formData)
       });
-      if (!response.ok) throw new Error('Failed to create user');
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to create user');
+      }
+      
+      const newUser = await response.json();
+      
+      // Show success notification
+      swal.success(
+        'User Created Successfully',
+        `${formData.firstName} ${formData.lastName} has been created and added to the user list.`
+      );
+      
+      // Call onSuccess to reload users and close the form
       onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create user');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to create user';
+      setError(errorMsg);
+      swal.error('Creation Failed', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -413,9 +439,13 @@ const UserDetailsModal: React.FC<{ user: any; onClose: () => void; onUpdate: () 
         body: JSON.stringify({ role: editRole })
       });
       if (!response.ok) throw new Error('Failed to update role');
+      
+      swal.success('Role Updated', `${user.first_name} ${user.last_name}'s role has been updated to ${editRole}.`);
       onUpdate();
       onClose();
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to update role';
+      swal.error('Update Failed', errorMsg);
       console.error('Update role error:', err);
     } finally {
       setLoading(false);

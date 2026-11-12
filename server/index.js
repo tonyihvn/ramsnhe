@@ -92,6 +92,39 @@ function prepareSMTPConfig(smtpConfig) {
     return config;
 }
 
+// Helper: Get SMTP config with database priority, then fallback to environment variables
+async function getSMTPConfigWithFallback(pool, businessId = null) {
+    try {
+        // Try to load from database first
+        const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND (business_id = $1 OR business_id IS NULL) LIMIT 1`, [businessId]);
+        if (sres.rows[0] && sres.rows[0].value) {
+            console.log('[getSMTPConfig] Using SMTP config from database');
+            return sres.rows[0].value;
+        }
+    } catch (e) {
+        console.warn('[getSMTPConfig] Failed to load SMTP from database:', e.message);
+    }
+    
+    // Fallback to environment variables
+    if (process.env.SMTP_HOST) {
+        const envConfig = {
+            host: process.env.SMTP_HOST,
+            port: parseInt(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_PORT === '465',
+            auth: {
+                user: (process.env.SMTP_USER || '').trim(),
+                pass: (process.env.SMTP_PASSWORD || '').trim()
+            },
+            from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER
+        };
+        console.log('[getSMTPConfig] Using SMTP config from environment variables');
+        return envConfig;
+    }
+    
+    console.warn('[getSMTPConfig] No SMTP configuration found (database or environment)');
+    return null;
+}
+
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
 async function upsertReportAnswers(client, reportId, payload, existingRow, req) {
     // existingRow: the ${tables.ACTIVITY_REPORTS} row for this report
@@ -5199,17 +5232,17 @@ app.post('/auth/register', async (req, res) => {
                 const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
                 await pool.query(`INSERT INTO ${tables.EMAIL_VERIFICATIONS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [u.id, token, expires]);
 
-                // load smtp
-                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
-                const smtp = sres.rows[0] ? sres.rows[0].value : null;
+                // load smtp with fallback to environment
+                const smtpConfig = await getSMTPConfigWithFallback(pool, businessId);
                 const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
                 const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
-                if (smtp) {
+                if (smtpConfig) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(prepareSMTPConfig(smtp));
+                        const transporter = nm.createTransport(prepareSMTPConfig(smtpConfig));
                         const text = `Hello ${u.first_name || ''},\n\nThank you for registering. Please verify your email by clicking the link below:\n\n${verifyUrl}\n\nThis link will expire in 24 hours.`;
-                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: u.email, subject: 'Verify your email', text });
+                        await transporter.sendMail({ from: smtpConfig.from || smtpConfig.user || 'no-reply@example.com', to: u.email, subject: 'Verify your email', text });
+                        console.log(`Verification email sent to ${u.email}`);
                     } catch (e) { console.error('Failed to send verification email', e); }
                 } else {
                     console.warn('SMTP not configured; cannot send verification email');
@@ -6169,23 +6202,25 @@ app.post('/api/users', async (req, res) => {
             // send notification email if smtp configured
             try {
                 const businessId = req.session?.businessId || null;
-                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
-                const smtp = sres.rows[0] ? sres.rows[0].value : null;
-                if (smtp) {
+                const smtpConfig = await getSMTPConfigWithFallback(pool, businessId);
+                if (smtpConfig) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(prepareSMTPConfig(smtp));
-                        const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
+                        const transporter = nm.createTransport(prepareSMTPConfig(smtpConfig));
+                        const adminList = (smtpConfig.admins && Array.isArray(smtpConfig.admins)) ? smtpConfig.admins.join(',') : (smtpConfig.admins || smtpConfig.adminEmail || null);
                         const toList = [u.email];
                         if (adminList) toList.push(adminList);
                         const subject = 'Account updated';
                         const text = `Hello ${u.first_name || ''},\n\nYour account has been updated. If you did not expect this, contact support.`;
-                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: toList.join(','), subject, text });
+                        await transporter.sendMail({ from: smtpConfig.from || smtpConfig.user || 'no-reply@example.com', to: toList.join(','), subject, text });
+                        console.log(`Account update email sent to ${u.email}`);
                     } catch (e) { console.error('Failed to send user-update email', e); }
+                } else {
+                    console.warn('[User Update] No SMTP config - update notification not sent');
                 }
             } catch (e) { console.error('Failed to load smtp settings for user-update notification', e); }
 
-            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'object' ? u.custom_fields : JSON.parse(u.custom_fields)) : null });
         } else {
             // only admins may create new users
             const okCreate = await actorIsAdmin();
@@ -6204,23 +6239,44 @@ app.post('/api/users', async (req, res) => {
             const u = result.rows[0];
             // send welcome email if smtp configured
             try {
-                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessIdForNewUser]);
-                const smtp = sres.rows[0] ? sres.rows[0].value : null;
-                if (smtp) {
+                const smtpConfig = await getSMTPConfigWithFallback(pool, businessIdForNewUser);
+                if (smtpConfig) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(prepareSMTPConfig(smtp));
-                        const adminList = (smtp.admins && Array.isArray(smtp.admins)) ? smtp.admins.join(',') : (smtp.admins || smtp.adminEmail || null);
+                        const transporter = nm.createTransport(prepareSMTPConfig(smtpConfig));
+                        const adminList = (smtpConfig.admins && Array.isArray(smtpConfig.admins)) ? smtpConfig.admins.join(',') : (smtpConfig.admins || smtpConfig.adminEmail || null);
                         const toList = [u.email];
                         if (adminList) toList.push(adminList);
                         const subject = 'Welcome! Your Account Has Been Created';
+                        
+                        // Fetch theme settings to get the logo text
+                        let logoText = 'Data Collection Platform';
+                        let appUrl = process.env.FRONTEND_HOST || 'http://41.223.44.116:9090/';
+                        try {
+                            const themeRes = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'theme' AND (business_id = $1 OR business_id IS NULL) LIMIT 1`, [businessIdForNewUser]);
+                            if (themeRes.rows && themeRes.rows[0]) {
+                                let themeValue = themeRes.rows[0].value;
+                                if (typeof themeValue === 'string') {
+                                    themeValue = JSON.parse(themeValue);
+                                }
+                                logoText = themeValue?.logoText || logoText;
+                            }
+                        } catch (e) {
+                            console.warn('Failed to fetch theme settings for email:', e.message);
+                        }
+                        
+                        // Ensure app URL ends with /
+                        if (!appUrl.endsWith('/')) {
+                            appUrl += '/';
+                        }
                         
                         // Build HTML email with credentials if password was provided
                         let htmlBody = `
                             <html>
                                 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                                     <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                                        <h2 style="color: #2c3e50;">Welcome, ${u.first_name || 'User'}!</h2>
+                                        <h2 style="color: #2c3e50;">${logoText}</h2>
+                                        <h3 style="color: #34495e;">Welcome, ${u.first_name || 'User'}!</h3>
                                         <p>Your account has been successfully created on our platform.</p>
                         `;
                         
@@ -6231,6 +6287,11 @@ app.post('/api/users', async (req, res) => {
                                     <p><strong>Email:</strong> ${u.email}</p>
                                     <p><strong>Password:</strong> ${password}</p>
                                     <p style="color: #e74c3c; font-weight: bold; margin: 15px 0 0 0;">⚠️ Please change your password on first login for security.</p>
+                                </div>
+                                <div style="background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin: 20px 0; border-radius: 4px; text-align: center;">
+                                    <p style="margin: 0 0 10px 0;"><strong>Visit our platform to login:</strong></p>
+                                    <a href="${appUrl}login" style="display: inline-block; background-color: #4caf50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">Log In Now</a>
+                                    <p style="font-size: 0.9em; color: #666; margin: 10px 0 0 0;">${appUrl}</p>
                                 </div>
                             `;
                         } else {
@@ -6244,6 +6305,11 @@ app.post('/api/users', async (req, res) => {
                                         <li>Check your email for a password reset link</li>
                                         <li>Follow the link to create your new password</li>
                                     </ol>
+                                </div>
+                                <div style="background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin: 20px 0; border-radius: 4px; text-align: center;">
+                                    <p style="margin: 0 0 10px 0;"><strong>Visit our platform to get started:</strong></p>
+                                    <a href="${appUrl}login" style="display: inline-block; background-color: #4caf50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">Access Platform</a>
+                                    <p style="font-size: 0.9em; color: #666; margin: 10px 0 0 0;">${appUrl}</p>
                                 </div>
                             `;
                         }
@@ -6259,7 +6325,7 @@ app.post('/api/users', async (req, res) => {
                                     </div>
                                     
                                     <p style="color: #666; font-size: 0.9em; margin-top: 30px;">
-                                        If you did not expect this account creation or have any questions, please contact support.
+                                        If you did not expect this account creation or have any questions, please contact support: ihvnsi@gmail.com
                                     </p>
                                     
                                     <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
@@ -6272,22 +6338,33 @@ app.post('/api/users', async (req, res) => {
                         `;
                         
                         // Also create plain text version
-                        let textBody = `Hello ${u.first_name || 'User'},\n\nYour account has been successfully created.\n\n`;
+                        let textBody = `${logoText}\n${'='.repeat(50)}\n\nHello ${u.first_name || 'User'},\n\nYour account has been successfully created on our platform.\n\n`;
                         if (password) {
-                            textBody += `Your Login Credentials:\nEmail: ${u.email}\nPassword: ${password}\n\n⚠️ Please change your password on first login for security.\n\n`;
+                            textBody += `Your Login Credentials:\nEmail: ${u.email}\nPassword: ${password}\n\n⚠️ Please change your password on first login for security.\n\nVisit: ${appUrl}login to login and start using the Data Collection Platform\n\n`;
                         } else {
-                            textBody += `Set Your Password:\nNo password was provided. You can set a password using the password reset flow by clicking "Forgot Password?" on the login page.\n\n`;
+                            textBody += `Set Your Password:\nNo password was provided during account creation. You can set a password using the password reset flow by clicking "Forgot Password?" on the login page.\n\nVisit: ${appUrl} to access the platform\n\n`;
                         }
-                        textBody += `If you did not expect this, contact support.`;
+                        textBody += `Next Steps:
+- Log in with your credentials
+- Complete your profile if needed
+- Contact support if you need assistance
+
+If you did not expect this account creation or have any questions, please contact support: ihvnsi@gmail.com
+
+---
+This is an automated message. Please do not reply to this email.`;
                         
                         await transporter.sendMail({
-                            from: smtp.from || smtp.user || 'no-reply@example.com',
+                            from: smtpConfig.from || smtpConfig.user || 'no-reply@example.com',
                             to: toList.join(','),
                             subject,
                             text: textBody,
                             html: htmlBody
                         });
+                        console.log(`Welcome email sent to ${u.email} for user creation`);
                     } catch (e) { console.error('Failed to send user-create email', e); }
+                } else {
+                    console.warn('[User Create] No SMTP config - welcome email not sent');
                 }
             } catch (e) { console.error('Failed to load smtp settings for user-create notification', e); }
 
@@ -6306,7 +6383,7 @@ app.post('/api/users', async (req, res) => {
                 await pool.query(`INSERT INTO ${tables.AUDIT_EVENTS} (actor_user_id, target_user_id, action, details) VALUES ($1,$2,$3,$4)`, [actorId || null, u.id, 'create', details]);
             } catch (e) { console.error('Failed to write audit event for user create', e); }
 
-            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'string' ? JSON.parse(u.custom_fields) : u.custom_fields) : null });
+            res.json({ id: u.id, firstName: u.first_name, lastName: u.last_name, email: u.email, role: u.role, status: u.status, profileImage: u.profile_image || null, customFields: u.custom_fields ? (typeof u.custom_fields === 'object' ? u.custom_fields : JSON.parse(u.custom_fields)) : null });
         }
     } catch (e) { console.error(e); res.status(500).send(typeof e.message === 'string' ? e.message : String(e)); }
 });
