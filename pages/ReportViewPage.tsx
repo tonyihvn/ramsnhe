@@ -1405,7 +1405,7 @@ const ReportViewPage: React.FC = () => {
 
       {/* Power BI Settings Modal (configuration) */}
       <Modal isOpen={!!powerbiModalOpen} onClose={() => setPowerbiModalOpen(false)} title={`Power BI Settings — Report ${report.id}`} size="lg" footer={(
-        <div className="flex gap-2">
+        <div className="flex justify-end gap-3 w-full">
           <Button variant="secondary" onClick={() => setPowerbiModalOpen(false)}>Close</Button>
           <Button onClick={async () => {
             const ok = await savePowerBi({ powerbi_link: powerbiConfig?.powerbi_link, link_type: powerbiConfig?.link_type, mode: powerbiConfig?.mode });
@@ -1433,9 +1433,9 @@ const ReportViewPage: React.FC = () => {
 
       {/* Image lightbox modal for attachments */}
       <Modal isOpen={!!imageModalOpen} onClose={() => { setImageModalOpen(false); setImageModalUrl(null); }} title="Attachment Preview" size="lg" footer={(
-        <div className="flex justify-end">
-          <a href={imageModalUrl || '#'} target="_blank" rel="noreferrer"><Button variant="secondary">Open in new tab</Button></a>
+        <div className="flex justify-end gap-3 w-full">
           <Button onClick={() => { setImageModalOpen(false); setImageModalUrl(null); }}>Close</Button>
+          <a href={imageModalUrl || '#'} target="_blank" rel="noreferrer"><Button variant="secondary">Open in new tab</Button></a>
         </div>
       )}>
         <div className="w-full flex justify-center">
@@ -3098,7 +3098,7 @@ const ReportViewPage: React.FC = () => {
 
       {/* Review modal with toolbar and media upload */}
       <Modal isOpen={!!reviewModalOpen} onClose={() => setReviewModalOpen(false)} title={`Review Report ${report.id}`} size="xl" footer={(
-        <div className="flex gap-2">
+        <div className="flex justify-end gap-3 w-full">
           <Button variant="secondary" onClick={() => setReviewModalOpen(false)}>Cancel</Button>
           <Button onClick={saveReview}>Save Review</Button>
         </div>
@@ -3292,3 +3292,4 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
   );
 };
 export default ReportViewPage;
+

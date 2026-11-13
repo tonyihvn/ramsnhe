@@ -78,3 +78,4 @@ const BandEditor: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen
 };
 
 export default BandEditor;
+

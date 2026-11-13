@@ -148,3 +148,4 @@ const EditorJSComponent: React.FC<EditorJSComponentProps> = ({
 };
 
 export default EditorJSComponent;
+

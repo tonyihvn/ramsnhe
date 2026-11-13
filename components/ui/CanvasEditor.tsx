@@ -1349,3 +1349,4 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
 });
 
 export default CanvasEditor;
+

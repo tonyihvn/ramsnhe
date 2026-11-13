@@ -454,3 +454,4 @@ return vals.reduce((s,v) =&gt; s + (isNaN(v)?0:v), 0);
 };
 
 export default IndicatorsPage;
+

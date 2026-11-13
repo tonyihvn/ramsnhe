@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTheme } from '../hooks/useTheme';
 import Card from '../components/ui/Card';
 import { useData } from '../hooks/useData';
@@ -80,10 +80,10 @@ const ProgramsPage: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         title={currentProgram.id ? "Edit Program" : "New Program"}
         footer={
-          <>
-            <Button onClick={handleSave} className="ml-3">Save</Button>
+          <div className="flex justify-end gap-3 w-full">
             <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-          </>
+            <Button onClick={handleSave}>Save</Button>
+          </div>
         }
       >
         <div className="space-y-4">

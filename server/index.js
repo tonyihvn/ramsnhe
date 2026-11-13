@@ -18,6 +18,10 @@ import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
 import { registerVannaRoutes } from './vanna-routes.js';
 import { runMigrations } from './db-migrator.js';
+import { initializeVannaServer, shutdownVannaServer } from './vanna-server-manager.js';
+import { createVannaServerRoutes } from './vanna-server-routes.js';
+import aiSettingsRouter from './ai-settings-routes.js';
+import voiceCaptureRouter from './voice-capture-routes.js';
 
 // Helper: Prepare SMTP configuration with support for self-signed certificates and Gmail app passwords
 function prepareSMTPConfig(smtpConfig) {
@@ -1618,11 +1622,24 @@ const pool = new Pool({
     port: process.env.DB_PORT || 5432,
 });
 
+// Make pool available to all routes via app.locals
+app.locals.pool = pool;
+
 // Register Super Admin Routes
 registerSuperAdminRoutes(app, pool);
 
 // Register Vanna.AI Routes
 registerVannaRoutes(app, pool);
+
+// Register Vanna Server Control Routes
+const vannaServerRoutes = createVannaServerRoutes(pool);
+app.use('/api/vanna-server', vannaServerRoutes);
+
+// Register AI Settings Routes
+app.use('/api', aiSettingsRouter);
+
+// Register Voice Capture Routes
+app.use('/api/voice-capture', voiceCaptureRouter);
 
 // Form Schemas API Endpoints (Admin only)
 // POST /api/admin/form-schemas - Save or update a form schema
@@ -9660,7 +9677,16 @@ if (process.env.SKIP_DB_ON_INIT === 'true') {
     });
 } else {
     initDb()
-        .then(() => {
+        .then(async () => {
+            try {
+                // Initialize Vanna server after database is ready
+                console.log('[startup] Initializing Vanna server...');
+                await initializeVannaServer();
+                console.log('[startup] ✅ Vanna server initialization complete');
+            } catch (err) {
+                console.warn('[startup] Warning: Vanna server initialization failed:', err.message);
+            }
+
             try {
                 console.log(`[startup] Configured SERVER_PORT=${PORT}`);
                 try { console.log(`[startup] Configured FRONTEND_PORT=${frontendPort}`); } catch (e) { }
@@ -9677,3 +9703,16 @@ if (process.env.SKIP_DB_ON_INIT === 'true') {
             process.exit(1);
         });
 }
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('[Shutdown] SIGTERM received. Shutting down gracefully...');
+    await shutdownVannaServer();
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('[Shutdown] SIGINT received. Shutting down gracefully...');
+    await shutdownVannaServer();
+    process.exit(0);
+});

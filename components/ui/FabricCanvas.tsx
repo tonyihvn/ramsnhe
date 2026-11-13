@@ -160,3 +160,4 @@ const FabricCanvas = forwardRef(function FabricCanvasInner({ width = 800, height
 });
 
 export default FabricCanvas;
+

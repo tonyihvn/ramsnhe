@@ -110,3 +110,4 @@ const SummernoteEditor: React.FC<SummernoteEditorProps> = ({
 };
 
 export default SummernoteEditor;
+

@@ -507,3 +507,4 @@ const UserDetailsModal: React.FC<{ user: any; onClose: () => void; onUpdate: () 
 };
 
 export default SuperAdminUserManagement;
+

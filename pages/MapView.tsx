@@ -482,3 +482,4 @@ export const MapView = ({ fullScreen = false, filters = {} }: { fullScreen?: boo
 };
 
 export default MapView;
+

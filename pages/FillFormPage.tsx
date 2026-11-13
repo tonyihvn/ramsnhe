@@ -5,10 +5,13 @@ import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport, Fac
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, SparklesIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
 import { filterOptionsByCondition } from '../utils/conditionEvaluator';
 import { buildFormulasContext, evaluateFormulaWithContext, evaluateFormulasForForm } from '../utils/formulaEvaluator';
+import VoiceCapturePanel from '../components/VoiceCapturePanel';
+import AIAssistantDashboard from '../components/AIAssistantDashboard';
+import Modal from '../components/ui/Modal';
 
 import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -470,6 +473,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [selectedTable, setSelectedTable] = useState<any | null>(null);
     const [tableValidationMessage, setTableValidationMessage] = useState<string | null>(null);
     const [tableImportStatus, setTableImportStatus] = useState<any>(null);
+    const [showVoiceCaptureModal, setShowVoiceCaptureModal] = useState(false);
+    const [showAIAssistantModal, setShowAIAssistantModal] = useState(false);
 
     const location = useLocation();
     const search = new URLSearchParams(location.search);
@@ -1358,11 +1363,33 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     return (
         <div className="space-y-6">
             {!standaloneMode && (
-                <div className="flex items-center space-x-4">
-                    <button onClick={() => history('/activities')} className="text-gray-500 hover:text-gray-700">
-                        <ArrowLeftIcon className="h-6 w-6" />
-                    </button>
-                    <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
+                <div className="flex items-center justify-between space-x-4">
+                    <div className="flex items-center space-x-4">
+                        <button onClick={() => history('/activities')} className="text-gray-500 hover:text-gray-700">
+                            <ArrowLeftIcon className="h-6 w-6" />
+                        </button>
+                        <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
+                    </div>
+                    <div className="flex gap-2">
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setShowVoiceCaptureModal(true)}
+                            leftIcon={<MicrophoneIcon className="h-4 w-4" />}
+                            title="Record interview conversation and auto-fill form"
+                        >
+                            Voice Capture
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setShowAIAssistantModal(true)}
+                            leftIcon={<SparklesIcon className="h-4 w-4" />}
+                            title="Ask AI Assistant for insights and help"
+                        >
+                            AI Assistant
+                        </Button>
+                    </div>
                 </div>
             )}
             {standaloneMode && (
@@ -1411,10 +1438,16 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                         }
                                                     }
                                                     
+                                                    // Extract value from objects like {value: "...", score: ...}
+                                                    let finalValue = effectiveValue;
+                                                    if (effectiveValue && typeof effectiveValue === 'object' && 'value' in effectiveValue) {
+                                                        finalValue = effectiveValue.value;
+                                                    }
+                                                    
                                                     // Add by fieldName if it exists
-                                                    if (qq.fieldName) fieldMapLocal[qq.fieldName] = effectiveValue;
+                                                    if (qq.fieldName) fieldMapLocal[qq.fieldName] = finalValue;
                                                     // Also add by sequential position (q1, q2, q3, etc.) for easier condition referencing
-                                                    fieldMapLocal[`q${globalQuestionIndex}`] = effectiveValue;
+                                                    fieldMapLocal[`q${globalQuestionIndex}`] = finalValue;
                                                     globalQuestionIndex++;
                                                 }
                                             })));
@@ -1721,8 +1754,57 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     </div>
                 </Card>
             )}
+
+            {/* Voice Capture Modal */}
+            <Modal
+                isOpen={showVoiceCaptureModal}
+                onClose={() => setShowVoiceCaptureModal(false)}
+                title="Voice Data Capture"
+                size="large"
+            >
+                {activityId && formDef && activity && (
+                    <VoiceCapturePanel
+                        formId={activity.id}
+                        activityId={parseInt(activityId)}
+                        formFields={
+                            (formDef.pages || []).flatMap(p =>
+                                (p.sections || []).flatMap(s =>
+                                    (s.questions || []).map(q => ({
+                                        id: q.id,
+                                        questionText: q.questionText || '',
+                                        answerType: q.answerType || '',
+                                        fieldName: q.fieldName
+                                    }))
+                                )
+                            )
+                        }
+                        onDataExtracted={(extractedData) => {
+                            // Merge extracted data into form answers
+                            setAnswers(prev => ({ ...prev, ...extractedData }));
+                            setShowVoiceCaptureModal(false);
+                        }}
+                        onClose={() => setShowVoiceCaptureModal(false)}
+                    />
+                )}
+            </Modal>
+
+            {/* AI Assistant Modal */}
+            <Modal
+                isOpen={showAIAssistantModal}
+                onClose={() => setShowAIAssistantModal(false)}
+                title="AI Assistant"
+                size="large"
+            >
+                {activityId && currentUser && (
+                    <AIAssistantDashboard
+                        activityId={activityId}
+                        currentUser={currentUser}
+                    />
+                )}
+            </Modal>
         </div>
     );
 };
 
 export default FillFormPage;
+

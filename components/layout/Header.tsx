@@ -40,10 +40,10 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
             )}
           </div>
           <div className="flex items-center space-x-4">
-            <button onClick={() => (onToggleMobileSidebar ? onToggleMobileSidebar() : onToggleSidebar && onToggleSidebar())} className="p-2 rounded-md hover:opacity-75 md:hidden" style={{ color: 'var(--topbar-text)' }}>
+            <button onClick={() => (onToggleMobileSidebar ? onToggleMobileSidebar() : onToggleSidebar && onToggleSidebar())} className="p-2 rounded-md hover:opacity-75 md:hidden border border-white" style={{ color: 'var(--topbar-text)' }}>
               <Bars3Icon className="h-6 w-6" />
             </button>
-            <button onClick={onToggleSidebar} className="p-2 rounded-md hover:opacity-75 hidden md:inline-flex" title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} style={{ color: 'var(--topbar-text)' }}>
+            <button onClick={onToggleSidebar} className="p-2 rounded-md hover:opacity-75 hidden md:inline-flex border border-white" title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} style={{ color: 'var(--topbar-text)' }}>
               <Bars3Icon className="h-6 w-6" />
             </button>
             <div className="flex items-center space-x-3">
@@ -94,3 +94,4 @@ const Header: React.FC<{ collapsed?: boolean; onToggleSidebar?: () => void; onTo
 };
 
 export default Header;
+

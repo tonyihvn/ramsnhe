@@ -259,3 +259,4 @@ const AccountApprovalPage: React.FC = () => {
 };
 
 export default AccountApprovalPage;
+

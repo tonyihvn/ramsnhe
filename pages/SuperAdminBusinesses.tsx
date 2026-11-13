@@ -236,3 +236,4 @@ const BusinessForm: React.FC<{ business?: any; onSuccess: () => void }> = ({ bus
 };
 
 export default SuperAdminBusinesses;
+

@@ -48,7 +48,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
             </div>
           </div>
           {footer && (
-            <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+            <div className="bg-gray-50 px-4 py-4 sm:px-6 sm:flex sm:flex-row-reverse gap-3 border-t border-gray-200">
               {footer}
             </div>
           )}

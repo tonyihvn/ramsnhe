@@ -14,6 +14,11 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: frontendPort,
+      hmr: {
+        host: 'localhost',
+        port: frontendPort,
+        protocol: 'ws'
+      },
       proxy: {
         '/api': {
           target: `http://localhost:${serverPort}`,
@@ -41,8 +46,12 @@ export default defineConfig(({ mode }) => {
       include: ['summernote']
     },
     build: {
-      commonjsOptions: {
-        include: [/summernote/]
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom', 'react-router-dom']
+          }
+        }
       }
     }
   };

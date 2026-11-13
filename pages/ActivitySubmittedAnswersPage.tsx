@@ -302,3 +302,4 @@ const ActivitySubmittedAnswersPage: React.FC = () => {
 };
 
 export default ActivitySubmittedAnswersPage;
+

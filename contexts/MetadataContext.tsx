@@ -106,3 +106,4 @@ export const MetadataProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 export const useMetadata = () => useContext(MetadataContext);
 
 export default MetadataContext;
+

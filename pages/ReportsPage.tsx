@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import Card from '../components/ui/Card';
 import { useData } from '../hooks/useData';
 import Modal from '../components/ui/Modal';

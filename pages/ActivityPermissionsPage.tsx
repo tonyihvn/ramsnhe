@@ -282,14 +282,14 @@ const ActivityPermissionsPage: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         title="Edit Permission"
         footer={
-          <>
-            <Button onClick={handleSavePermission} variant="primary">
-              Save
-            </Button>
+          <div className="flex justify-end gap-3 w-full">
             <Button onClick={() => setIsModalOpen(false)} variant="secondary">
               Cancel
             </Button>
-          </>
+            <Button onClick={handleSavePermission} variant="primary">
+              Save
+            </Button>
+          </div>
         }
       >
         {currentPermission && (
@@ -372,3 +372,4 @@ const ActivityPermissionsPage: React.FC = () => {
 };
 
 export default ActivityPermissionsPage;
+

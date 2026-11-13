@@ -588,10 +588,10 @@ const ActivityPermissionsManager: React.FC = () => {
                     onClose={() => setIsModalOpen(false)}
                     title="Add Activity Permission"
                     footer={
-                        <>
-                            <Button onClick={handleSavePermission} disabled={saving} className="ml-3">{saving ? 'Saving...' : 'Save'}</Button>
+                        <div className="flex justify-end gap-3 w-full">
                             <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-                        </>
+                            <Button onClick={handleSavePermission} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
+                        </div>
                     }
                 >
                     <div className="space-y-4">
@@ -1120,10 +1120,8 @@ const SettingsPage: React.FC = () => {
                 <nav className="flex space-x-2">
                     <button onClick={() => setTab('database')} className={`px-3 py-2 rounded`} style={tab === 'database' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Database</button>
                     <button onClick={() => setTab('dbms')} className={`px-3 py-2 rounded`} style={tab === 'dbms' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>DBMS</button>
-                    <button onClick={() => setTab('llm')} className={`px-3 py-2 rounded`} style={tab === 'llm' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>LLM</button>
-                    <button onClick={() => setTab('rag')} className={`px-3 py-2 rounded`} style={tab === 'rag' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>RAG</button>
-                    <button onClick={() => setTab('ai-context')} className={`px-3 py-2 rounded`} style={tab === 'ai-context' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>AI Context</button>
-                    <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded`} style={tab === 'theme' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Theme</button>
+                    <button onClick={() => setTab('ai-integrations')} className={`px-3 py-2 rounded`} style={tab === 'ai-integrations' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>AI Integrations</button>
+                    <button onClick={() => setTab('theme')} className={`px-3 py-2 rounded`} style={tab === 'theme' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-text)' } : { color: 'var(--settings-tabs-text)' }}>Theme</button>
                     <button onClick={() => setTab('colors')} className={`px-3 py-2 rounded`} style={tab === 'colors' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Colors</button>
                     <button onClick={() => setTab('app')} className={`px-3 py-2 rounded`} style={tab === 'app' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>App</button>
                     <button onClick={() => setTab('email')} className={`px-3 py-2 rounded`} style={tab === 'email' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Email / SMTP</button>
@@ -1131,7 +1129,6 @@ const SettingsPage: React.FC = () => {
                     <button onClick={() => setTab('permissions')} className={`px-3 py-2 rounded`} style={tab === 'permissions' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Roles & Permissions</button>
                     <button onClick={() => setTab('audit')} className={`px-3 py-2 rounded`} style={tab === 'audit' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Audit Trails</button>
                     <button onClick={() => setTab('forms')} className={`px-3 py-2 rounded`} style={tab === 'forms' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>Form Builders</button>
-                    <button onClick={() => setTab('ai-integrations')} className={`px-3 py-2 rounded`} style={tab === 'ai-integrations' ? { backgroundColor: 'var(--settings-tabs-active-bg)', color: 'var(--settings-tabs-active-text)' } : { color: 'var(--settings-tabs-text)' }}>AI Integrations</button>
                     <a href="#/connectors" className="px-3 py-2 rounded" style={{ color: 'var(--settings-tabs-text)' }}>API Connectors</a>
                 </nav>
             </div>
@@ -1221,78 +1218,6 @@ const SettingsPage: React.FC = () => {
                 <Card>
                     <h3 className="text-lg font-medium mb-2">DBMS Browser</h3>
                     <DBMSTab />
-                </Card>
-            )}
-
-            {tab === 'llm' && (
-                <Card>
-                    <h3 className="text-lg font-medium mb-2">LLM Settings</h3>
-                    <p className="text-sm text-gray-500 mb-3">Configure available LLMs and their priority for generation calls (local or cloud providers).</p>
-                    <LLMSettingsForm />
-                </Card>
-            )}
-
-            {tab === 'rag' && (
-                <Card>
-                    <h3 className="text-lg font-medium mb-2">RAG Settings</h3>
-                    <div className="space-y-3">
-                        <label className="block text-sm font-medium text-gray-700">Schema & Business Rule Generation</label>
-                        <div className="text-sm text-gray-500">When enabled, the RAG engine will analyze sample data to construct contextual schemas and suggested business rules to improve query relevance.</div>
-                        <div className="mt-2">
-                            <label className="inline-flex items-center"><input type="checkbox" checked={(settings as any).ragAutoGenerate || false} onChange={e => setSettings({ ...(settings as any), ragAutoGenerate: e.target.checked })} className="mr-2" />Enable automatic schema generation</label>
-                        </div>
-                        {/* Removed Context Window Size and Preview Generated Rules per user request — RAG records must include explicit Business Rules */}
-                        <RagManager />
-                    </div>
-                </Card>
-            )}
-
-            {tab === 'ai-context' && (
-                <Card>
-                    <h3 className="text-lg font-medium mb-4">AI Context Settings</h3>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">System Context for RAG Responses</label>
-                            <p className="text-sm text-gray-600 mb-3">Enter context information that will be used to help shape RAG responses. This text provides background knowledge and instructions to improve the quality and relevance of AI-generated answers.</p>
-                            <textarea
-                                value={(settings as any).aiContextText || ''}
-                                onChange={e => setSettings({ ...(settings as any), aiContextText: e.target.value })}
-                                className="w-full p-3 border border-gray-300 rounded-md font-mono text-sm"
-                                rows={12}
-                                placeholder="Example: You are an expert data analyst. Focus on accuracy and completeness. Always provide context for your recommendations. Consider both quantitative and qualitative factors..."
-                            />
-                        </div>
-
-                        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-                            <h4 className="font-medium text-sm text-blue-900 mb-2">ℹ️ Usage Guidelines</h4>
-                            <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-                                <li>This context will be included with every RAG query to influence responses</li>
-                                <li>Be specific about expertise, tone, and approach</li>
-                                <li>Include relevant domain knowledge and business rules</li>
-                                <li>Avoid extremely long contexts for better performance</li>
-                                <li>Update context when business requirements change</li>
-                            </ul>
-                        </div>
-
-                        <div className="flex gap-2">
-                            <Button onClick={() => {
-                                swalSuccess('Context Saved', 'AI context settings have been saved successfully.');
-                            }}>
-                                Save Context
-                            </Button>
-                            <Button variant="secondary" onClick={() => {
-                                setSettings({ ...(settings as any), aiContextText: '' });
-                                swalSuccess('Context Cleared', 'AI context has been cleared.');
-                            }}>
-                                Clear Context
-                            </Button>
-                        </div>
-
-                        <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
-                            <h4 className="font-medium text-sm text-gray-900 mb-2">📊 Character Count</h4>
-                            <p className="text-sm text-gray-700">Current: <strong>{((settings as any).aiContextText || '').length}</strong> characters</p>
-                        </div>
-                    </div>
                 </Card>
             )}
 
@@ -1485,6 +1410,52 @@ const SettingsPage: React.FC = () => {
                     <div className="space-y-3">
                         <label className="inline-flex items-center"><input type="checkbox" className="mr-2" checked={(settings as any).allowPublicReports || false} onChange={e => setSettings({ ...(settings as any), allowPublicReports: e.target.checked })} />Allow public report links</label>
                         <label className="inline-flex items-center"><input type="checkbox" className="mr-2" checked={(settings as any).enableAnalytics || false} onChange={e => setSettings({ ...(settings as any), enableAnalytics: e.target.checked })} />Enable usage analytics</label>
+                        
+                        {/* Text-to-SQL Provider Selection */}
+                        <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                            <h4 className="text-md font-medium text-blue-900 mb-3">🤖 Text-to-SQL Provider</h4>
+                            <div className="space-y-3">
+                                <p className="text-sm text-blue-800">Select which text-to-SQL service to use for AI analytics and SQL generation.</p>
+                                
+                                <div className="space-y-2">
+                                    <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-blue-100" style={{ backgroundColor: (settings as any).textToSqlProvider === 'vanna' ? '#dbeafe' : 'transparent' }}>
+                                        <input 
+                                            type="radio" 
+                                            name="textToSqlProvider" 
+                                            value="vanna"
+                                            checked={(settings as any).textToSqlProvider === 'vanna' || (!(settings as any).textToSqlProvider)}
+                                            onChange={e => setSettings({ ...(settings as any), textToSqlProvider: e.target.value })}
+                                            className="mr-3"
+                                        />
+                                        <div>
+                                            <div className="font-medium text-gray-900">Vanna.AI</div>
+                                            <div className="text-xs text-gray-600">Self-hosted Vanna server with custom DDL training</div>
+                                        </div>
+                                    </label>
+                                    
+                                    <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-blue-100" style={{ backgroundColor: (settings as any).textToSqlProvider === 'vercel-ai' ? '#dbeafe' : 'transparent' }}>
+                                        <input 
+                                            type="radio" 
+                                            name="textToSqlProvider" 
+                                            value="vercel-ai"
+                                            checked={(settings as any).textToSqlProvider === 'vercel-ai'}
+                                            onChange={e => setSettings({ ...(settings as any), textToSqlProvider: e.target.value })}
+                                            className="mr-3"
+                                        />
+                                        <div>
+                                            <div className="font-medium text-gray-900">Vercel AI SDK</div>
+                                            <div className="text-xs text-gray-600">Unified LLM interface with multi-provider support</div>
+                                        </div>
+                                    </label>
+                                </div>
+                                
+                                <div className="mt-3 p-3 bg-white border border-gray-200 rounded text-xs text-gray-600">
+                                    <strong>Current Selection:</strong> {(settings as any).textToSqlProvider === 'vercel-ai' ? '⚡ Vercel AI SDK' : '🗃️ Vanna.AI'}
+                                    <p className="mt-1">Configure your chosen provider in Settings → AI Integrations</p>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div>
                             <label className="block text-sm font-medium text-gray-700">Default page after login</label>
                             <select value={(settings as any).defaultPage || '/dashboard'} onChange={e => setSettings({ ...(settings as any), defaultPage: e.target.value })} className="mt-1 block p-2 border rounded">
@@ -2408,3 +2379,4 @@ const RagManager: React.FC = () => {
         </div>
     );
 };
+

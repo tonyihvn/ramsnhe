@@ -9,9 +9,13 @@ interface AIIntegrationsTabProps {
 
 const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => {
   const [activeTab, setActiveTab] = useState(0);
+  const [activeSubTab, setActiveSubTab] = useState<string | null>('1a');
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [vannaServerStatus, setVannaServerStatus] = useState<'stopped' | 'starting' | 'running' | 'error'>('stopped');
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [detectingOllama, setDetectingOllama] = useState(false);
   const [settings, setSettings] = useState({
     // Vanna DDL Training
     vannaApiUrl: '',
@@ -19,6 +23,19 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
     vannaModel: 'gpt-4',
     autoTrainDDL: true,
     trainingInterval: 24,
+    
+    // AI Context
+    aiContextText: '',
+    
+    // RAG Settings
+    ragAutoGenerate: false,
+    
+    // Vercel AI SDK Settings
+    vercelAIApiKey: '',
+    vercelAIModel: 'gpt-4',
+    vercelAITemperature: 0.7,
+    vercelAIMaxTokens: 2000,
+    vercelAIProvider: 'openai',
     
     // LanceDB Settings
     lancedbUrl: '',
@@ -125,6 +142,9 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
       } else if (type === 'llm') {
         endpoint = '/api/llm/test-connection';
         payload = { ...payload, llmProvider: settings.llmProvider, llmApiKey: settings.llmApiKey };
+      } else if (type === 'vercel-ai') {
+        endpoint = '/api/vercel-ai/test-connection';
+        payload = { ...payload, vercelAIProvider: settings.vercelAIProvider, vercelAIApiKey: settings.vercelAIApiKey, vercelAIModel: settings.vercelAIModel };
       }
 
       const res = await fetch(endpoint, {
@@ -150,13 +170,88 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
     }
   };
 
+  const handleVannaServerControl = async (action: 'start' | 'stop' | 'restart') => {
+    try {
+      setVannaServerStatus(action === 'start' ? 'starting' : action === 'stop' ? 'stopped' : 'starting');
+      const res = await fetch(`/api/vanna-server/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ businessId })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setVannaServerStatus(data.status === 'running' ? 'running' : 'stopped');
+        swalSuccess('Success', `Vanna server ${action}ed successfully!`);
+      } else {
+        setVannaServerStatus('error');
+        swalError('Failed', `Failed to ${action} Vanna server`);
+      }
+    } catch (err) {
+      setVannaServerStatus('error');
+      swalError('Error', `Error while attempting to ${action} server`);
+    }
+  };
+
+  const checkVannaServerStatus = async () => {
+    try {
+      const res = await fetch(`http://localhost:8888/health`);
+      if (res.ok) {
+        setVannaServerStatus('running');
+      } else {
+        setVannaServerStatus('stopped');
+      }
+    } catch (err) {
+      setVannaServerStatus('stopped');
+    }
+  };
+
+  const detectOllamaModels = async () => {
+    try {
+      setDetectingOllama(true);
+      const res = await fetch('http://127.0.0.1:11434/api/tags');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models && Array.isArray(data.models)) {
+          const modelNames = data.models.map((m: any) => m.name || String(m));
+          setOllamaModels(modelNames);
+          swalSuccess('Success', `Found ${modelNames.length} Ollama model(s)`);
+          return modelNames;
+        } else {
+          swalInfo('No Models', 'Ollama detected but no models installed. Install a model first.');
+          setOllamaModels([]);
+        }
+      } else {
+        swalError('Error', 'Ollama not running. Make sure Ollama is installed and started.');
+        setOllamaModels([]);
+      }
+    } catch (err) {
+      swalError('Error', 'Could not connect to Ollama at http://127.0.0.1:11434');
+      setOllamaModels([]);
+    } finally {
+      setDetectingOllama(false);
+    }
+  };
+
+  useEffect(() => {
+    checkVannaServerStatus();
+    const interval = setInterval(checkVannaServerStatus, 5000); // Check every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
   const tabs = [
     { id: 0, label: 'Vanna DDL Training', icon: '🗃️' },
-    { id: 1, label: 'LanceDB Vector Store', icon: '🗂️' },
-    { id: 2, label: 'VectorDB Settings', icon: '📦' },
-    { id: 3, label: 'Embedding Model', icon: '🧠' },
-    { id: 4, label: 'LLM Model', icon: '🤖' },
-    { id: 5, label: 'AI Assistant Features', icon: '✨' },
+    { id: 1, label: 'AI Integrations', icon: '⚙️', subtabs: [
+      { id: '1a', label: 'AI Context', icon: '🧠' },
+      { id: '1b', label: 'LLM', icon: '🤖' },
+      { id: '1c', label: 'RAG', icon: '📚' },
+    ]},
+    { id: 2, label: 'Vercel AI SDK', icon: '⚡' },
+    { id: 3, label: 'LanceDB Vector Store', icon: '🗂️' },
+    { id: 4, label: 'VectorDB Settings', icon: '📦' },
+    { id: 5, label: 'Embedding Model', icon: '🧵' },
+    { id: 6, label: 'AI Assistant Features', icon: '✨' },
   ];
 
   return (
@@ -197,48 +292,68 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
             <div className="space-y-4">
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-900">
-                  <strong>ℹ️ Self-Hosted Vanna:</strong> This uses a local, self-hosted Vanna instance. No API key required.
+                  <strong>ℹ️ Auto-Managed Vanna Server:</strong> The Vanna server runs automatically on port 8888 and uses your database connection from Settings→Database.
                 </p>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Vanna Server URL</label>
-                <input
-                  type="text"
-                  value={settings.vannaApiUrl}
-                  onChange={e => handleChange('vannaApiUrl', e.target.value)}
-                  placeholder="http://localhost:8000"
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">Local Vanna server endpoint (e.g., http://localhost:8000 or http://vanna-server.internal)</p>
+
+              {/* Server Status & Controls */}
+              <div className="p-4 border rounded-lg bg-gray-50">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900">Server Status</h4>
+                    <p className="text-xs text-gray-600 mt-1">
+                      <span className={`inline-block w-2 h-2 rounded-full mr-2 ${vannaServerStatus === 'running' ? 'bg-green-500' : vannaServerStatus === 'error' ? 'bg-red-500' : 'bg-gray-400'}`} />
+                      {vannaServerStatus === 'running' ? '✓ Running on port 8888' : vannaServerStatus === 'error' ? '✗ Error' : '○ Stopped'}
+                    </p>
+                  </div>
+                  <div className="space-x-2">
+                    <Button 
+                      onClick={() => handleVannaServerControl('start')} 
+                      disabled={vannaServerStatus === 'running' || vannaServerStatus === 'starting'}
+                      variant={vannaServerStatus === 'running' ? 'secondary' : 'primary'}
+                      className="text-xs"
+                    >
+                      Start
+                    </Button>
+                    <Button 
+                      onClick={() => handleVannaServerControl('stop')} 
+                      disabled={vannaServerStatus !== 'running'}
+                      variant="secondary"
+                      className="text-xs"
+                    >
+                      Stop
+                    </Button>
+                    <Button 
+                      onClick={() => handleVannaServerControl('restart')} 
+                      disabled={vannaServerStatus === 'stopped'}
+                      variant="secondary"
+                      className="text-xs"
+                    >
+                      Restart
+                    </Button>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Database Connection String</label>
-                <input
-                  type="text"
-                  value={settings.vannaApiKey}
-                  onChange={e => handleChange('vannaApiKey', e.target.value)}
-                  placeholder="postgresql://user:password@localhost:5432/mydb"
-                  className="w-full px-3 py-2 border rounded-lg font-mono text-xs"
-                />
-                <p className="text-xs text-gray-500 mt-1">Connection string for Vanna to access your database (format: driver://user:password@host:port/database)</p>
+              {/* Database Configuration (Read-only) */}
+              <div className="p-4 border rounded-lg bg-amber-50">
+                <h4 className="text-sm font-medium text-gray-900 mb-3">📊 Configured Database (Auto-Connected)</h4>
+                <p className="text-xs text-gray-600 mb-3">The Vanna server automatically uses the database credentials configured in Settings→Database. No manual configuration needed.</p>
+                <div className="space-y-2 text-xs">
+                  <p><strong>Note:</strong> Update your database settings in Settings→Database tab, then restart the Vanna server for changes to take effect.</p>
+                </div>
               </div>
 
+              {/* Vanna Server Endpoint */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Database Type</label>
-                <select
-                  value={settings.vannaModel}
-                  onChange={e => handleChange('vannaModel', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg"
-                >
-                  <option value="postgres">PostgreSQL</option>
-                  <option value="mysql">MySQL</option>
-                  <option value="sqlite">SQLite</option>
-                  <option value="mssql">SQL Server</option>
-                  <option value="oracle">Oracle</option>
-                  <option value="mongodb">MongoDB</option>
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Vanna Server Endpoint</label>
+                <input
+                  type="text"
+                  value="http://localhost:8888"
+                  disabled
+                  className="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-600"
+                />
+                <p className="text-xs text-gray-500 mt-1">Fixed to localhost:8888 (automatically managed)</p>
               </div>
 
               <label className="flex items-center space-x-2">
@@ -268,20 +383,323 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
                 {testing === 'vanna' ? 'Testing...' : 'Test Vanna Connection'}
               </Button>
 
+              <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+                <strong>✓ Setup is Automatic:</strong>
+                <ul className="list-disc pl-5 mt-2 space-y-1">
+                  <li>Vanna server starts automatically when the application starts</li>
+                  <li>Runs on port 8888 (configurable in environment)</li>
+                  <li>Uses database credentials from Settings→Database</li>
+                  <li>No Docker or manual setup required</li>
+                  <li>Use the Start/Stop buttons above to manage the server</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* AI Integrations Group (AI Context, LLM, RAG) */}
+          {activeTab === 1 && (
+            <div className="space-y-4">
+              {/* Sub-tab Navigation */}
+              <div className="flex space-x-2 mb-4 border-b">
+                {[
+                  { id: '1a', label: 'AI Context', icon: '🧠' },
+                  { id: '1b', label: 'LLM', icon: '🤖' },
+                  { id: '1c', label: 'RAG', icon: '📚' },
+                ].map(subtab => (
+                  <button
+                    key={subtab.id}
+                    onClick={() => setActiveSubTab(subtab.id)}
+                    className={`px-3 py-2 text-sm font-medium rounded transition-colors ${
+                      activeSubTab === subtab.id
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    {subtab.icon} {subtab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* AI Context Sub-tab */}
+              {activeSubTab === '1a' && (
+                <div className="space-y-4">
+                  <h4 className="text-md font-medium text-gray-900">AI Context Settings</h4>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">System Context for RAG Responses</label>
+                    <p className="text-sm text-gray-600 mb-3">Enter context information that will be used to help shape RAG responses. This text provides background knowledge and instructions to improve the quality and relevance of AI-generated answers.</p>
+                    <textarea
+                      value={(settings as any).aiContextText || ''}
+                      onChange={e => handleChange('aiContextText', e.target.value)}
+                      className="w-full p-3 border border-gray-300 rounded-md font-mono text-sm"
+                      rows={12}
+                      placeholder="Example: You are an expert data analyst. Focus on accuracy and completeness. Always provide context for your recommendations. Consider both quantitative and qualitative factors..."
+                    />
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+                    <h4 className="font-medium text-sm text-blue-900 mb-2">ℹ️ Usage Guidelines</h4>
+                    <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                      <li>This context will be included with every RAG query to influence responses</li>
+                      <li>Be specific about expertise, tone, and approach</li>
+                      <li>Include relevant domain knowledge and business rules</li>
+                      <li>Avoid extremely long contexts for better performance</li>
+                      <li>Update context when business requirements change</li>
+                    </ul>
+                  </div>
+
+                  <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+                    <h4 className="font-medium text-sm text-gray-900 mb-2">📊 Character Count</h4>
+                    <p className="text-sm text-gray-700">Current: <strong>{((settings as any).aiContextText || '').length}</strong> characters</p>
+                  </div>
+                </div>
+              )}
+
+              {/* LLM Sub-tab */}
+              {activeSubTab === '1b' && (
+                <div className="space-y-4">
+                  <h4 className="text-md font-medium text-gray-900">LLM Settings</h4>
+                  <p className="text-sm text-gray-500">Configure available LLMs and their priority for generation calls (local or cloud providers).</p>
+                  
+                  <div className="space-y-3">
+                    <label className="block text-sm font-medium text-gray-700">LLM Provider</label>
+                    <select
+                      value={settings.llmProvider}
+                      onChange={e => {
+                        handleChange('llmProvider', e.target.value);
+                        if (e.target.value === 'ollama-local') {
+                          detectOllamaModels();
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic Claude</option>
+                      <option value="cohere">Cohere</option>
+                      <option value="ollama-local">Ollama (Local)</option>
+                      <option value="custom">Custom API</option>
+                    </select>
+                  </div>
+
+                  {/* Ollama Model Selection */}
+                  {settings.llmProvider === 'ollama-local' && (
+                    <div className="p-3 border border-amber-200 bg-amber-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="text-sm font-medium text-gray-700">Available Ollama Models</label>
+                        <Button
+                          onClick={detectOllamaModels}
+                          disabled={detectingOllama}
+                          variant="secondary"
+                          className="text-xs"
+                        >
+                          {detectingOllama ? 'Detecting...' : 'Detect Models'}
+                        </Button>
+                      </div>
+
+                      {ollamaModels.length > 0 ? (
+                        <select
+                          value={settings.llmModel}
+                          onChange={e => handleChange('llmModel', e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg text-sm"
+                        >
+                          <option value="">Select a model...</option>
+                          {ollamaModels.map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-sm text-amber-700">No models detected. Click "Detect Models" to scan for installed Ollama models.</p>
+                      )}
+                      <p className="text-xs text-gray-600 mt-2">Make sure Ollama is installed and running on your local machine.</p>
+                    </div>
+                  )}
+
+                  {/* Non-Ollama Model Input */}
+                  {settings.llmProvider !== 'ollama-local' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Model Name</label>
+                      <input
+                        type="text"
+                        value={settings.llmModel}
+                        onChange={e => handleChange('llmModel', e.target.value)}
+                        placeholder="gpt-4 or claude-3-opus or command-light"
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                    </div>
+                  )}
+
+                  {settings.llmProvider !== 'ollama-local' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                      <input
+                        type="password"
+                        value={settings.llmApiKey}
+                        onChange={e => handleChange('llmApiKey', e.target.value)}
+                        placeholder="sk-..."
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Temperature</label>
+                      <input
+                        type="number"
+                        value={settings.llmTemperature}
+                        onChange={e => handleChange('llmTemperature', parseFloat(e.target.value))}
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Lower = more deterministic</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Max Tokens</label>
+                      <input
+                        type="number"
+                        value={settings.llmMaxTokens}
+                        onChange={e => handleChange('llmMaxTokens', parseInt(e.target.value))}
+                        min="100"
+                        max="4000"
+                        className="w-full px-3 py-2 border rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  <Button onClick={() => handleTest('llm')} disabled={testing === 'llm'} variant="secondary">
+                    {testing === 'llm' ? 'Testing...' : 'Test LLM Connection'}
+                  </Button>
+                </div>
+              )}
+
+              {/* RAG Sub-tab */}
+              {activeSubTab === '1c' && (
+                <div className="space-y-4">
+                  <h4 className="text-md font-medium text-gray-900">RAG Settings</h4>
+                  <label className="block text-sm font-medium text-gray-700">Schema & Business Rule Generation</label>
+                  <div className="text-sm text-gray-500">When enabled, the RAG engine will analyze sample data to construct contextual schemas and suggested business rules to improve query relevance.</div>
+                  <div className="mt-2">
+                    <label className="inline-flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={(settings as any).ragAutoGenerate || false}
+                        onChange={e => handleChange('ragAutoGenerate', e.target.checked)}
+                        className="mr-2"
+                      />
+                      <span className="text-sm font-medium text-gray-700">Enable automatic schema generation</span>
+                    </label>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-4">RAG records are managed separately with specific Business Rules for each table. Please access the RAG Records management interface for detailed configuration.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Old AI Context Tab - Removed, now under AI Integrations */}
+          {activeTab === 1.5 && null}
+
+          {/* Old LLM Tab - Removed, now under AI Integrations */}
+          {activeTab === 2.5 && null}
+
+          {/* Old RAG Tab - Removed, now under AI Integrations */}
+          {activeTab === 3.5 && null}
+
+          {/* Vercel AI SDK Tab */}
+          {activeTab === 2 && (
+            <div className="space-y-4">
+              <h4 className="text-md font-medium text-gray-900">Vercel AI SDK Settings</h4>
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-900">
+                  <strong>ℹ️ Vercel AI SDK:</strong> Use the Vercel AI SDK for unified LLM interaction across multiple providers (OpenAI, Anthropic, Cohere, etc).
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Provider</label>
+                <select
+                  value={settings.vercelAIProvider}
+                  onChange={e => handleChange('vercelAIProvider', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg"
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="cohere">Cohere</option>
+                  <option value="huggingface">Hugging Face</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                <input
+                  type="password"
+                  value={settings.vercelAIApiKey}
+                  onChange={e => handleChange('vercelAIApiKey', e.target.value)}
+                  placeholder="sk-..."
+                  className="w-full px-3 py-2 border rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">Your API key for the selected provider</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Model Name</label>
+                <input
+                  type="text"
+                  value={settings.vercelAIModel}
+                  onChange={e => handleChange('vercelAIModel', e.target.value)}
+                  placeholder="gpt-4 or claude-3-opus"
+                  className="w-full px-3 py-2 border rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">e.g., gpt-4, gpt-3.5-turbo, claude-3-opus, command-light</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Temperature</label>
+                  <input
+                    type="number"
+                    value={settings.vercelAITemperature}
+                    onChange={e => handleChange('vercelAITemperature', parseFloat(e.target.value))}
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Lower = more deterministic</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Max Tokens</label>
+                  <input
+                    type="number"
+                    value={settings.vercelAIMaxTokens}
+                    onChange={e => handleChange('vercelAIMaxTokens', parseInt(e.target.value))}
+                    min="100"
+                    max="4000"
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <Button onClick={() => handleTest('vercel-ai')} disabled={testing === 'vercel-ai'} variant="secondary">
+                {testing === 'vercel-ai' ? 'Testing...' : 'Test Vercel AI Connection'}
+              </Button>
+
               <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-600">
                 <strong>Setup Instructions:</strong>
                 <ul className="list-disc pl-5 mt-2 space-y-1">
-                  <li>Start self-hosted Vanna server: <code className="bg-white px-1 rounded">docker run -p 8000:8000 vanna-ai/vanna-server</code></li>
-                  <li>Provide your database connection string (no API key needed)</li>
-                  <li>Select your database type</li>
-                  <li>Click "Test Vanna Connection" to verify connectivity</li>
+                  <li>Get your API key from the chosen provider (OpenAI, Anthropic, etc.)</li>
+                  <li>Select the provider from the dropdown</li>
+                  <li>Enter your API key securely</li>
+                  <li>Specify the model name you want to use</li>
+                  <li>Click "Test Vercel AI Connection" to verify</li>
                 </ul>
               </div>
             </div>
           )}
 
           {/* LanceDB Tab */}
-          {activeTab === 1 && (
+          {activeTab === 5 && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">LanceDB URL</label>
@@ -330,7 +748,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
           )}
 
           {/* VectorDB Settings Tab */}
-          {activeTab === 2 && (
+          {activeTab === 6 && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">VectorDB Provider</label>
@@ -389,7 +807,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
           )}
 
           {/* Embedding Model Tab */}
-          {activeTab === 3 && (
+          {activeTab === 5 && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Embedding Provider</label>
@@ -450,74 +868,8 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
             </div>
           )}
 
-          {/* LLM Model Tab */}
-          {activeTab === 4 && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">LLM Provider</label>
-                <select
-                  value={settings.llmProvider}
-                  onChange={e => handleChange('llmProvider', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg"
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Claude (Anthropic)</option>
-                  <option value="google">Google Gemini</option>
-                  <option value="azure">Azure OpenAI</option>
-                  <option value="llama">Llama</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Model</label>
-                <input
-                  type="text"
-                  value={settings.llmModel}
-                  onChange={e => handleChange('llmModel', e.target.value)}
-                  placeholder="gpt-4"
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Temperature (0-1)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="1"
-                  value={settings.llmTemperature}
-                  onChange={e => handleChange('llmTemperature', parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">Lower = more deterministic, Higher = more creative</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Max Tokens</label>
-                <input
-                  type="number"
-                  value={settings.llmMaxTokens}
-                  onChange={e => handleChange('llmMaxTokens', parseInt(e.target.value))}
-                  placeholder="2000"
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
-                <input
-                  type="password"
-                  value={settings.llmApiKey}
-                  onChange={e => handleChange('llmApiKey', e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-              <Button onClick={() => handleTest('llm')} disabled={testing === 'llm'} variant="secondary">
-                {testing === 'llm' ? 'Testing...' : 'Test LLM Connection'}
-              </Button>
-            </div>
-          )}
-
           {/* AI Assistant Features Tab */}
-          {activeTab === 5 && (
+          {activeTab === 6 && (
             <div className="space-y-4">
               <label className="flex items-center space-x-2">
                 <input
@@ -590,3 +942,4 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
 };
 
 export default AIIntegrationsTab;
+

@@ -291,3 +291,4 @@ const RolePermissionsPage: React.FC = () => {
 };
 
 export default RolePermissionsPage;
+

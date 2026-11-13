@@ -237,3 +237,4 @@ export function ChatPanel({ activityId, conversationId, isOpen, onClose }) {
 }
 
 export default ChatPanel;
+

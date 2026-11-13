@@ -6,20 +6,27 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger';
   size?: 'sm' | 'md' | 'lg';
   leftIcon?: React.ReactNode;
+  disabled?: boolean;
 }
 
-const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', size = 'md', leftIcon, ...props }) => {
-  const baseClasses = 'inline-flex items-center border border-transparent font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2';
+const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', size = 'md', leftIcon, disabled = false, ...props }) => {
+  const baseClasses = 'inline-flex items-center border border-transparent font-medium rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all duration-200 ease-in-out';
 
   const variantClasses = {
-    primary: 'bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500',
-    secondary: 'bg-primary-100 text-primary-700 hover:bg-primary-200 focus:ring-primary-500',
-    danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500',
+    primary: disabled
+      ? 'bg-gray-400 text-white cursor-not-allowed opacity-60'
+      : 'bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500 cursor-pointer',
+    secondary: disabled
+      ? 'bg-gray-200 text-gray-500 cursor-not-allowed opacity-60'
+      : 'bg-primary-100 text-primary-700 hover:bg-primary-200 focus:ring-primary-500 cursor-pointer border border-primary-200',
+    danger: disabled
+      ? 'bg-gray-400 text-white cursor-not-allowed opacity-60'
+      : 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 cursor-pointer',
   };
 
   const sizeClasses = {
-    sm: 'px-2.5 py-1.5 text-xs',
-    md: 'px-4 py-2 text-sm',
+    sm: 'px-3 py-1.5 text-xs',
+    md: 'px-4 py-2.5 text-sm',
     lg: 'px-6 py-3 text-base',
   };
 
@@ -31,14 +38,21 @@ const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', size = '
 
   // Fallback inline styles to ensure colors are applied
   const variantStyles = {
-    primary: { backgroundColor: '#2563eb', color: '#ffffff' },
-    secondary: { backgroundColor: '#dbeafe', color: '#1d4ed8' },
-    danger: { backgroundColor: '#dc2626', color: '#ffffff' },
+    primary: disabled
+      ? { backgroundColor: '#d1d5db', color: '#ffffff' }
+      : { backgroundColor: '#2563eb', color: '#ffffff' },
+    secondary: disabled
+      ? { backgroundColor: '#e5e7eb', color: '#9ca3af' }
+      : { backgroundColor: '#dbeafe', color: '#1d4ed8' },
+    danger: disabled
+      ? { backgroundColor: '#d1d5db', color: '#ffffff' }
+      : { backgroundColor: '#dc2626', color: '#ffffff' },
   };
 
   return (
     <button
       type="button"
+      disabled={disabled}
       className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${props.className || ''}`}
       style={variantStyles[variant]}
       {...props}

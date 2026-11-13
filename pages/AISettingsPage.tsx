@@ -121,10 +121,10 @@ const AISettingsPage: React.FC = () => {
         payload = { ...payload, lancedbUrl: settings.lancedbUrl, lancedbDatabase: settings.lancedbDatabase };
       } else if (type === 'embedding') {
         endpoint = '/api/embedding/test-connection';
-        payload = { ...payload, embeddingModel: settings.embeddingModel, embeddingApiKey: settings.embeddingApiKey };
+        payload = { ...payload, embeddingModel: settings.embeddingModel, embeddingApiKey: settings.embeddingApiKey, embeddingEndpoint: settings.embeddingEndpoint };
       } else if (type === 'llm') {
         endpoint = '/api/llm/test-connection';
-        payload = { ...payload, llmProvider: settings.llmProvider, llmApiKey: settings.llmApiKey };
+        payload = { ...payload, llmProvider: settings.llmProvider, llmApiKey: settings.llmApiKey, llmModel: settings.llmModel };
       }
 
       const res = await fetch(endpoint, {
@@ -134,13 +134,21 @@ const AISettingsPage: React.FC = () => {
         body: JSON.stringify(payload)
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (res.ok) {
-        setSaveStatus({ type: 'success', message: `${type.toUpperCase()} connection successful!` });
+        setSaveStatus({ 
+          type: 'success', 
+          message: data.message || `${type.toUpperCase()} connection successful!` 
+        });
       } else {
-        throw new Error('Connection failed');
+        throw new Error(data.details || data.error || 'Connection failed');
       }
-    } catch (err) {
-      setSaveStatus({ type: 'error', message: `${type.toUpperCase()} connection failed` });
+    } catch (err: any) {
+      setSaveStatus({ 
+        type: 'error', 
+        message: `${type.toUpperCase()} connection failed: ${err.message}` 
+      });
     } finally {
       setLoading(false);
     }
@@ -584,3 +592,4 @@ const AISettingsPage: React.FC = () => {
 };
 
 export default AISettingsPage;
+

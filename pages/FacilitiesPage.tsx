@@ -302,10 +302,10 @@ const FacilitiesPage: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         title={currentFacility.id ? "Edit Facility" : "New Facility"}
         footer={
-          <>
-            <Button onClick={handleSave} className="ml-3">Save</Button>
+          <div className="flex justify-end gap-3 w-full">
             <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-          </>
+            <Button onClick={handleSave}>Save</Button>
+          </div>
         }
       >
         <div className="space-y-4">
@@ -414,8 +414,7 @@ const FacilitiesPage: React.FC = () => {
         title={`Import Facilities (${importedData.length} records)`}
         size="3xl"
         footer={
-          <>
-            <Button onClick={handleImportConfirm} className="ml-3">Confirm Import</Button>
+          <div className="flex justify-end gap-3 w-full">
             <Button
               variant="secondary"
               onClick={() => {
@@ -426,7 +425,8 @@ const FacilitiesPage: React.FC = () => {
             >
               Cancel
             </Button>
-          </>
+            <Button onClick={handleImportConfirm}>Confirm Import</Button>
+          </div>
         }
       >
         <div className="space-y-4">
@@ -475,3 +475,4 @@ const FacilitiesPage: React.FC = () => {
 };
 
 export default FacilitiesPage;
+

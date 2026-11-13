@@ -358,3 +358,4 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
 };
 
 export default FacilityCard;
+

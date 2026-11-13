@@ -295,3 +295,4 @@ const ImageCropper: React.FC<ImageCropperProps> = ({
 };
 
 export default ImageCropper;
+

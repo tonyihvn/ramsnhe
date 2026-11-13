@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useData } from '../hooks/useData';
 import { useServerPreferences } from '../hooks/useServerPreferences';
 import { FormDefinition, FormPage, FormSection, Question, AnswerType } from '../types';
-import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon, ArrowUpIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpTrayIcon, QuestionMarkCircleIcon, ExclamationCircleIcon, ChevronDownIcon, ChevronRightIcon, Cog6ToothIcon, SparklesIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import * as ExcelJS from 'exceljs';
 import UnifiedRichTextEditor from '../components/ui/UnifiedRichTextEditor';
+import FormVoiceGuidelinesEditor from '../components/FormVoiceGuidelinesEditor';
 
 const makeFieldName = (text: string) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `f_${Date.now()}`;
 // --- Types for Validation ---
@@ -446,6 +447,7 @@ const BuildFormPage: React.FC = () => {
   const [datasetSampleRows, setDatasetSampleRows] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+  const [showVoiceGuidelinesModal, setShowVoiceGuidelinesModal] = useState(false);
   const [roleModalTarget, setRoleModalTarget] = useState<{ type: 'page' | 'section'; pageIndex: number; sectionIndex?: number } | null>(null);
   const [roleModalPageKey, setRoleModalPageKey] = useState<string>('');
   const [roleModalSectionKey, setRoleModalSectionKey] = useState<string | null>(null);
@@ -1218,6 +1220,7 @@ const BuildFormPage: React.FC = () => {
         </div>
         <div className="space-x-2">
           <Button variant="secondary" onClick={() => setIsGuideModalOpen(true)} leftIcon={<QuestionMarkCircleIcon className="h-5 w-5" />}>Guide</Button>
+          <Button variant="secondary" onClick={() => setShowVoiceGuidelinesModal(true)} leftIcon={<MicrophoneIcon className="h-4 w-4" />}>Voice Guidelines</Button>
           <Button variant="secondary" onClick={handleDownloadForm} leftIcon={<ArrowDownIcon className="h-5 w-5" />}>Download</Button>
           <Button variant="secondary" onClick={() => setIsImportModalOpen(true)} leftIcon={<ArrowUpTrayIcon className="h-5 w-5" />}>Bulk Import</Button>
           <Button onClick={handleSave}>{isSaved ? 'Update Form' : 'Save Form'}</Button>
@@ -1661,8 +1664,24 @@ const BuildFormPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Voice Guidelines Editor Modal */}
+      <Modal
+        isOpen={showVoiceGuidelinesModal}
+        onClose={() => setShowVoiceGuidelinesModal(false)}
+        title="Voice Capture Guidelines"
+        size="large"
+      >
+        {activity && activityId && (
+          <FormVoiceGuidelinesEditor
+            activityId={activityId}
+            formDefinition={formDef}
+          />
+        )}
+      </Modal>
     </div>
   );
 };
 
 export default BuildFormPage;
+

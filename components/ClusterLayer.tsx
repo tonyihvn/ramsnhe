@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.markercluster';
@@ -101,3 +101,4 @@ const ClusterLayer: React.FC<{ locations: Location[]; popupRenderer?: (loc: Loca
 };
 
 export default ClusterLayer;
+

@@ -94,3 +94,4 @@ const MInput: React.FC<Props> = ({ id, label, type = 'text', value, onChange, op
 };
 
 export default MInput;
+

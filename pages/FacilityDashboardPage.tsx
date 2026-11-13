@@ -267,3 +267,4 @@ const FacilityDashboardPage: React.FC = () => {
 };
 
 export default FacilityDashboardPage;
+

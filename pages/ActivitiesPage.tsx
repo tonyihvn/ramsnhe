@@ -382,10 +382,10 @@ const ActivitiesPage: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         title={currentActivity.id ? "Edit Activity" : "New Activity"}
         footer={
-          <>
-            <Button onClick={handleSave} className="ml-3">Save</Button>
+          <div className="flex justify-end gap-3 w-full">
             <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-          </>
+            <Button onClick={handleSave}>Save</Button>
+          </div>
         }
       >
         <div className="space-y-4">
@@ -415,12 +415,12 @@ const ActivitiesPage: React.FC = () => {
             <div>
               <label className="block text-sm font-medium text-gray-700">Start Date</label>
               <input type="date" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                value={currentActivity.startDate || ''} onChange={(e) => setCurrentActivity({ ...currentActivity, startDate: e.target.value })} />
+                value={currentActivity.startDate ? String(currentActivity.startDate).split('T')[0] : ''} onChange={(e) => setCurrentActivity({ ...currentActivity, startDate: e.target.value })} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">End Date</label>
               <input type="date" className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                value={currentActivity.endDate || ''} onChange={(e) => setCurrentActivity({ ...currentActivity, endDate: e.target.value })} />
+                value={currentActivity.endDate ? String(currentActivity.endDate).split('T')[0] : ''} onChange={(e) => setCurrentActivity({ ...currentActivity, endDate: e.target.value })} />
             </div>
           </div>
           <div>
@@ -472,3 +472,4 @@ const ActivitiesPage: React.FC = () => {
 };
 
 export default ActivitiesPage;
+

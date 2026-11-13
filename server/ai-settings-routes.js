@@ -158,23 +158,67 @@ router.post('/vanna/test-connection', requireAuth, async (req, res) => {
   try {
     const { businessId, vannaApiUrl, vannaApiKey } = req.body;
 
-    if (!vannaApiUrl || !vannaApiKey) {
-      return res.status(400).json({ error: 'Vanna API URL and key are required' });
+    // If Vanna URL is not provided, try to test the local Vanna server
+    if (!vannaApiUrl) {
+      try {
+        // Try to connect to local Vanna server on default port
+        const localVannaUrl = 'http://127.0.0.1:8888';
+        const response = await fetch(`${localVannaUrl}/health`, {
+          timeout: 5000
+        }).catch(() => null);
+
+        if (response && response.ok) {
+          return res.json({ 
+            success: true, 
+            message: 'Local Vanna server is running on port 8888',
+            url: localVannaUrl 
+          });
+        } else {
+          return res.status(400).json({ 
+            error: 'Vanna API URL is required and local Vanna server is not running',
+            suggestion: 'Start the Vanna server or provide a remote API URL'
+          });
+        }
+      } catch (e) {
+        return res.status(400).json({ 
+          error: 'Vanna API URL is required',
+          details: 'Local Vanna server at port 8888 is not responding'
+        });
+      }
     }
 
-    const response = await fetch(`${vannaApiUrl}/api/v1/health`, {
-      headers: { 'Authorization': `Bearer ${vannaApiKey}` },
-      timeout: 5000
-    });
+    // Test connection to provided URL
+    try {
+      const headers = {};
+      if (vannaApiKey) {
+        headers['Authorization'] = `Bearer ${vannaApiKey}`;
+      }
 
-    if (response.ok) {
-      res.json({ success: true, message: 'Connection successful' });
-    } else {
-      res.status(400).json({ error: 'Connection failed', status: response.status });
+      const response = await fetch(`${vannaApiUrl}/health`, {
+        headers,
+        timeout: 5000
+      });
+
+      if (response.ok) {
+        res.json({ success: true, message: 'Vanna connection successful', url: vannaApiUrl });
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        res.status(400).json({ 
+          error: 'Vanna connection failed', 
+          status: response.status,
+          details: errorData.error || errorData.message || 'Check API key and URL'
+        });
+      }
+    } catch (error) {
+      res.status(400).json({ 
+        error: 'Could not reach Vanna server',
+        details: error.message,
+        suggestion: 'Verify the URL is correct and the server is running'
+      });
     }
   } catch (error) {
     console.error('Vanna connection test failed:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Connection test failed: ' + error.message });
   }
 });
 
@@ -205,13 +249,36 @@ router.post('/lancedb/test-connection', requireAuth, async (req, res) => {
 // Test Embedding Model Connection
 router.post('/embedding/test-connection', requireAuth, async (req, res) => {
   try {
-    const { businessId, embeddingModel, embeddingApiKey } = req.body;
+    const { businessId, embeddingModel, embeddingApiKey, embeddingEndpoint } = req.body;
 
-    if (!embeddingModel || !embeddingApiKey) {
-      return res.status(400).json({ error: 'Embedding model and API key are required' });
+    if (!embeddingModel) {
+      return res.status(400).json({ error: 'Embedding model is required' });
     }
 
-    // Simple test by trying to create a test embedding
+    // For local embedding models, validate the endpoint if provided
+    if (embeddingModel === 'local' || embeddingModel === 'ollama' || embeddingModel === 'huggingface-local') {
+      if (embeddingEndpoint) {
+        try {
+          const response = await fetch(`${embeddingEndpoint}/health`, { timeout: 5000 }).catch(() => null);
+          if (response && response.ok) {
+            return res.json({ success: true, message: 'Local embedding model server is healthy' });
+          }
+        } catch (e) {
+          console.warn('Could not verify local embedding endpoint:', e.message);
+        }
+      }
+      return res.json({ 
+        success: true, 
+        message: 'Local embedding model configured. Ensure the service is running.' 
+      });
+    }
+
+    // For cloud-based providers, require API key
+    if (!embeddingApiKey) {
+      return res.status(400).json({ error: 'API key is required for cloud-based embedding providers' });
+    }
+
+    // Test by trying to create a test embedding
     if (embeddingModel === 'openai') {
       const response = await fetch('https://api.openai.com/v1/embeddings', {
         method: 'POST',
@@ -227,29 +294,73 @@ router.post('/embedding/test-connection', requireAuth, async (req, res) => {
       });
 
       if (response.ok) {
-        res.json({ success: true, message: 'Connection successful' });
+        res.json({ success: true, message: 'OpenAI embedding connection successful' });
       } else {
-        res.status(400).json({ error: 'Connection failed', status: response.status });
+        const errorData = await response.json().catch(() => ({}));
+        res.status(400).json({ 
+          error: 'OpenAI embedding connection failed', 
+          status: response.status,
+          details: errorData.error?.message || 'Invalid API key'
+        });
       }
+    } else if (embeddingModel === 'cohere') {
+      const response = await fetch('https://api.cohere.ai/v1/embed', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${embeddingApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          texts: ['test'],
+          model: 'embed-english-v3.0'
+        }),
+        timeout: 5000
+      });
+
+      if (response.ok) {
+        res.json({ success: true, message: 'Cohere embedding connection successful' });
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        res.status(400).json({ 
+          error: 'Cohere embedding connection failed', 
+          status: response.status,
+          details: errorData.error?.message || 'Invalid API key'
+        });
+      }
+    } else if (embeddingModel === 'azure') {
+      res.json({ success: true, message: 'Azure embedding model configuration validated' });
     } else {
-      res.json({ success: true, message: 'Validation passed' });
+      res.json({ success: true, message: 'Embedding model configuration validated' });
     }
   } catch (error) {
     console.error('Embedding connection test failed:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Connection test failed: ' + error.message });
   }
 });
 
 // Test LLM Connection
 router.post('/llm/test-connection', requireAuth, async (req, res) => {
   try {
-    const { businessId, llmProvider, llmApiKey } = req.body;
+    const { businessId, llmProvider, llmApiKey, llmModel } = req.body;
 
-    if (!llmProvider || !llmApiKey) {
-      return res.status(400).json({ error: 'LLM provider and API key are required' });
+    if (!llmProvider) {
+      return res.status(400).json({ error: 'LLM provider is required' });
     }
 
-    // Simple test by trying to call the LLM
+    // For local LLM models, just validate that a provider is selected
+    if (llmProvider === 'llama' || llmProvider === 'local' || llmProvider === 'ollama') {
+      return res.json({ 
+        success: true, 
+        message: 'Local LLM model configured. Make sure the local server is running.' 
+      });
+    }
+
+    // For cloud-based providers, require API key and validate it
+    if (!llmApiKey) {
+      return res.status(400).json({ error: 'API key is required for cloud-based LLM providers' });
+    }
+
+    // Test API key with the provider
     if (llmProvider === 'openai') {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -258,7 +369,7 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
+          model: llmModel || 'gpt-3.5-turbo',
           messages: [{ role: 'user', content: 'test' }],
           max_tokens: 10
         }),
@@ -266,16 +377,71 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
       });
 
       if (response.ok) {
-        res.json({ success: true, message: 'Connection successful' });
+        res.json({ success: true, message: 'OpenAI connection successful' });
       } else {
-        res.status(400).json({ error: 'Connection failed', status: response.status });
+        const errorData = await response.json().catch(() => ({}));
+        res.status(400).json({ 
+          error: 'OpenAI API connection failed', 
+          status: response.status,
+          details: errorData.error?.message || 'Invalid API key or model'
+        });
       }
+    } else if (llmProvider === 'anthropic') {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': llmApiKey,
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: llmModel || 'claude-3-sonnet-20240229',
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'test' }]
+        }),
+        timeout: 5000
+      });
+
+      if (response.ok) {
+        res.json({ success: true, message: 'Anthropic Claude connection successful' });
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        res.status(400).json({ 
+          error: 'Anthropic API connection failed', 
+          status: response.status,
+          details: errorData.error?.message || 'Invalid API key'
+        });
+      }
+    } else if (llmProvider === 'google') {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${llmModel || 'gemini-pro'}:generateContent?key=${llmApiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: 'test' }] }]
+        }),
+        timeout: 5000
+      });
+
+      if (response.ok) {
+        res.json({ success: true, message: 'Google Gemini connection successful' });
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        res.status(400).json({ 
+          error: 'Google Gemini API connection failed', 
+          status: response.status,
+          details: errorData.error?.message || 'Invalid API key'
+        });
+      }
+    } else if (llmProvider === 'azure') {
+      res.json({ success: true, message: 'Azure OpenAI configuration validated. Ensure endpoint and key are correct.' });
     } else {
-      res.json({ success: true, message: 'Validation passed' });
+      res.json({ success: true, message: 'LLM provider configuration validated' });
     }
   } catch (error) {
     console.error('LLM connection test failed:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Connection test failed: ' + error.message });
   }
 });
 
