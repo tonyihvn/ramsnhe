@@ -489,6 +489,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [tableImportStatus, setTableImportStatus] = useState<any>(null);
     const [showVoiceCaptureModal, setShowVoiceCaptureModal] = useState(false);
     const [showAIAssistantModal, setShowAIAssistantModal] = useState(false);
+    const [expandedReviewerComments, setExpandedReviewerComments] = useState<Set<string>>(new Set());
 
     const location = useLocation();
     const search = new URLSearchParams(location.search);
@@ -555,6 +556,18 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
     const handleAnswerChange = (questionId: string, value: any) => {
         setAnswers(prev => ({ ...prev, [questionId]: value }));
+    };
+
+    const toggleReviewerComment = (commentId: string) => {
+        setExpandedReviewerComments(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(commentId)) {
+                newSet.delete(commentId);
+            } else {
+                newSet.add(commentId);
+            }
+            return newSet;
+        });
     };
 
     // Helper to derive a stable group key for a section.
@@ -1514,15 +1527,17 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                                     <RenderQuestion question={q} value={answers[q.id]} onChange={(val) => handleAnswerChange(q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={answers} fieldNameMap={fieldMapLocal} />
                                                                     {/* Show reviewer comment field below if enabled (but not for paragraph elements) */}
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
-                                                                        <div className="mt-2">
-                                                                            <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
-                                                                            <MInput
-                                                                                type="textarea"
-                                                                                value={answers[`${q.id}_reviewers_comment`] || ''}
-                                                                                onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)}
-                                                                                rows={2}
-                                                                                placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
-                                                                            />
+                                                                        <div className="mt-3">
+                                                                            <button type="button" onClick={() => toggleReviewerComment(q.id)} className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium focus:outline-none focus:underline">
+                                                                                <span>{expandedReviewerComments.has(q.id) ? 'V' : '>'}</span>
+                                                                                <span>Add Reviewer's Comment</span>
+                                                                            </button>
+                                                                            {expandedReviewerComments.has(q.id) && (
+                                                                                <div className="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
+                                                                                    <label className="block text-xs text-gray-600 mb-2 font-medium">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
+                                                                                    <MInput type="textarea" value={answers[`${q.id}_reviewers_comment`] || ''} onChange={val => handleAnswerChange(`${q.id}_reviewers_comment`, val)} rows={2} placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"} />
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -1595,15 +1610,17 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                                     {q.questionHelper && q.answerType !== AnswerType.PARAGRAPH && <p className="text-xs text-gray-500 mb-1">{q.questionHelper}</p>}
                                                                     <RenderQuestion question={q} value={row[q.id]} onChange={(val) => updateRepeatRow(groupName, rowIndex, q.id, val)} facilities={facilities} users={users} disabled={!canInteract} allAnswers={row} fieldNameMap={rowFieldMap} />
                                                                     {q.answerType !== AnswerType.PARAGRAPH && q.metadata && q.metadata.displayReviewersComment && (
-                                                                        <div className="mt-2">
-                                                                            <label className="block text-xs text-gray-600 mb-1">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
-                                                                            <MInput
-                                                                                type="textarea"
-                                                                                value={row[`${q.id}_reviewers_comment`] || ''}
-                                                                                onChange={val => updateRepeatRow(groupName, rowIndex, `${q.id}_reviewers_comment`, val)}
-                                                                                rows={2}
-                                                                                placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"}
-                                                                            />
+                                                                        <div className="mt-3">
+                                                                            <button type="button" onClick={() => toggleReviewerComment(`${q.id}_${rowIndex}`)} className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium focus:outline-none focus:underline">
+                                                                                <span>{expandedReviewerComments.has(`${q.id}_${rowIndex}`) ? 'V' : '>'}</span>
+                                                                                <span>Add Reviewer's Comment</span>
+                                                                            </button>
+                                                                            {expandedReviewerComments.has(`${q.id}_${rowIndex}`) && (
+                                                                                <div className="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
+                                                                                    <label className="block text-xs text-gray-600 mb-2 font-medium">{q.metadata.reviewerCommentLabel || "Reviewer's Comment"}</label>
+                                                                                    <MInput type="textarea" value={row[`${q.id}_reviewers_comment`] || ''} onChange={val => updateRepeatRow(groupName, rowIndex, `${q.id}_reviewers_comment`, val)} rows={2} placeholder={q.metadata.reviewerCommentLabel || "Reviewer's Comment"} />
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     )}
                                                                 </div>
