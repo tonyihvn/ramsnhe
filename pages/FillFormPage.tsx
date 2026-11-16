@@ -1766,25 +1766,33 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 <label className="block text-sm font-medium text-gray-700">Link Entity</label>
                                 <p className="text-xs text-gray-500 mb-2">Select the facility or user this response should be linked to (required for some activities).</p>
                                 {String(activity.responseType || '').toLowerCase() === 'facility' ? (
-                                    <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                        <option value="">Select facility...</option>
-                                        {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                                    </select>
+                                    <SearchableSelect
+                                        options={facilities.map(f => ({ value: f.id, label: f.name }))}
+                                        value={selectedFacilityId || ''}
+                                        placeholder="Select facility..."
+                                        onChange={(val) => setSelectedFacilityId(val ? Number(val) : undefined)}
+                                    />
                                 ) : String(activity.responseType || '').toLowerCase() === 'user' ? (
-                                    <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                        <option value="">Select user...</option>
-                                        {getFilteredUsers().map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
-                                    </select>
+                                    <SearchableSelect
+                                        options={getFilteredUsers().map(u => ({ value: u.id, label: `${u.firstName} ${u.lastName} (${u.email})` }))}
+                                        value={selectedUserId || ''}
+                                        placeholder="Select user..."
+                                        onChange={(val) => setSelectedUserId(val ? Number(val) : undefined)}
+                                    />
                                 ) : (
                                     <div className="space-y-2">
-                                        <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                            <option value="">(Optional) Select facility...</option>
-                                            {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                                        </select>
-                                        <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
-                                            <option value="">(Optional) Select user...</option>
-                                            {getFilteredUsers().map(u => <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.email})</option>)}
-                                        </select>
+                                        <SearchableSelect
+                                            options={facilities.map(f => ({ value: f.id, label: f.name }))}
+                                            value={selectedFacilityId || ''}
+                                            placeholder="(Optional) Select facility..."
+                                            onChange={(val) => setSelectedFacilityId(val ? Number(val) : undefined)}
+                                        />
+                                        <SearchableSelect
+                                            options={getFilteredUsers().map(u => ({ value: u.id, label: `${u.firstName} ${u.lastName} (${u.email})` }))}
+                                            value={selectedUserId || ''}
+                                            placeholder="(Optional) Select user..."
+                                            onChange={(val) => setSelectedUserId(val ? Number(val) : undefined)}
+                                        />
                                     </div>
                                 )}
                             </div>

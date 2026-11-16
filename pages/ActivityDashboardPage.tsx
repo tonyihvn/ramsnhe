@@ -52,6 +52,10 @@ const ActivityDashboardPage: React.FC = () => {
   const [aiQueryResult, setAiQueryResult] = useState<any | null>(null);
   const [selectedSchemas, setSelectedSchemas] = useState<string[]>([]);
   const [selectedBusinessRules, setSelectedBusinessRules] = useState<any[]>([]);
+  const [interactiveStats, setInteractiveStats] = useState<Array<{ questionId: string; aggregateType: string }>>([]);
+  const [statsResults, setStatsResults] = useState<Record<string, number | string>>({});
+  const [selectedStatQuestion, setSelectedStatQuestion] = useState<string>('');
+  const [selectedStatAggregateType, setSelectedStatAggregateType] = useState<string>('');
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -109,6 +113,70 @@ const ActivityDashboardPage: React.FC = () => {
   if (!data) return <div>No data available for this activity.</div>;
 
   const { activity, questions, reports, answersByQuestion, uploadedDocs } = data;
+
+  const calculateStat = (answers: any[], aggregateType: string): number | string => {
+    const nums = answers
+      .map((a: any) => {
+        let v = a.answer_value;
+        if (v && typeof v === 'object') v = v.value ?? JSON.stringify(v);
+        const n = parseFloat(String(v));
+        return isNaN(n) ? undefined : n;
+      })
+      .filter((n: any) => n !== undefined);
+
+    if (nums.length === 0) return '—';
+
+    switch (aggregateType) {
+      case 'sum':
+        return nums.reduce((a: number, b: number) => a + b, 0);
+      case 'count':
+        return answers.length;
+      case 'average':
+        return (nums.reduce((a: number, b: number) => a + b, 0) / nums.length).toFixed(2);
+      case 'min':
+        return Math.min(...nums);
+      case 'max':
+        return Math.max(...nums);
+      case 'median': {
+        const sorted = nums.sort((a: number, b: number) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : ((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2);
+      }
+      case 'std_dev': {
+        const avg = nums.reduce((a: number, b: number) => a + b, 0) / nums.length;
+        const variance = nums.reduce((a: number, b: number) => a + Math.pow(b - avg, 2), 0) / nums.length;
+        return Math.sqrt(variance).toFixed(2);
+      }
+      default:
+        return '—';
+    }
+  };
+
+  const handleAddStat = (questionId: string, aggregateType: string) => {
+    if (!aggregateType) return;
+    const statKey = `${questionId}-${aggregateType}`;
+    if (interactiveStats.some(s => s.questionId === questionId && s.aggregateType === aggregateType)) {
+      setInteractiveStats(prev => prev.filter(s => !(s.questionId === questionId && s.aggregateType === aggregateType)));
+      setStatsResults(prev => {
+        const updated = { ...prev };
+        delete updated[statKey];
+        return updated;
+      });
+    } else {
+      setInteractiveStats(prev => [...prev, { questionId, aggregateType }]);
+      const result = calculateStat(answersByQuestion[questionId] || [], aggregateType);
+      setStatsResults(prev => ({ ...prev, [statKey]: result }));
+    }
+  };
+
+  const handleAddStatClick = () => {
+    if (selectedStatQuestion && selectedStatAggregateType) {
+      handleAddStat(selectedStatQuestion, selectedStatAggregateType);
+      setSelectedStatQuestion('');
+      setSelectedStatAggregateType('');
+    }
+  };
+
 
   // Check if user has permission to view this activity
   const userRole = String(currentUser?.role || '').toLowerCase().trim();
@@ -254,6 +322,85 @@ const ActivityDashboardPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      <Card>
+        <h2 className="text-lg font-semibold mb-2">Interactive Stats</h2>
+        <p className="text-sm text-gray-500">Select a question and aggregate type to calculate statistics from collected answers.</p>
+
+        <div className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Select Question</label>
+              <select
+                value={selectedStatQuestion}
+                onChange={(e) => setSelectedStatQuestion(e.target.value)}
+                className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">Choose a question...</option>
+                {questions.map((q: any) => (
+                  <option key={q.id} value={q.id}>{q.question_text}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Aggregate Type</label>
+              <select
+                value={selectedStatAggregateType}
+                onChange={(e) => setSelectedStatAggregateType(e.target.value)}
+                className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">Choose aggregate type...</option>
+                <option value="count">Count</option>
+                <option value="sum">Sum</option>
+                <option value="average">Average</option>
+                <option value="min">Minimum</option>
+                <option value="max">Maximum</option>
+                <option value="median">Median</option>
+                <option value="std_dev">Std Dev</option>
+              </select>
+            </div>
+          </div>
+          <button
+            onClick={handleAddStatClick}
+            className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 font-medium text-sm"
+          >
+            Add Stat
+          </button>
+        </div>
+
+        {interactiveStats.length > 0 && (
+          <div className="mt-6">
+            <h3 className="font-medium mb-3">Results</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {interactiveStats.map((stat, idx) => {
+                const q = questions.find((q: any) => String(q.id) === stat.questionId);
+                const statKey = `${stat.questionId}-${stat.aggregateType}`;
+                const result = statsResults[statKey];
+                return (
+                  <div key={idx} className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-4 shadow-sm">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <div className="text-xs text-gray-600 font-medium">
+                          {stat.aggregateType.replace('_', ' ').toUpperCase()}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1 line-clamp-2">{q?.question_text || 'Unknown'}</div>
+                      </div>
+                      <button
+                        onClick={() => handleAddStat(stat.questionId, stat.aggregateType)}
+                        className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className="text-2xl font-bold text-blue-600 mt-3">{result}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Card>
 
       <Card>
         <h2 className="text-lg font-semibold mb-2">Interactive Charts</h2>
