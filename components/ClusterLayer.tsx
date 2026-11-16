@@ -1,9 +1,9 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.markercluster';
-import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
+import React from 'react';
 
 type Location = { id: string; lat: number; lng: number; popupHtml?: string; payload?: any };
 
@@ -33,16 +33,27 @@ const ClusterLayer: React.FC<{ locations: Location[]; popupRenderer?: (loc: Loca
         marker.bindPopup(popupContainer, { autoPan: true, keepInView: true, minWidth: 280, maxWidth: 520, autoPanPadding: [40, 40] });
 
         if (popupRenderer) {
+          // Render popup content using React
           marker.on('popupopen', (e: any) => {
             try {
-              const container = e.popup.getContent();
+              const container = e.popup.getContent() as HTMLElement;
               if (container && !roots.has(marker)) {
-                const root: Root = createRoot(container);
-                root.render(React.createElement(React.Fragment, null, popupRenderer(loc) as any));
-                roots.set(marker, root);
+                // Use setTimeout to avoid timing issues with Leaflet's DOM manipulation
+                requestAnimationFrame(() => {
+                  try {
+                    const root: Root = createRoot(container);
+                    const content = popupRenderer(loc);
+                    if (content) {
+                      root.render(content);
+                    }
+                    roots.set(marker, root);
+                  } catch (err) {
+                    console.error('Error creating/rendering React root:', err);
+                  }
+                });
               }
             } catch (er) {
-              // ignore
+              console.error('Error in popupopen event handler:', er);
             }
           });
 
@@ -50,11 +61,15 @@ const ClusterLayer: React.FC<{ locations: Location[]; popupRenderer?: (loc: Loca
             try {
               const root = roots.get(marker);
               if (root) {
-                root.unmount();
+                try {
+                  root.unmount();
+                } catch (unmountErr) {
+                  console.error('Error unmounting root:', unmountErr);
+                }
                 roots.delete(marker);
               }
             } catch (er) {
-              // ignore
+              console.error('Error in popupclose handler:', er);
             }
           });
         } else if (loc.popupHtml) {

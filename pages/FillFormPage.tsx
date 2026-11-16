@@ -218,6 +218,7 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
         });
       }
       
+      console.log(`[RenderQuestion] question=${question.fieldName || question.id}, evaluationContext:`, context);
       return context;
     };
 
@@ -236,7 +237,21 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
         case AnswerType.TIME:
             return <MInput label={question.questionText} type="time" value={displayValue || ''} onChange={onChange} disabled={!!effectiveDisabled} />;
         case AnswerType.DROPDOWN:
-            const filteredOptions = filterOptionsByCondition(question.options || [], evaluationContext);
+            // Handle dependent dropdown - filter options based on parent field value
+            let dropdownOptions = question.options || [];
+            if (question.metadata && question.metadata.dependsOn) {
+                const parentFieldName = question.metadata.dependsOn;
+                const parentValue = fieldNameMap[parentFieldName];
+                // Filter options to only show those where the value starts with the parent field value
+                // This matches the typical pattern where options are structured like "StateName_LGA"
+                dropdownOptions = dropdownOptions.filter(o => {
+                    const optionValue = String(o.value || '');
+                    const parentStr = String(parentValue || '');
+                    // Match if option value contains the parent value as a prefix or exact match
+                    return optionValue.startsWith(parentStr + '_') || optionValue === parentStr;
+                });
+            }
+            const filteredOptions = filterOptionsByCondition(dropdownOptions, evaluationContext);
             if (question.metadata && question.metadata.searchable) {
                 return (
                     <SearchableSelect
@@ -617,23 +632,46 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 return result;
             }
 
+            // Extract all identifiers from the formula that look like variable names
+            const identifierPattern = /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g;
+            const identifiersInFormula = new Set((formula.match(identifierPattern) || [])
+                .filter(id => !['true', 'false', 'null', 'undefined', 'age', 'parseDate', 'diffDays', 'try', 'return', 'catch', 'e'].includes(id)));
+            
+            // Build a complete variable map with all identifiers in the formula
+            const completeVarMap: Record<string, any> = {};
+            identifiersInFormula.forEach(id => {
+                // Try to find the value in fieldMap (with various key formats)
+                completeVarMap[id] = fieldMap[id] !== undefined ? fieldMap[id] : undefined;
+            });
+
             // Use safer evaluation approach with variable passing instead of string substitution
             const cellRefPattern = /report\d+(?:\.\d+)?_[A-Z]{1,3}_[A-Z]+\d+/g;
-            const varNames = Object.keys(fieldMap || {}).filter(n => !n.match(cellRefPattern));
-            const args = varNames.map(n => {
-                const v = fieldMap[n];
-                // try to coerce numeric strings to numbers
-                if (typeof v === 'string' && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
-                return v;
-            });
+            const varNames = Object.keys(completeVarMap || {}).filter(n => !n.match(cellRefPattern));
+            const args = varNames.map(n => completeVarMap[n]);
+            
+            // Debug logging
+            if (formula.includes('q2') || formula.includes('lga')) {
+                console.log(`[evaluateFormula] Formula: ${formula}`);
+                console.log(`[evaluateFormula] Identifiers found in formula:`, Array.from(identifiersInFormula));
+                console.log(`[evaluateFormula] VarNames to pass: ${varNames.join(', ')}`);
+                console.log(`[evaluateFormula] Args:`, args);
+                console.log(`[evaluateFormula] Complete FieldMap:`, fieldMap);
+                console.log(`[evaluateFormula] Complete VarMap:`, completeVarMap);
+            }
             
             // Build the function with variable parameters (safer than string substitution)
             // The formula uses variable names directly, e.g., "!!gender && gender==='Female'"
             // eslint-disable-next-line no-new-func
-            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ return null; }`);
-            return fn(...args, age, parseDate, diffDays);
+            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ console.error('Formula execution error:', e, 'formula:', '${formula}'); return null; }`);
+            const result = fn(...args, age, parseDate, diffDays);
+            
+            if (formula.includes('q2') || formula.includes('lga')) {
+                console.log(`[evaluateFormula] Final Result: ${result}`);
+            }
+            
+            return result;
         } catch (err) {
-            console.error('Error evaluating formula', formula, err);
+            console.error('Error evaluating formula', formula, 'fieldMap:', fieldMap, err);
             return null;
         }
     };
@@ -1360,6 +1398,56 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const safeActivePageIndex = activePageIndex < visiblePages.length ? activePageIndex : 0;
     const currentPage = visiblePages[safeActivePageIndex] || visiblePages[0];
 
+    // Build a GLOBAL fieldMapLocal for the ENTIRE FORM (not just current page)
+    // This ensures sequential numbering (q1, q2, q3...) is consistent across all questions
+    // and showif conditions can reliably reference them
+    const buildGlobalFieldMap = (): Record<string, any> => {
+        const fieldMapGlobal: Record<string, any> = {};
+        let globalQuestionIndex = 1;
+        console.log(`[GlobalFieldMap Build Start] Form has ${formDef.pages?.length || 0} pages, currentAnswers:`, Object.keys(answers));
+        (formDef.pages || []).forEach((p) => {
+            (p.sections || []).forEach((s) => {
+                (s.questions || []).forEach((qq) => {
+                    if (qq) {
+                        // Determine the effective value: use answer if present, otherwise use default/selected value
+                        let effectiveValue = answers[qq.id];
+                        if (effectiveValue === undefined || effectiveValue === null || effectiveValue === '') {
+                            // No answer yet, check for default value
+                            if (qq.metadata && qq.metadata.selectedValue) {
+                                effectiveValue = qq.metadata.selectedValue;
+                            } else if (qq.metadata && qq.metadata.defaultValue) {
+                                effectiveValue = qq.metadata.defaultValue;
+                            }
+                        }
+                        
+                        // Extract value from objects like {value: "...", score: ...}
+                        let finalValue = effectiveValue;
+                        if (effectiveValue && typeof effectiveValue === 'object' && 'value' in effectiveValue) {
+                            finalValue = effectiveValue.value;
+                        }
+                        
+                        // Add by BOTH fieldName and sequential position
+                        // This ensures conditions can reference fields by name or position
+                        // Add sequential first, then fieldName so fieldName takes precedence if they conflict
+                        if (qq.fieldName) {
+                            fieldMapGlobal[qq.fieldName] = finalValue;
+                        }
+                        // Add sequential ONLY if that key doesn't already exist
+                        // This prevents conflicts when fieldNames use sequential-like naming (e.g., fieldName='q2')
+                        if (!fieldMapGlobal[`q${globalQuestionIndex}`]) {
+                            fieldMapGlobal[`q${globalQuestionIndex}`] = finalValue;
+                        }
+                        console.log(`[GlobalFieldMap] q${globalQuestionIndex}: fieldName=${qq.fieldName}, value=${finalValue}, id=${qq.id}`);
+                        globalQuestionIndex++;
+                    }
+                });
+            });
+        });
+        console.log(`[GlobalFieldMap Complete] Final map:`, fieldMapGlobal, `Keys:`, Object.keys(fieldMapGlobal));
+        return fieldMapGlobal;
+    };
+    const globalFieldMap = buildGlobalFieldMap();
+
     return (
         <div className="space-y-6">
             {!standaloneMode && (
@@ -1421,36 +1509,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                     <h3 className="text-lg font-medium text-gray-900 border-b pb-2 border-gray-200">{section.name}</h3>
                                     <div className="mt-4 grid grid-cols-12 gap-6">
                                         {(() => {
-                                            // build fieldName -> value map for visibility/computed evaluation
-                                            // IMPORTANT: Include default/selected values so conditions can evaluate them
-                                            const fieldMapLocal: Record<string, any> = {};
-                                            let globalQuestionIndex = 1; // Track questions across all pages/sections for q1, q2, q3 naming
-                                            (formDef.pages || []).forEach(p => (p.sections || []).forEach(s => (s.questions || []).forEach(qq => {
-                                                if (qq) {
-                                                    // Determine the effective value: use answer if present, otherwise use default/selected value
-                                                    let effectiveValue = answers[qq.id];
-                                                    if (effectiveValue === undefined || effectiveValue === null || effectiveValue === '') {
-                                                        // No answer yet, check for default value
-                                                        if (qq.metadata && qq.metadata.selectedValue) {
-                                                            effectiveValue = qq.metadata.selectedValue;
-                                                        } else if (qq.metadata && qq.metadata.defaultValue) {
-                                                            effectiveValue = qq.metadata.defaultValue;
-                                                        }
-                                                    }
-                                                    
-                                                    // Extract value from objects like {value: "...", score: ...}
-                                                    let finalValue = effectiveValue;
-                                                    if (effectiveValue && typeof effectiveValue === 'object' && 'value' in effectiveValue) {
-                                                        finalValue = effectiveValue.value;
-                                                    }
-                                                    
-                                                    // Add by fieldName if it exists
-                                                    if (qq.fieldName) fieldMapLocal[qq.fieldName] = finalValue;
-                                                    // Also add by sequential position (q1, q2, q3, etc.) for easier condition referencing
-                                                    fieldMapLocal[`q${globalQuestionIndex}`] = finalValue;
-                                                    globalQuestionIndex++;
-                                                }
-                                            })));
+                                            // Use the global fieldMap built for the entire form
+                                            // This ensures consistent sequential numbering across all sections
+                                            const fieldMapLocal = globalFieldMap;
 
                                             if (!section.isRepeatable) {
                                                 return section.questions.map(q => {
@@ -1460,9 +1521,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                         if (q.metadata && q.metadata.showIf) {
                                                             const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
                                                             visible = !!res;
+                                                            // Debug logging
+                                                            console.log(`[showIf Debug] Question: ${q.fieldName || q.id}, Condition: ${q.metadata.showIf}, Result: ${res}, Visible: ${visible}`);
+                                                            console.log(`[showIf Values] FieldMap for this evaluation:`, fieldMapLocal);
                                                         }
                                                     } catch (e) {
-                                                        console.error('Error evaluating showIf for question', q.id, e);
+                                                        console.error('Error evaluating showIf for question', q.id, 'Condition:', q.metadata?.showIf, 'FieldMap:', fieldMapLocal, e);
                                                         visible = true;
                                                     }
                                                     if (!visible) return null;

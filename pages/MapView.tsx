@@ -1,13 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useMetadata } from '../contexts/MetadataContext';
-import FacilityCard from '../components/FacilityCard';
 import ClusterLayer from '../components/ClusterLayer';
 import MapControls from '../components/MapControls';
 import FloatingCard from '../components/FloatingCard';
-import { DataProvider } from '../hooks/useData';
-import { MetadataProvider } from '../contexts/MetadataContext';
 
-import { MapContainer, TileLayer, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useTheme } from '../hooks/useTheme';
@@ -378,48 +375,59 @@ export const MapView = ({ fullScreen = false, filters = {} }: { fullScreen?: boo
       <div style={{ display: 'flex', gap: 12 }}>
         {/* Main content area (map/form) */}
         <div style={{ flex: 1, position: 'relative' }}>
-            <FloatingCard storageKey="floating_card_mapview" defaultLeft={32} defaultTop={48} defaultWidth={420} defaultHeight={520} title="Controls">
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                <div style={{ fontWeight: 700 }}>Controls</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>Drag / Resize card</div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 140 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>Tier</div>
-                  <select value={filterTier} onChange={e => setFilterTier(e.target.value)} style={{ width: '100%', padding: 6, borderRadius: 6 }}>
-                    <option value="all">All</option>
-                    {meta.care_levels.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+            <FloatingCard storageKey="floating_card_mapview" defaultLeft={32} defaultTop={48} defaultWidth={420} defaultHeight={600} title="Map Controls & Filters">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* Filter Section */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937', marginBottom: 10 }}>Filters</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 140 }}>
+                      <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Tier</div>
+                      <select value={filterTier} onChange={e => setFilterTier(e.target.value)} style={{ width: '100%', padding: 6, borderRadius: 4, fontSize: 12, border: '1px solid #d1d5db' }}>
+                        <option value="all">All</option>
+                        {meta.care_levels.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 140 }}>
+                      <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Primary Indicator</div>
+                      <div style={{ fontWeight: 600, fontSize: 12, padding: '6px 8px', backgroundColor: '#f3f4f6', borderRadius: 4 }}>{primaryIndicatorId || '—'}</div>
+                    </div>
+                  </div>
+
+                  {/* Telemetry Stats and Chart */}
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <div style={{ fontSize: 11, color: '#666' }}>Avg Telemetry</div>
+                      <div style={{ fontWeight: 700, fontSize: 12, color: '#059669' }}>{avgTelemetry !== null ? `${avgTelemetry}%` : '—'}</div>
+                    </div>
+                    <svg width="100%" height={40} viewBox="0 0 220 40" preserveAspectRatio="none" style={{ border: '1px solid #e5e7eb', borderRadius: 4 }}>
+                      <polyline fill="none" stroke="#0ea5a4" strokeWidth={2} points={sparklinePoints} />
+                    </svg>
+                  </div>
                 </div>
 
-                <div style={{ minWidth: 140 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>Primary Indicator</div>
-                  <div style={{ fontWeight: 700 }}>{primaryIndicatorId || '—'}</div>
+                {/* Divider */}
+                <div style={{ height: 1, backgroundColor: '#e5e7eb' }} />
+
+                {/* Map Controls Section */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937', marginBottom: 10 }}>Map Layers & Legend</div>
+                  <MapControls
+                    onChange={(e) => { setEnabledIndicators(e); }}
+                    onToggleOverlays={(o) => setOverlays(o)}
+                    onFilterChange={(f) => { setSelectedPrograms(f.selectedPrograms || []); setSelectedActivities(f.selectedActivities || []); }}
+                  />
                 </div>
 
-                <div style={{ minWidth: 160 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>Avg Telemetry</div>
-                  <div style={{ fontWeight: 700 }}>{avgTelemetry !== null ? `${avgTelemetry}%` : '—'}</div>
+                {/* Divider */}
+                <div style={{ height: 1, backgroundColor: '#e5e7eb' }} />
+
+                {/* Indicator Summary Section */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1f2937', marginBottom: 10 }}>Indicator Summary</div>
+                  <IndicatorSummary />
                 </div>
-              </div>
-
-              <div style={{ marginTop: 8 }}>
-                <svg width={280} height={40} viewBox="0 0 220 40" preserveAspectRatio="none">
-                  <polyline fill="none" stroke="#0ea5a4" strokeWidth={2} points={sparklinePoints} />
-                </svg>
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                <MapControls
-                  onChange={(e) => { setEnabledIndicators(e); }}
-                  onToggleOverlays={(o) => setOverlays(o)}
-                  onFilterChange={(f) => { setSelectedPrograms(f.selectedPrograms || []); setSelectedActivities(f.selectedActivities || []); }}
-                />
-              </div>
-
-              {/* Indicator summary: fetch server-provided summaries if available */}
-              <div style={{ marginTop: 12 }}>
-                <IndicatorSummary />
               </div>
             </FloatingCard>
 
@@ -452,13 +460,14 @@ export const MapView = ({ fullScreen = false, filters = {} }: { fullScreen?: boo
                   popupRenderer={(loc) => {
                     const f = loc.payload as any;
                     return (
-                      <DataProvider>
-                        <MetadataProvider>
-                          <div style={{ padding: 8 }}>
-                            <FacilityCard facility={f} visibleIndicators={enabledIndicators} visibleActivities={selectedActivities} />
-                          </div>
-                        </MetadataProvider>
-                      </DataProvider>
+                      <div style={{ padding: 8 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 8 }}>{f.name || `Facility ${f.id}`}</div>
+                        <div style={{ fontSize: 12, color: '#666' }}>
+                          <div>Tier: {f.tier || 'N/A'}</div>
+                          <div>Ownership: {f.ownership || 'N/A'}</div>
+                          <div>Lat: {f.lat?.toFixed(4)}, Lng: {f.lng?.toFixed(4)}</div>
+                        </div>
+                      </div>
                     );
                   }}
                 />

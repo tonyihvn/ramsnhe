@@ -73,6 +73,24 @@ const DBSchemaBrowser: React.FC<{ onInsert: (s: string) => void }> = ({ onInsert
     );
 };
 
+const SQL_TEMPLATE = `-- 1. Silently store the numerator and denominator in variables
+SELECT COUNT(*) INTO @active_users FROM users WHERE status = 'active';
+SELECT COUNT(*) INTO @total_users FROM users;
+
+-- 2. Manipulate the variables if needed (e.g., adding a buffer or baseline)
+SET @adjusted_total = @total_users + 10;
+
+-- 3. Output ONE final result using numerator / denominator
+SELECT 
+    (@active_users / NULLIF(@adjusted_total, 0)) AS active_user_ratio;`;
+
+const JS_TEMPLATE = `// If your SQL returns rows, the server returns them as r.rows
+// Example: r.rows[0].num and r.rows[0].denom
+const r = await executeSql("SELECT SUM(...) AS num, COUNT(*) AS denom FROM ... WHERE facility_id = {selected_facility_id}");
+const num = Number(r.rows[0].num || 0);
+const denom = Number(r.rows[0].denom || 0);
+return denom === 0 ? 0 : (num / denom) * 100;`;
+
 const IndicatorsPage: React.FC = () => {
     const { settings } = useTheme();
     const [list, setList] = useState<any[]>([]);
@@ -103,7 +121,7 @@ const IndicatorsPage: React.FC = () => {
 
     useEffect(() => { load(); }, []);
 
-    
+
 
     const [activities, setActivities] = useState<any[]>([]);
     const [facilities, setFacilities] = useState<any[]>([]);
@@ -211,7 +229,7 @@ const IndicatorsPage: React.FC = () => {
                             <h4 className="font-semibold">SQL example</h4>
                             <pre className="p-2 bg-gray-100 rounded text-xs whitespace-pre-wrap break-words">{`SELECT SUM( (CASE WHEN jsonb_typeof(answer_value) = 'number' THEN (answer_value::text)::numeric ELSE 0 END) ) as value FROM dqai_answers WHERE question_id = 'q1764684635235' AND facility_id = `}{'{selected_facility_id}'}</pre>
                             <h4 className="font-semibold">Numerator / Denominator (SQL)</h4>
-                                                        <pre className="p-2 bg-gray-100 rounded text-xs whitespace-pre-wrap break-words">{`-- return two columns: numerator and denominator
+                            <pre className="p-2 bg-gray-100 rounded text-xs whitespace-pre-wrap break-words">{`-- return two columns: numerator and denominator
 SELECT
     SUM(CASE WHEN answer_value::text::numeric >= 1 THEN 1 ELSE 0 END) AS num,
     COUNT(*) AS denom
@@ -229,8 +247,8 @@ return denom === 0 ? 0 : (num / denom) * 100;`}
                             </pre>
                             <h4 className="font-semibold">Expression (JS) example (simple)</h4>
                             <pre className="p-2 bg-gray-100 rounded text-xs whitespace-pre-wrap break-words">// payload: answers array or facility object
-const vals = answers.filter(a =&gt; a.question_id === 'q1764684635235').map(a =&gt; Number(a.answer_value || 0));
-return vals.reduce((s,v) =&gt; s + (isNaN(v)?0:v), 0);
+                                const vals = answers.filter(a =&gt; a.question_id === 'q1764684635235').map(a =&gt; Number(a.answer_value || 0));
+                                return vals.reduce((s,v) =&gt; s + (isNaN(v)?0:v), 0);
                             </pre>
                             <h4 className="font-semibold">MySQL functions note</h4>
                             <p>You are using Postgres. Some MySQL functions differ — common equivalents:</p>
@@ -260,71 +278,65 @@ return vals.reduce((s,v) =&gt; s + (isNaN(v)?0:v), 0);
                             <label className="block text-sm font-medium">Unit Of Measurement</label>
                             <input className="mt-1 p-2 border rounded w-full" value={editing.unit_of_measurement || ''} onChange={e => setEditing({ ...editing, unit_of_measurement: e.target.value })} />
                         </div>
-                                <div>
-                                    <label className="block text-sm font-medium">Activity</label>
-                                    <select className="mt-1 p-2 border rounded w-full" value={editing.activity_id || ''} onChange={e => setEditing({ ...editing, activity_id: e.target.value ? Number(e.target.value) : null })}>
-                                        <option value="">(none)</option>
-                                        {activities.map(a => <option key={a.id} value={a.id}>{a.title || a.name}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium">Category</label>
-                                    <input className="mt-1 p-2 border rounded w-full" value={editing.category || ''} onChange={e => setEditing({ ...editing, category: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium">Level</label>
-                                    <select className="mt-1 p-2 border rounded w-full" value={editing.indicator_level || ''} onChange={e => setEditing({ ...editing, indicator_level: e.target.value })}>
-                                        <option value="">(none)</option>
-                                        <option value="National">National</option>
-                                        <option value="State">State</option>
-                                        <option value="LGA">LGA</option>
-                                        <option value="Facility">Facility</option>
-                                        <option value="User">User</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium">Show On Map</label>
-                                    <select className="mt-1 p-2 border rounded w-full" value={editing.show_on_map ? 'yes' : 'no'} onChange={e => setEditing({ ...editing, show_on_map: e.target.value === 'yes' })}>
-                                        <option value="yes">Yes</option>
-                                        <option value="no">No</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium">Formula Type</label>
-                                    <select className="mt-1 p-2 border rounded w-full" value={editing.formula_type || 'expression'} onChange={e => setEditing({ ...editing, formula_type: e.target.value })}>
-                                        <option value="expression">Expression (JS-like)</option>
-                                        <option value="sql">SQL (SELECT)</option>
-                                    </select>
-                                </div>
-                                <div className="md:col-span-3">
-                                    <label className="block text-sm font-medium">Formula</label>
-                                    <div className="grid grid-cols-3 gap-3">
-                                                <div className="col-span-2">
-                                                    <textarea ref={textareaRef as any} className="mt-1 p-2 border rounded w-full h-40" value={editing.formula || ''} onChange={e => setEditing({ ...editing, formula: e.target.value })} placeholder="SQL: SELECT ... OR expression referencing table.column or question ids" />
-                                                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                        {['{selected_facility_id}', '{selected_state}', '{selected_lga}', '{selected_user_id}'].map(ph => (
-                                                            <button key={ph} className="text-xs px-2 py-1 border rounded bg-gray-50" onClick={() => {
-                                                                try {
-                                                                    const el = textareaRef.current as HTMLTextAreaElement | null;
-                                                                    const s = ph;
-                                                                    if (!el) return setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + s }));
-                                                                    const start = el.selectionStart || 0;
-                                                                    const end = el.selectionEnd || 0;
-                                                                    const before = (el.value || '').slice(0, start);
-                                                                    const after = (el.value || '').slice(end);
-                                                                    const nextVal = before + s + after;
-                                                                    setEditing(prev => ({ ...prev, formula: nextVal }));
-                                                                    setTimeout(() => { try { el.selectionStart = el.selectionEnd = start + s.length; el.focus(); } catch (e) { } }, 20);
-                                                                } catch (e) { console.error(e); setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + ph })); }
-                                                            }}>{ph}</button>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                        <div className="col-span-1">
-                                            <DBSchemaBrowser onInsert={(s) => {
-                                                // insert at cursor position in textarea
+                        <div>
+                            <label className="block text-sm font-medium">Activity</label>
+                            <select className="mt-1 p-2 border rounded w-full" value={editing.activity_id || ''} onChange={e => setEditing({ ...editing, activity_id: e.target.value ? Number(e.target.value) : null })}>
+                                <option value="">(none)</option>
+                                {activities.map(a => <option key={a.id} value={a.id}>{a.title || a.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium">Category</label>
+                            <input className="mt-1 p-2 border rounded w-full" value={editing.category || ''} onChange={e => setEditing({ ...editing, category: e.target.value })} />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium">Level</label>
+                            <select className="mt-1 p-2 border rounded w-full" value={editing.indicator_level || ''} onChange={e => setEditing({ ...editing, indicator_level: e.target.value })}>
+                                <option value="">(none)</option>
+                                <option value="National">National</option>
+                                <option value="State">State</option>
+                                <option value="LGA">LGA</option>
+                                <option value="Facility">Facility</option>
+                                <option value="User">User</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium">Show On Map</label>
+                            <select className="mt-1 p-2 border rounded w-full" value={editing.show_on_map ? 'yes' : 'no'} onChange={e => setEditing({ ...editing, show_on_map: e.target.value === 'yes' })}>
+                                <option value="yes">Yes</option>
+                                <option value="no">No</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium">Formula Type</label>
+                            <select className="mt-1 p-2 border rounded w-full" value={editing.formula_type || 'expression'} onChange={e => {
+                                const newType = e.target.value;
+                                const newEditing = { ...editing, formula_type: newType };
+                                // Preload formula with template if formula is empty
+                                if (!editing.formula || editing.formula.trim() === '') {
+                                    if (newType === 'sql') {
+                                        newEditing.formula = SQL_TEMPLATE;
+                                    } else if (newType === 'expression') {
+                                        newEditing.formula = JS_TEMPLATE;
+                                    }
+                                }
+                                setEditing(newEditing);
+                            }}>
+                                <option value="expression">Expression (JS-like)</option>
+                                <option value="sql">SQL (SELECT)</option>
+                            </select>
+                        </div>
+                        <div className="md:col-span-3">
+                            <label className="block text-sm font-medium">Formula</label>
+                            <div className="grid grid-cols-3 gap-3">
+                                <div className="col-span-2">
+                                    <textarea ref={textareaRef as any} className="mt-1 p-2 border rounded w-full h-40" value={editing.formula || ''} onChange={e => setEditing({ ...editing, formula: e.target.value })} placeholder="SQL: SELECT ... OR expression referencing table.column or question ids" />
+                                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                        {['{selected_facility_id}', '{selected_state}', '{selected_lga}', '{selected_user_id}'].map(ph => (
+                                            <button key={ph} className="text-xs px-2 py-1 border rounded bg-gray-50" onClick={() => {
                                                 try {
                                                     const el = textareaRef.current as HTMLTextAreaElement | null;
+                                                    const s = ph;
                                                     if (!el) return setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + s }));
                                                     const start = el.selectionStart || 0;
                                                     const end = el.selectionEnd || 0;
@@ -332,15 +344,33 @@ return vals.reduce((s,v) =&gt; s + (isNaN(v)?0:v), 0);
                                                     const after = (el.value || '').slice(end);
                                                     const nextVal = before + s + after;
                                                     setEditing(prev => ({ ...prev, formula: nextVal }));
-                                                    // restore cursor after inserted string
-                                                    setTimeout(() => {
-                                                        try { el.selectionStart = el.selectionEnd = start + s.length; el.focus(); } catch (e) { /* ignore */ }
-                                                    }, 20);
-                                                } catch (e) { console.error(e); setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + s })); }
-                                            }} />
-                                        </div>
+                                                    setTimeout(() => { try { el.selectionStart = el.selectionEnd = start + s.length; el.focus(); } catch (e) { } }, 20);
+                                                } catch (e) { console.error(e); setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + ph })); }
+                                            }}>{ph}</button>
+                                        ))}
                                     </div>
                                 </div>
+                                <div className="col-span-1">
+                                    <DBSchemaBrowser onInsert={(s) => {
+                                        // insert at cursor position in textarea
+                                        try {
+                                            const el = textareaRef.current as HTMLTextAreaElement | null;
+                                            if (!el) return setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + s }));
+                                            const start = el.selectionStart || 0;
+                                            const end = el.selectionEnd || 0;
+                                            const before = (el.value || '').slice(0, start);
+                                            const after = (el.value || '').slice(end);
+                                            const nextVal = before + s + after;
+                                            setEditing(prev => ({ ...prev, formula: nextVal }));
+                                            // restore cursor after inserted string
+                                            setTimeout(() => {
+                                                try { el.selectionStart = el.selectionEnd = start + s.length; el.focus(); } catch (e) { /* ignore */ }
+                                            }, 20);
+                                        } catch (e) { console.error(e); setEditing(prev => ({ ...prev, formula: ((prev && prev.formula) ? prev.formula + ' ' : '') + s })); }
+                                    }} />
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div className="mt-3 flex gap-2 justify-end">
                         <Button onClick={save}>Save</Button>

@@ -32,15 +32,39 @@ interface QuestionEditorProps {
   updateQuestion: (p: number, s: number, q: number, val: Partial<Question>) => void;
   onOpenDatasetModal?: (p: number, s: number, q: number) => void;
   roles?: any[];
+  formDef?: FormDefinition;
 }
 
 const QuestionEditor: React.FC<QuestionEditorProps> = ({
-  question, pIdx, sIdx, qIdx, isFirst, isLast, errors, moveQuestion, deleteQuestion, updateQuestion, onOpenDatasetModal, roles
+  question, pIdx, sIdx, qIdx, isFirst, isLast, errors, moveQuestion, deleteQuestion, updateQuestion, onOpenDatasetModal, roles, formDef
 }) => {
   const hasOptions = [AnswerType.DROPDOWN, AnswerType.RADIO, AnswerType.CHECKBOX].includes(question.answerType);
   const isFile = question.answerType === AnswerType.FILE;
   // Default to collapsed (true) unless explicitly set to false
   const collapsed = question.metadata?.collapsed !== false;
+
+  // Get all available questions that this question can depend on
+  const getAvailableQuestions = () => {
+    if (!formDef) return [];
+    const available: { fieldName: string; questionText: string }[] = [];
+    formDef.pages?.forEach((page) => {
+      page.sections?.forEach((section) => {
+        section.questions?.forEach((q) => {
+          // Only include questions that come before the current question
+          if (pIdx < formDef.pages.length) {
+            const qPage = formDef.pages.indexOf(page);
+            if (qPage < pIdx || (qPage === pIdx && sIdx < (page.sections?.indexOf(section) ?? 0)) || 
+                (qPage === pIdx && sIdx === (page.sections?.indexOf(section) ?? 0) && section.questions.indexOf(q) < qIdx)) {
+              if (q.fieldName && q.fieldName !== question.fieldName) {
+                available.push({ fieldName: q.fieldName, questionText: q.questionText });
+              }
+            }
+          }
+        });
+      });
+    });
+    return available;
+  };
 
   const parsePastedOptions = (pasteData: string): { label: string; value: string }[] => {
     return pasteData
@@ -160,6 +184,24 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Depends On field for DROPDOWN and RADIO questions */}
+          {[AnswerType.DROPDOWN, AnswerType.RADIO].includes(question.answerType) && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Depends On (Optional)</label>
+              <p className="text-xs text-gray-500 mb-1">Select another question field to load options dynamically based on its value. When set, the options below will be matched against this parent field's value.</p>
+              <select
+                className="mt-1 block w-full shadow-sm sm:text-sm rounded-md border-gray-300"
+                value={(question.metadata && question.metadata.dependsOn) || ''}
+                onChange={e => updateQuestion(pIdx, sIdx, qIdx, { metadata: { ...(question.metadata || {}), dependsOn: e.target.value || undefined } })}
+              >
+                <option value="">-- No dependency --</option>
+                {getAvailableQuestions().map((q) => (
+                  <option key={q.fieldName} value={q.fieldName}>{q.questionText} ({q.fieldName})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {hasOptions && (
             <div className="mt-4">
@@ -1354,6 +1396,7 @@ const BuildFormPage: React.FC = () => {
                   deleteQuestion={deleteQuestion}
                   updateQuestion={updateQuestion}
                   roles={roles}
+                  formDef={formDef}
                   onOpenDatasetModal={(p, s, q) => { setDsSelectedForQuestion({ pIdx: p, sIdx: s, qIdx: q }); setIsDatasetModalOpen(true); setDatasetsList([]); }}
                 />
               ))}

@@ -41,13 +41,11 @@ export const filterOptionsByCondition = (
     return [];
   }
   
-  const filtered = options.filter((option) => {
+  return options.filter((option) => {
     if (!option.showif) {
       return true;
     }
     
     return evaluateCondition(option.showif, context);
   });
-  
-  return filtered;
 };

@@ -1,0 +1,41 @@
+Fix: Resolve React Context error in map dashboard popups
+
+## Problem
+When navigating to /map-dashboard, the application threw:
+- "Warning: Rendering <Context> directly is not supported"
+- "A context consumer was rendered with multiple children"
+- "TypeError: render2 is not a function"
+
+## Root Cause
+The ClusterLayer component rendered popup content in an isolated React root
+(created via createRoot()) that was detached from the main component tree's
+providers. Components like FacilityCard that use useMetadata() hook failed
+because the isolated root had no MetadataProvider.
+
+## Solution
+Wrapped popup content with DataProvider and MetadataProvider in the isolated
+root, allowing components to access required contexts via hooks.
+
+## Changes
+1. components/ClusterLayer.tsx:
+   - Added imports for DataProvider and MetadataProvider
+   - Wrapped popupRenderer content with both providers when rendering to
+     isolated React root
+
+2. pages/MapView.tsx:
+   - Removed unused provider imports (moved to ClusterLayer)
+   - Simplified popupRenderer (no longer wraps with providers)
+
+## Impact
+- ✅ Fixes Context errors on /map-dashboard
+- ✅ Popups render correctly with proper context access
+- ✅ Cleaner code organization (providers where they're needed)
+- ✅ All tests pass, build succeeds
+
+## Technical Details
+When using createRoot() to render components in detached DOM elements:
+- The new root has NO parent provider context
+- Components cannot use context hooks unless wrapped with providers
+- Solution: Create provider instances for each isolated root
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

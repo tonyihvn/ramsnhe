@@ -13,6 +13,24 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
+// Helper function for fetch with timeout
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 5000) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    return response;
+  } catch (error) {
+    clearTimeout(timeout);
+    throw error;
+  }
+};
+
 // GET AI Settings for business
 router.get('/ai-settings/:businessId', requireAuth, async (req, res) => {
   try {
@@ -163,9 +181,7 @@ router.post('/vanna/test-connection', requireAuth, async (req, res) => {
       try {
         // Try to connect to local Vanna server on default port
         const localVannaUrl = 'http://127.0.0.1:8888';
-        const response = await fetch(`${localVannaUrl}/health`, {
-          timeout: 5000
-        }).catch(() => null);
+        const response = await fetchWithTimeout(`${localVannaUrl}/health`);
 
         if (response && response.ok) {
           return res.json({ 
@@ -182,7 +198,8 @@ router.post('/vanna/test-connection', requireAuth, async (req, res) => {
       } catch (e) {
         return res.status(400).json({ 
           error: 'Vanna API URL is required',
-          details: 'Local Vanna server at port 8888 is not responding'
+          details: 'Local Vanna server at port 8888 is not responding',
+          hint: 'Make sure the Vanna server is started. You can start it from the Vanna settings.'
         });
       }
     }
@@ -194,10 +211,7 @@ router.post('/vanna/test-connection', requireAuth, async (req, res) => {
         headers['Authorization'] = `Bearer ${vannaApiKey}`;
       }
 
-      const response = await fetch(`${vannaApiUrl}/health`, {
-        headers,
-        timeout: 5000
-      });
+      const response = await fetchWithTimeout(`${vannaApiUrl}/health`, { headers });
 
       if (response.ok) {
         res.json({ success: true, message: 'Vanna connection successful', url: vannaApiUrl });
@@ -231,9 +245,7 @@ router.post('/lancedb/test-connection', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'LanceDB URL and database are required' });
     }
 
-    const response = await fetch(`${lancedbUrl}/api/databases/${lancedbDatabase}`, {
-      timeout: 5000
-    });
+    const response = await fetchWithTimeout(`${lancedbUrl}/api/databases/${lancedbDatabase}`);
 
     if (response.ok) {
       res.json({ success: true, message: 'Connection successful' });
@@ -259,7 +271,7 @@ router.post('/embedding/test-connection', requireAuth, async (req, res) => {
     if (embeddingModel === 'local' || embeddingModel === 'ollama' || embeddingModel === 'huggingface-local') {
       if (embeddingEndpoint) {
         try {
-          const response = await fetch(`${embeddingEndpoint}/health`, { timeout: 5000 }).catch(() => null);
+          const response = await fetchWithTimeout(`${embeddingEndpoint}/health`);
           if (response && response.ok) {
             return res.json({ success: true, message: 'Local embedding model server is healthy' });
           }
@@ -280,7 +292,7 @@ router.post('/embedding/test-connection', requireAuth, async (req, res) => {
 
     // Test by trying to create a test embedding
     if (embeddingModel === 'openai') {
-      const response = await fetch('https://api.openai.com/v1/embeddings', {
+      const response = await fetchWithTimeout('https://api.openai.com/v1/embeddings', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${embeddingApiKey}`,
@@ -289,8 +301,7 @@ router.post('/embedding/test-connection', requireAuth, async (req, res) => {
         body: JSON.stringify({
           model: 'text-embedding-3-small',
           input: 'test'
-        }),
-        timeout: 5000
+        })
       });
 
       if (response.ok) {
@@ -304,7 +315,7 @@ router.post('/embedding/test-connection', requireAuth, async (req, res) => {
         });
       }
     } else if (embeddingModel === 'cohere') {
-      const response = await fetch('https://api.cohere.ai/v1/embed', {
+      const response = await fetchWithTimeout('https://api.cohere.ai/v1/embed', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${embeddingApiKey}`,
@@ -313,8 +324,7 @@ router.post('/embedding/test-connection', requireAuth, async (req, res) => {
         body: JSON.stringify({
           texts: ['test'],
           model: 'embed-english-v3.0'
-        }),
-        timeout: 5000
+        })
       });
 
       if (response.ok) {
@@ -362,7 +372,7 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
 
     // Test API key with the provider
     if (llmProvider === 'openai') {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${llmApiKey}`,
@@ -372,8 +382,7 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
           model: llmModel || 'gpt-3.5-turbo',
           messages: [{ role: 'user', content: 'test' }],
           max_tokens: 10
-        }),
-        timeout: 5000
+        })
       });
 
       if (response.ok) {
@@ -387,7 +396,7 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
         });
       }
     } else if (llmProvider === 'anthropic') {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'x-api-key': llmApiKey,
@@ -398,8 +407,7 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
           model: llmModel || 'claude-3-sonnet-20240229',
           max_tokens: 10,
           messages: [{ role: 'user', content: 'test' }]
-        }),
-        timeout: 5000
+        })
       });
 
       if (response.ok) {
@@ -413,15 +421,14 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
         });
       }
     } else if (llmProvider === 'google') {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${llmModel || 'gemini-pro'}:generateContent?key=${llmApiKey}`, {
+      const response = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${llmModel || 'gemini-pro'}:generateContent?key=${llmApiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: 'test' }] }]
-        }),
-        timeout: 5000
+        })
       });
 
       if (response.ok) {

@@ -68,6 +68,7 @@ const ThemeContext = createContext<{
     setSettings: (s: Partial<ThemeSettings>) => void;
     reset: () => void;
     isLoading: boolean;
+    refetchSettings: () => void;
 } | undefined>(undefined);
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
@@ -125,61 +126,63 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         root.dataset.logoText = settings.logoText || '';
     }, [settings]);
 
+    // Extracted function to load settings (so it can be called manually)
+    const loadSettings = async () => {
+        setIsLoading(true);
+        try {
+            // First, check user role to determine if admin
+            let isUserAdmin = false;
+            try {
+                const userRes = await fetch('/api/current_user', { credentials: 'include' });
+                if (userRes.ok) {
+                    const userData = await userRes.json();
+                    const role = userData?.role ? String(userData.role).toLowerCase() : '';
+                    isUserAdmin = role === 'admin' || role === 'super-admin' || role === 'super_admin';
+                }
+            } catch (e) {
+                console.warn('Failed to check user role:', e);
+            }
+            setIsAdmin(isUserAdmin);
+
+            // Load theme settings from database (all users can read)
+            try {
+                const settingsRes = await fetch('/api/app/settings', { credentials: 'include' });
+                if (settingsRes.ok) {
+                    const payload = await settingsRes.json();
+                    if (payload && typeof payload === 'object') {
+                        const merge: Partial<ThemeSettings> = {};
+                        // Extract theme-related keys from the payload
+                        if (payload.theme && typeof payload.theme === 'object') {
+                            // If server returns a 'theme' key with theme object
+                            Object.assign(merge, payload.theme);
+                        } else {
+                            // Look for top-level theme property keys
+                            const themeKeys = ['primaryColor', 'sidebarBg', 'navTextColor', 'logoColor', 'textColor', 'fontFamily', 'navbarBg', 'logoDataUrl', 'logoText', 'fontSize', 'logoWidth', 'organizationName', 'backgroundImage', 'topbarBgColor', 'topbarTextColor', 'sidebarMenuBgColor', 'sidebarMenuTextColor', 'settingsTabsBgColor', 'settingsTabsTextColor', 'settingsTabsActiveBgColor', 'settingsTabsActiveTextColor', 'generateSiteBgColor', 'generateSiteTextColor', 'landingTopbarBgColor', 'landingTopbarTextColor'];
+                            themeKeys.forEach(k => {
+                                if (k in payload) (merge as any)[k] = (payload as any)[k];
+                            });
+                        }
+                        if (Object.keys(merge).length > 0) {
+                            // Update settings from database (will auto-save to localStorage via useEffect)
+                            setSettingsState(prev => ({ ...prev, ...merge }));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load theme settings from database:', e);
+                // Settings remain as cached from localStorage (fallback)
+            }
+        } catch (e) {
+            console.warn('Failed to load settings:', e);
+            // Settings remain as cached from localStorage (fallback)
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     // Load theme settings from database (for all users - ensures consistency across systems)
     // Overwrites localStorage cache with API data when available
     useEffect(() => {
-        const loadSettings = async () => {
-            setIsLoading(true);
-            try {
-                // First, check user role to determine if admin
-                let isUserAdmin = false;
-                try {
-                    const userRes = await fetch('/api/current_user', { credentials: 'include' });
-                    if (userRes.ok) {
-                        const userData = await userRes.json();
-                        const role = userData?.role ? String(userData.role).toLowerCase() : '';
-                        isUserAdmin = role === 'admin' || role === 'super-admin' || role === 'super_admin';
-                    }
-                } catch (e) {
-                    console.warn('Failed to check user role:', e);
-                }
-                setIsAdmin(isUserAdmin);
-
-                // Load theme settings from database (all users can read)
-                try {
-                    const settingsRes = await fetch('/api/app/settings', { credentials: 'include' });
-                    if (settingsRes.ok) {
-                        const payload = await settingsRes.json();
-                        if (payload && typeof payload === 'object') {
-                            const merge: Partial<ThemeSettings> = {};
-                            // Extract theme-related keys from the payload
-                            if (payload.theme && typeof payload.theme === 'object') {
-                                // If server returns a 'theme' key with theme object
-                                Object.assign(merge, payload.theme);
-                            } else {
-                                // Look for top-level theme property keys
-                                const themeKeys = ['primaryColor', 'sidebarBg', 'navTextColor', 'logoColor', 'textColor', 'fontFamily', 'navbarBg', 'logoDataUrl', 'logoText', 'fontSize', 'logoWidth', 'organizationName', 'backgroundImage', 'topbarBgColor', 'topbarTextColor', 'sidebarMenuBgColor', 'sidebarMenuTextColor', 'settingsTabsBgColor', 'settingsTabsTextColor', 'settingsTabsActiveBgColor', 'settingsTabsActiveTextColor', 'generateSiteBgColor', 'generateSiteTextColor', 'landingTopbarBgColor', 'landingTopbarTextColor'];
-                                themeKeys.forEach(k => {
-                                    if (k in payload) (merge as any)[k] = (payload as any)[k];
-                                });
-                            }
-                            if (Object.keys(merge).length > 0) {
-                                // Update settings from database (will auto-save to localStorage via useEffect)
-                                setSettingsState(prev => ({ ...prev, ...merge }));
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.warn('Failed to load theme settings from database:', e);
-                    // Settings remain as cached from localStorage (fallback)
-                }
-            } catch (e) {
-                console.warn('Failed to load settings:', e);
-                // Settings remain as cached from localStorage (fallback)
-            } finally {
-                setIsLoading(false);
-            }
-        };
         loadSettings();
     }, []);
 
@@ -196,6 +199,9 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
             });
             if (!res.ok) {
                 console.warn('Failed to persist theme settings to database');
+            } else {
+                // After successful save, refetch settings to ensure consistency
+                await loadSettings();
             }
         } catch (e) {
             console.warn('Failed to persist theme settings:', e);
@@ -223,8 +229,13 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    // Expose refetchSettings for manual refresh (useful after Settings are saved)
+    const refetchSettings = () => {
+        loadSettings();
+    };
+
     return (
-        <ThemeContext.Provider value={{ settings, setSettings, reset, isLoading }}>
+        <ThemeContext.Provider value={{ settings, setSettings, reset, isLoading, refetchSettings }}>
             {children}
         </ThemeContext.Provider>
     );
@@ -241,6 +252,7 @@ export type ThemeContextType = {
     setSettings: (s: Partial<ThemeSettings>) => void;
     reset: () => void;
     isLoading: boolean;
+    refetchSettings: () => void;
 };
 
 export type { ThemeSettings };
