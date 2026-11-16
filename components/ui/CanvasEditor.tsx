@@ -594,17 +594,15 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
             if (debugEnabled) {
               const logElInfo = (el: HTMLElement | null, label: string) => {
                 if (!el) return;
-                try {
-                  console.groupCollapsed(`[CanvasEditor][StackDebug] ${label}: <${el.tagName.toLowerCase()}> ${el.id ? '#' + el.id : ''} ${el.className ? '.' + String(el.className).replace(/\s+/g, '.') : ''}`);
-                  let cur: HTMLElement | null = el;
-                  while (cur) {
-                    try {
-                      const cs = window.getComputedStyle(cur);
-                      const rect = cur.getBoundingClientRect ? cur.getBoundingClientRect() : { x: 0, y: 0, width: 0, height: 0 };
-                    } catch (e) { }
-                    if (cur.parentElement && cur.parentElement !== document.documentElement) cur = cur.parentElement; else { if (cur !== document.body) cur = document.body; else cur = null; }
-                  }
-                };
+                let cur: HTMLElement | null = el;
+                while (cur) {
+                  try {
+                    const cs = window.getComputedStyle(cur);
+                    const rect = cur.getBoundingClientRect ? cur.getBoundingClientRect() : { x: 0, y: 0, width: 0, height: 0 };
+                  } catch (e) { }
+                  if (cur.parentElement && cur.parentElement !== document.documentElement) cur = cur.parentElement; else { if (cur !== document.body) cur = document.body; else cur = null; }
+                }
+              };
 
                 logElInfo(blockEl as HTMLElement, 'Clicked tpl-block');
                 const insp = document.querySelector('.inspector-panel') as HTMLElement | null;

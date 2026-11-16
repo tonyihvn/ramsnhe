@@ -172,9 +172,6 @@ const LoginPage: React.FC = () => {
           if (settings?.backgroundImage) {
             const bgImage = normalizeImageUrl(settings.backgroundImage);
             setBackgroundImage(bgImage);
-              hasDataPrefix: bgImage?.startsWith('data:') || false,
-              isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
-            });
           }
         }
       } catch (e) {

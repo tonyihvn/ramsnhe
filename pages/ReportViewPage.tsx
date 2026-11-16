@@ -444,11 +444,6 @@ const ReportViewPage: React.FC = () => {
                 const rowsRes = await apiFetch(`/api/actual_tables/${table.id}/physical-rows`, { credentials: 'include' });
                 if (rowsRes.ok) {
                   const tableData = await rowsRes.json();
-                   return { ...table, rows: tableData.rows || [] };
-                } else {
-                    schemaKeys: tableData.schema ? Object.keys(tableData.schema) : [],
-                    firstRow: tableData.rows ? tableData.rows[0] : null
-                  });
                   // Use the schema from the physical-rows endpoint response (which includes relationship fields)
                   return {
                     ...table,
@@ -456,6 +451,8 @@ const ReportViewPage: React.FC = () => {
                     rows: tableData.rows || [],
                     row_count: tableData.row_count || 0
                   };
+                } else {
+                  return { ...table, rows: tableData.rows || [] };
                 }
               } catch (e) {
                 console.error(`Failed to fetch rows for table ${table.id}:`, e);

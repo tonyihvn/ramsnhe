@@ -104,18 +104,6 @@ const ActivityDashboardPage: React.FC = () => {
     })();
   }, [activityId]);
 
-  // Debug logging for permissions
-  useEffect(() => {
-    const userRole = String(currentUser?.role || '').toLowerCase().trim();
-    const isAdmin = userRole === 'admin' || userRole === 'super-admin' || userRole === 'super_admin';
-    
-    const handleActivityChange = async (activityId: string) => {
-      userRole,
-      isAdmin,
-      permissions,
-      checkPermissionResult: checkPermission('can_view'),
-    });
-  }, [permissions, currentUser]);
 
   if (loading) return <div>Loading...</div>;
   if (!data) return <div>No data available for this activity.</div>;
