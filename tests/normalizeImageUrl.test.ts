@@ -60,8 +60,6 @@ const testCases = [
   }
 ];
 
-console.log('Testing normalizeImageUrl function:\n');
-
 let passed = 0;
 let failed = 0;
 
@@ -70,21 +68,8 @@ testCases.forEach((testCase, index) => {
   const isPass = result === testCase.expected;
   
   if (isPass) {
-    console.log(`✓ Test ${index + 1} PASSED: ${testCase.description}`);
     passed++;
   } else {
-    console.log(`✗ Test ${index + 1} FAILED: ${testCase.description}`);
-    console.log(`  Input: ${JSON.stringify(testCase.input)}`);
-    console.log(`  Expected: ${JSON.stringify(testCase.expected)}`);
-    console.log(`  Got: ${JSON.stringify(result)}`);
     failed++;
   }
 });
-
-console.log(`\n${passed} passed, ${failed} failed out of ${testCases.length} tests`);
-
-if (failed === 0) {
-  console.log('\n✓ All tests passed! The fix correctly handles all image format scenarios.');
-} else {
-  console.log('\n✗ Some tests failed. Review the implementation.');
-}

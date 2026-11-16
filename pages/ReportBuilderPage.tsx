@@ -205,7 +205,6 @@ const ReportBuilderPage: React.FC = () => {
           const ares = await apiFetch(`/api/answers?activityId=${activityId}`);
           if (ares.ok) {
             const ja = await ares.json();
-            console.log('Loaded answers for activity:', activityId, ja);
             setAnswersList(Array.isArray(ja) ? ja : []);
           } else {
             console.warn('Failed to load answers, status:', ares.status);
@@ -725,14 +724,11 @@ const ReportBuilderPage: React.FC = () => {
                           }
 
                           const payload = { html: filledHtml, format: fmt, filename: t.name || 'report', paperSize: tplObj.paperSize || 'A4', orientation: tplObj.orientation || 'portrait', context: { activityData, questionsList, answersList, uploadedDocs } };
-                          try { console.debug('[ReportBuilder] preview payload', { format: fmt, htmlLength: String(filledHtml || '').length, filename: payload.filename, paperSize: payload.paperSize, orientation: payload.orientation }); } catch (e) { }
 
                           let builtUrl: string | null = null;
                           const res = await apiFetch('/api/build_report', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                          try { console.debug('[ReportBuilder] preview response status', res.status); } catch (e) { }
                           if (res.ok) {
                             const j = await res.json();
-                            try { console.debug('[ReportBuilder] preview response json', j); } catch (e) { }
                             const url = j.url || j.path || null;
                             if (url) { setBuildUrl(url); setBuildFormat(fmt); builtUrl = url; }
                             else { setToasts(ts => [...ts, { id: Date.now(), text: 'Build succeeded but server did not return a URL' }]); setIframeLoading(false); }
@@ -775,7 +771,6 @@ const ReportBuilderPage: React.FC = () => {
                                 // items to disappear. Ensure immediate updates win.
                                 try { if (canvasChangeTimerRef.current) { window.clearTimeout(canvasChangeTimerRef.current); canvasChangeTimerRef.current = null; } } catch (e) { }
                                 try {
-                                  try { console.debug('[ReportBuilder] immediate canvas update incoming', { htmlLen: String(v.html || '').length, blocks: (v.blocks || []).length }); } catch (e) { }
                                   const tplObj = getTplObj(editing.template_json);
                                   if (v && typeof v === 'object' && ('html' in v || 'blocks' in v)) {
                                     tplObj.html = v.html || tplObj.html || '';
@@ -792,7 +787,6 @@ const ReportBuilderPage: React.FC = () => {
                             try { if (canvasChangeTimerRef.current) window.clearTimeout(canvasChangeTimerRef.current); } catch (e) { }
                             canvasChangeTimerRef.current = window.setTimeout(() => {
                               try {
-                                try { console.debug('[ReportBuilder] debounced canvas update incoming', { htmlLen: String((v && (v.html || '')) || '').length, blocks: (v && v.blocks ? v.blocks.length : 0) }); } catch (e) { }
                                 const tplObj = getTplObj(editing.template_json);
                                 if (v && typeof v === 'object' && ('html' in v || 'blocks' in v)) {
                                   tplObj.html = v.html || tplObj.html || '';

@@ -1853,12 +1853,9 @@ const FormsBuildersSection: React.FC = () => {
         setLoading(true);
         try {
             // Load facility form schema
-            console.log('Loading facility form schema...');
             const facilityRes = await fetch('/api/admin/form-schemas/facility', { credentials: 'include' });
-            console.log('Facility schema response status:', facilityRes.status);
             if (facilityRes.ok) {
                 const data = await facilityRes.json();
-                console.log('Facility schema loaded:', { fieldCount: data.fields?.length, id: data.id });
                 // Normalize fields to ensure showInList property exists
                 const normalizedData = {
                     ...data,
@@ -1869,7 +1866,6 @@ const FormsBuildersSection: React.FC = () => {
                 };
                 setFacilitySchema(normalizedData);
             } else {
-                console.log('Failed to load facility schema, using default');
                 // Initialize default facility schema if fetch fails
                 setFacilitySchema({
                     id: 'facility-' + Date.now(),
@@ -1882,12 +1878,9 @@ const FormsBuildersSection: React.FC = () => {
             }
 
             // Load user form schema
-            console.log('Loading user form schema...');
             const userRes = await fetch('/api/admin/form-schemas/user', { credentials: 'include' });
-            console.log('User schema response status:', userRes.status);
             if (userRes.ok) {
                 const data = await userRes.json();
-                console.log('User schema loaded:', { fieldCount: data.fields?.length, id: data.id });
                 // Normalize fields to ensure showInList property exists
                 const normalizedData = {
                     ...data,
@@ -1898,7 +1891,6 @@ const FormsBuildersSection: React.FC = () => {
                 };
                 setUserSchema(normalizedData);
             } else {
-                console.log('Failed to load user schema, using default');
                 // Initialize default user schema if fetch fails
                 setUserSchema({
                     id: 'user-' + Date.now(),
@@ -1919,15 +1911,12 @@ const FormsBuildersSection: React.FC = () => {
 
     const handleSaveSchema = async (schema: FormSchema) => {
         try {
-            console.log('Saving form schema:', schema);
             const response = await fetch('/api/admin/form-schemas', {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(schema),
             });
-
-            console.log('Save response status:', response.status);
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -1936,7 +1925,6 @@ const FormsBuildersSection: React.FC = () => {
             }
 
             const saved = await response.json();
-            console.log('Form schema saved successfully:', saved);
             if (schema.formType === 'facility') {
                 setFacilitySchema(saved);
             } else {

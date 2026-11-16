@@ -38,12 +38,10 @@ const testResults = {
 };
 
 async function runTest(testName, testFn) {
-    console.log(`\n🧪 ${testName}`);
     testResults.summary.total++;
     
     try {
         const result = await testFn();
-        console.log(`✅ PASSED`);
         testResults.tests.push({
             name: testName,
             status: 'passed',
@@ -52,7 +50,6 @@ async function runTest(testName, testFn) {
         testResults.summary.passed++;
         return true;
     } catch (error) {
-        console.log(`❌ FAILED: ${error.message}`);
         testResults.tests.push({
             name: testName,
             status: 'failed',
@@ -68,10 +65,6 @@ async function runTest(testName, testFn) {
 // ==============================================
 
 async function testAPIEndpoints() {
-    console.log('\n' + '='.repeat(60));
-    console.log('API ENDPOINT TESTS');
-    console.log('='.repeat(60));
-
     // Test: Get Prompt Contexts
     await runTest('GET /api/vanna/prompt-contexts', async () => {
         try {
@@ -113,7 +106,7 @@ async function testAPIEndpoints() {
             }
             
             if (response.status >= 400 && response.status !== 404) {
-                console.log(`  (Endpoint returned ${response.status}, which may be expected if no auth)`);
+                // Expected if no auth
             }
             
             return {
@@ -134,10 +127,6 @@ async function testAPIEndpoints() {
 // ==============================================
 
 async function testDatabaseOperations() {
-    console.log('\n' + '='.repeat(60));
-    console.log('DATABASE OPERATION TESTS');
-    console.log('='.repeat(60));
-
     // Test: Create and retrieve LLM Settings
     await runTest('Insert and retrieve LLM Settings', async () => {
         const businessId = 999; // Test business ID
@@ -344,10 +333,6 @@ async function testDatabaseOperations() {
 // ==============================================
 
 async function testDataValidation() {
-    console.log('\n' + '='.repeat(60));
-    console.log('DATA VALIDATION TESTS');
-    console.log('='.repeat(60));
-
     // Test: LLM Settings Data Integrity
     await runTest('LLM Settings Data Integrity', async () => {
         const result = await pool.query(
@@ -420,10 +405,6 @@ async function testDataValidation() {
 // ==============================================
 
 async function testPerformance() {
-    console.log('\n' + '='.repeat(60));
-    console.log('PERFORMANCE TESTS');
-    console.log('='.repeat(60));
-
     // Test: Query Performance
     await runTest('LLM Settings Query Performance', async () => {
         const start = Date.now();
@@ -493,13 +474,6 @@ async function testPerformance() {
 // ==============================================
 
 async function runAllTests() {
-    console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║       ADVANCED FUNCTIONAL INTEGRATION TEST SUITE              ║
-║       Testing real API endpoints and database operations      ║
-╚════════════════════════════════════════════════════════════════╝
-`);
-
     try {
         // Database Connection Test
         await runTest('Database Connection Test', async () => {
@@ -513,9 +487,6 @@ async function runAllTests() {
         await testPerformance();
         await testAPIEndpoints();
 
-        // Display results
-        displayTestResults();
-
     } catch (error) {
         console.error('\n❌ Fatal test error:', error.message);
     } finally {
@@ -527,34 +498,6 @@ async function runAllTests() {
 function displayTestResults() {
     const { total, passed, failed } = testResults.summary;
     const passRate = total > 0 ? ((passed / total) * 100).toFixed(1) : 0;
-    
-    console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║         INTEGRATION TEST RESULTS                               ║
-╚════════════════════════════════════════════════════════════════╝
-
-📊 Summary:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Total Tests:     ${total}
-✅ Passed:        ${passed}
-❌ Failed:        ${failed}
-Success Rate:    ${passRate}%
-
-Overall Status:  ${failed === 0 ? '✅ ALL TESTS PASSED' : '❌ SOME TESTS FAILED'}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ Database Operations Validated
-✅ CRUD Operations Working
-✅ Data Integrity Verified
-✅ Performance Within Limits
-${failed === 0 ? '✅ API Endpoints Ready' : '⚠️  API Endpoints Require Server'}
-
-═══════════════════════════════════════════════════════════════════
-Timestamp: ${testResults.timestamp}
-═══════════════════════════════════════════════════════════════════
-    `);
 }
 
 // Run tests

@@ -218,7 +218,6 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
         });
       }
       
-      console.log(`[RenderQuestion] question=${question.fieldName || question.id}, evaluationContext:`, context);
       return context;
     };
 
@@ -649,25 +648,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             const varNames = Object.keys(completeVarMap || {}).filter(n => !n.match(cellRefPattern));
             const args = varNames.map(n => completeVarMap[n]);
             
-            // Debug logging
-            if (formula.includes('q2') || formula.includes('lga')) {
-                console.log(`[evaluateFormula] Formula: ${formula}`);
-                console.log(`[evaluateFormula] Identifiers found in formula:`, Array.from(identifiersInFormula));
-                console.log(`[evaluateFormula] VarNames to pass: ${varNames.join(', ')}`);
-                console.log(`[evaluateFormula] Args:`, args);
-                console.log(`[evaluateFormula] Complete FieldMap:`, fieldMap);
-                console.log(`[evaluateFormula] Complete VarMap:`, completeVarMap);
-            }
             
             // Build the function with variable parameters (safer than string substitution)
             // The formula uses variable names directly, e.g., "!!gender && gender==='Female'"
             // eslint-disable-next-line no-new-func
             const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ console.error('Formula execution error:', e, 'formula:', '${formula}'); return null; }`);
             const result = fn(...args, age, parseDate, diffDays);
-            
-            if (formula.includes('q2') || formula.includes('lga')) {
-                console.log(`[evaluateFormula] Final Result: ${result}`);
-            }
             
             return result;
         } catch (err) {
@@ -753,22 +739,18 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         (async () => {
             try {
                 if (!currentUser || !currentUser.role) {
-                    console.log('[PERM-LOAD] No current user or role');
                     return;
                 }
                 const roleName = String(currentUser.role || '').trim();
                 if (!roleName) {
-                    console.log('[PERM-LOAD] Role name is empty');
                     return;
                 }
-                console.log('[PERM-LOAD] Loading permissions for role:', roleName);
                 const resp = await fetch(`/api/page_permissions?role=${encodeURIComponent(roleName)}`);
                 if (!resp.ok) {
                     console.warn(`[PERM-LOAD] Failed to load (status ${resp.status})`);
                     return;
                 }
                 const j = await resp.json();
-                console.log('[PERM-LOAD] ✓ Loaded permissions:', j);
                 if (!cancelled) setPagePerms(j);
             } catch (e) {
                 console.error('[PERM-LOAD] Error:', e);
@@ -791,15 +773,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
             // If no permissions are configured, allow all access (default behavior)
             if (!pagePerms || pagePerms.length === 0) {
-                console.log('[PERM] No PAGE_PERMISSIONS configured for this role, allowing all access');
                 return true;
             }
 
             // Normalize the input section key to null if undefined
             const checkSectionKey = sectionKey ? String(sectionKey).trim() : null;
             const checkPageKey = pageKey ? String(pageKey).trim() : '';
-
-            console.log(`[PERM] Checking ${flag} for pageKey="${checkPageKey}", sectionKey="${checkSectionKey}"`);
 
             // Find matching permission record
             for (const p of pagePerms) {
@@ -812,14 +791,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 if (pageKeyMatch && sectionKeyMatch) {
                     // Found a matching permission record - use its flag value
                     const hasFlag = !!p[flag];
-                    console.log(`[PERM]   ✓ Found record: ${flag}=${hasFlag}`);
                     return hasFlag;
                 }
             }
 
             // No matching record found - default to ALLOW
             // (only deny if a record exists with can_view=false)
-            console.log(`[PERM]   ✗ No record found - defaulting to ALLOW`);
             return true;
         } catch (e) {
             console.error('[PERM] Exception:', e);
@@ -852,10 +829,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 // copy answers but strip out any dataUrl content so we can upload them separately
                 const strippedAnswers: Record<string, any> = {};
 
-                // Log the answers object for debugging
-                console.log('[SUBMIT] Answers object keys:', Object.keys(answers));
-                console.log('[SUBMIT] Full answers object:', JSON.stringify(answers, null, 2));
-
                 // sanitize computed fields so we don't save function source code into DB
                 const sanitizeComputedValue = (v: any) => {
                     if (v === undefined || v === null) return v;
@@ -879,7 +852,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 };
                 const fileAnswerMap: Array<any> = [];
                 for (const [qid, val] of Object.entries(answers)) {
-                    console.log('[SUBMIT] Processing answer - qid:', qid, 'val:', val);
                     // narrow to any so we can safely access file-like properties
                     const vObj = val as any;
                     // if this question is computed, sanitize value
@@ -980,7 +952,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             if (tableRes.ok) {
                                 const result = await tableRes.json();
                                 const successCount = result.rows ? result.rows.length : rowsToInsert.length;
-                                console.log(`✓ Successfully imported ${successCount} rows to table`);
                                 setTableImportStatus({
                                     success: true,
                                     message: `✓ Successfully imported ${successCount} rows to the selected table`,
@@ -1214,8 +1185,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             link.click();
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
-
-            console.log(`✓ Downloaded template for table: ${selectedTable.title}`);
         } catch (err) {
             console.error('Failed to generate template:', err);
             alert('Failed to generate template: ' + String(err));
@@ -1375,9 +1344,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const getPageKey = (pageId: string) => `/activities/fill/${activityId || ''}:page:${pageId}`;
     const visiblePages = formDef.pages.filter(page => {
         const pageKey = getPageKey(page.id);
-        console.log(`[VISIBILITY] Page "${page.name}" (id=${page.id}), pageKey="${pageKey}", pagePerms=${pagePerms ? pagePerms.length : 0} records`);
         const viewAllowed = hasPermissionFlag('can_view', pageKey, null);
-        console.log(`[VISIBILITY]   → can_view=${viewAllowed}`);
         return viewAllowed;
     });
 
@@ -1404,7 +1371,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const buildGlobalFieldMap = (): Record<string, any> => {
         const fieldMapGlobal: Record<string, any> = {};
         let globalQuestionIndex = 1;
-        console.log(`[GlobalFieldMap Build Start] Form has ${formDef.pages?.length || 0} pages, currentAnswers:`, Object.keys(answers));
         (formDef.pages || []).forEach((p) => {
             (p.sections || []).forEach((s) => {
                 (s.questions || []).forEach((qq) => {
@@ -1437,13 +1403,11 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         if (!fieldMapGlobal[`q${globalQuestionIndex}`]) {
                             fieldMapGlobal[`q${globalQuestionIndex}`] = finalValue;
                         }
-                        console.log(`[GlobalFieldMap] q${globalQuestionIndex}: fieldName=${qq.fieldName}, value=${finalValue}, id=${qq.id}`);
                         globalQuestionIndex++;
                     }
                 });
             });
         });
-        console.log(`[GlobalFieldMap Complete] Final map:`, fieldMapGlobal, `Keys:`, Object.keys(fieldMapGlobal));
         return fieldMapGlobal;
     };
     const globalFieldMap = buildGlobalFieldMap();
@@ -1521,9 +1485,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                                         if (q.metadata && q.metadata.showIf) {
                                                             const res = evaluateFormula(String(q.metadata.showIf), fieldMapLocal);
                                                             visible = !!res;
-                                                            // Debug logging
-                                                            console.log(`[showIf Debug] Question: ${q.fieldName || q.id}, Condition: ${q.metadata.showIf}, Result: ${res}, Visible: ${visible}`);
-                                                            console.log(`[showIf Values] FieldMap for this evaluation:`, fieldMapLocal);
                                                         }
                                                     } catch (e) {
                                                         console.error('Error evaluating showIf for question', q.id, 'Condition:', q.metadata?.showIf, 'FieldMap:', fieldMapLocal, e);

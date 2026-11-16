@@ -39,12 +39,10 @@ const testResults = {
 
 // Helper function to record test results
 async function runTest(testName, testFn) {
-    console.log(`\n🧪 Testing: ${testName}`);
     testResults.summary.total++;
     
     try {
         const result = await testFn();
-        console.log(`✅ ${testName}: PASSED`);
         testResults.tests.push({
             name: testName,
             status: 'passed',
@@ -53,7 +51,6 @@ async function runTest(testName, testFn) {
         testResults.summary.passed++;
         return true;
     } catch (error) {
-        console.log(`❌ ${testName}: FAILED - ${error.message}`);
         testResults.tests.push({
             name: testName,
             status: 'failed',
@@ -69,10 +66,6 @@ async function runTest(testName, testFn) {
 // ==============================================
 
 async function testDatabaseSchema() {
-    console.log('\n' + '='.repeat(60));
-    console.log('FEATURE 1: DATABASE SCHEMA CREATION');
-    console.log('='.repeat(60));
-
     const tables = [
         { name: `${tablePrefix}prompt_contexts`, description: 'Prompt contexts for AI' },
         { name: `${tablePrefix}vanna_training_sessions`, description: 'Vanna training sessions' },
@@ -121,10 +114,6 @@ async function testDatabaseSchema() {
 // ==============================================
 
 async function testBackendAPI() {
-    console.log('\n' + '='.repeat(60));
-    console.log('FEATURE 2: BACKEND API IMPLEMENTATION');
-    console.log('='.repeat(60));
-
     // Check API Routes
     const apiRoutes = [
         '/api/vanna/prompt-contexts',
@@ -183,10 +172,6 @@ async function testBackendAPI() {
 // ==============================================
 
 async function testFrontendComponents() {
-    console.log('\n' + '='.repeat(60));
-    console.log('FEATURE 3: FRONTEND COMPONENT DEVELOPMENT');
-    console.log('='.repeat(60));
-
     const components = [
         { path: 'components/ui/ChatPanel.tsx', description: 'AI Chat Panel' },
         { path: 'components/ui/AIContextSettings.tsx', description: 'AI Context Settings' },
@@ -219,10 +204,6 @@ async function testFrontendComponents() {
 // ==============================================
 
 async function testIntegration() {
-    console.log('\n' + '='.repeat(60));
-    console.log('FEATURE 4: INTEGRATION TESTING');
-    console.log('='.repeat(60));
-
     // Test Default LLM Settings
     await runTest('Default LLM Settings Creation', async () => {
         const result = await pool.query(
@@ -323,10 +304,6 @@ async function testIntegration() {
 // ==============================================
 
 async function testDeploymentSetup() {
-    console.log('\n' + '='.repeat(60));
-    console.log('FEATURE 5: DEPLOYMENT SETUP');
-    console.log('='.repeat(60));
-
     // Check .env file
     await runTest('Environment Configuration (.env)', async () => {
         if (!fs.existsSync(path.join(__dirname, '.env'))) {
@@ -425,13 +402,6 @@ async function testDeploymentSetup() {
 // ==============================================
 
 async function runAllTests() {
-    console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║         RAMSNHE COMPREHENSIVE TEST SUITE                      ║
-║         Testing all 5 required features                        ║
-╚════════════════════════════════════════════════════════════════╝
-`);
-
     try {
         // Test Database Connection
         await runTest('Database Connection', async () => {
@@ -455,7 +425,6 @@ async function runAllTests() {
         // Save results to file
         const reportPath = path.join(__dirname, 'TEST_RESULTS.json');
         fs.writeFileSync(reportPath, JSON.stringify(testResults, null, 2));
-        console.log(`\n📊 Full test results saved to: TEST_RESULTS.json`);
 
     } catch (error) {
         console.error('\n❌ Fatal error during testing:', error);
@@ -468,69 +437,6 @@ async function runAllTests() {
 function displayTestSummary() {
     const { total, passed, failed, warnings } = testResults.summary;
     const passRate = total > 0 ? ((passed / total) * 100).toFixed(1) : 0;
-    
-    console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║         TEST SUMMARY                                           ║
-╚════════════════════════════════════════════════════════════════╝
-
-📊 Results:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Total Tests:     ${total}
-✅ Passed:        ${passed}
-❌ Failed:        ${failed}
-⚠️  Warnings:     ${warnings}
-Success Rate:    ${passRate}%
-
-Status: ${failed === 0 ? '✅ ALL TESTS PASSED' : '❌ SOME TESTS FAILED'}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-FEATURES TESTED:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. ✅ Database Schema Creation
-   - 7 required tables verified
-   - Column structures validated
-
-2. ✅ Backend API Implementation
-   - API routes defined
-   - Service modules present
-   - LLM integration ready
-
-3. ✅ Frontend Component Development
-   - React components built
-   - ChatPanel ready
-   - Admin settings UI ready
-
-4. ✅ Integration Testing
-   - Database integration validated
-   - LLM settings structure verified
-   - Prompt contexts structure verified
-   - Conversation tracking validated
-
-5. ✅ Deployment Setup
-   - Environment configuration verified
-   - Package dependencies validated
-   - Docker setup ready
-   - Build configuration validated
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-NEXT STEPS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. Run migrations:     npm run migrate
-2. Initialize setup:   npm run vanna:setup
-3. Start dev server:   npm run server:dev
-4. Start frontend:     npm run dev
-5. Access app:         http://localhost:9090
-
-═══════════════════════════════════════════════════════════════════
-Timestamp: ${testResults.timestamp}
-═══════════════════════════════════════════════════════════════════
-    `);
 }
 
 // Run the test suite

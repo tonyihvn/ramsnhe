@@ -49,7 +49,6 @@ const FacilitiesPage: React.FC = () => {
       .then(r => r.ok ? r.json() : [])
       .then((data) => {
         if (Array.isArray(data)) {
-          console.log('States loaded:', data.length, 'states');
           setStatesList(data as string[]);
         }
       })
@@ -60,8 +59,6 @@ const FacilitiesPage: React.FC = () => {
       .then(r => r.ok ? r.json() : {})
       .then((data) => {
         if (data && typeof data === 'object') {
-          console.log('LGA map loaded:', Object.keys(data).length, 'states have LGAs');
-          console.log('LGA map keys:', Object.keys(data));
           setLgasMap(data as Record<string, string[]>);
         }
       })
@@ -324,31 +321,24 @@ const FacilitiesPage: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700">State</label>
               <select value={currentFacility.state || ''} onChange={(e) => {
                 const st = e.target.value;
-                console.log('State selected:', st);
-                console.log('Available lgasMap keys:', Object.keys(lgasMap));
                 setCurrentFacility({ ...currentFacility, state: st, lga: '' });
 
                 // load LGAs from in-memory map if available
                 const mapped = (lgasMap && (lgasMap as any)[st]) || [];
-                console.log('LGAs for state:', st, '=', mapped);
 
                 if (mapped && mapped.length) {
-                  console.log('Setting availableLgas:', mapped);
                   setAvailableLgas(mapped);
                 } else {
-                  console.log('No LGAs found in map, attempting to fetch per-state file');
                   // attempt to fetch a per-state LGAs file (optional)
                   fetch(`/metadata/lgas/${encodeURIComponent(st)}.json`)
                     .then(r => {
                       if (!r.ok) {
-                        console.log('Per-state LGA file not found for:', st);
                         return [];
                       }
                       return r.json();
                     })
                     .then((data) => {
                       if (Array.isArray(data)) {
-                        console.log('Loaded LGAs from per-state file:', st, data);
                         setAvailableLgas(data as string[]);
                       } else {
                         setAvailableLgas([]);

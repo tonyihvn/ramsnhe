@@ -63,7 +63,7 @@ function prepareSMTPConfig(smtpConfig) {
         if (!config.auth.user || !config.auth.pass) {
             console.warn('[prepareSMTPConfig] Gmail SMTP config missing user or password credentials');
         } else {
-            console.log('[prepareSMTPConfig] Gmail SMTP configured for user: ' + config.auth.user);
+            // Credentials are present
         }
         
         // Gmail typically uses port 587 (TLS) or 465 (SSL)
@@ -74,10 +74,8 @@ function prepareSMTPConfig(smtpConfig) {
         // For port 465, use secure connection; for 587 use STARTTLS
         if (config.port === 465) {
             config.secure = true;
-            console.log('[prepareSMTPConfig] Gmail using port 465 with SSL (secure: true)');
         } else if (config.port === 587) {
             config.secure = false; // Use STARTTLS instead
-            console.log('[prepareSMTPConfig] Gmail using port 587 with TLS (secure: false)');
         }
         
         // Ensure tls settings are optimal for Gmail
@@ -104,7 +102,6 @@ async function getSMTPConfigWithFallback(pool, businessId = null) {
         // Try to load from database first
         const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND (business_id = $1 OR business_id IS NULL) LIMIT 1`, [businessId]);
         if (sres.rows[0] && sres.rows[0].value) {
-            console.log('[getSMTPConfig] Using SMTP config from database');
             return sres.rows[0].value;
         }
     } catch (e) {
@@ -123,7 +120,6 @@ async function getSMTPConfigWithFallback(pool, businessId = null) {
             },
             from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER
         };
-        console.log('[getSMTPConfig] Using SMTP config from environment variables');
         return envConfig;
     }
     
@@ -1648,10 +1644,7 @@ app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
         const { name, formType, fields, id } = req.body;
         const businessId = req.session?.businessId || null;
 
-        console.log('[Form Schema Save] Received:', { formType, businessId, fieldCount: Array.isArray(fields) ? fields.length : 'invalid' });
-
         if (!name || !formType || !Array.isArray(fields)) {
-            console.log('[Form Schema Save] Validation failed:', { name, formType, fieldsIsArray: Array.isArray(fields) });
             return res.status(400).json({ error: 'Missing required fields: name, formType, fields' });
         }
 
@@ -1668,17 +1661,13 @@ app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
             [formType, businessId]
         );
 
-        console.log('[Form Schema Save] Check result:', { found: checkRes.rowCount > 0 });
-
         if (checkRes.rowCount > 0) {
             // Update existing schema
-            console.log('[Form Schema Save] Updating existing schema');
             const updateRes = await pool.query(
                 `UPDATE ${tables.FORM_SCHEMAS} SET name = $1, fields = $2, "updatedAt" = $3 WHERE "formType" = $4 AND business_id IS NOT DISTINCT FROM $5 RETURNING *`,
                 [name, JSON.stringify(fields), now, formType, businessId]
             );
             const row = updateRes.rows[0];
-            console.log('[Form Schema Save] Update complete:', { id: row.id, fieldCount: Array.isArray(row.fields) ? row.fields.length : 'unknown' });
             return res.json({
                 id: row.id,
                 name: row.name,
@@ -1689,13 +1678,11 @@ app.post('/api/admin/form-schemas', requireAdmin, async (req, res) => {
             });
         } else {
             // Insert new schema
-            console.log('[Form Schema Save] Inserting new schema');
             const insertRes = await pool.query(
                 `INSERT INTO ${tables.FORM_SCHEMAS} (id, name, "formType", fields, business_id, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
                 [schemaId, name, formType, JSON.stringify(fields), businessId, now, now]
             );
             const row = insertRes.rows[0];
-            console.log('[Form Schema Save] Insert complete:', { id: row.id, fieldCount: Array.isArray(row.fields) ? row.fields.length : 'unknown' });
             return res.json({
                 id: row.id,
                 name: row.name,
@@ -1717,7 +1704,6 @@ app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
         const { formType } = req.params;
         const businessId = req.session?.businessId || null;
 
-        console.log('[Form Schema Load] Request:', { formType, businessId });
 
         if (!['facility', 'user'].includes(formType)) {
             return res.status(400).json({ error: 'formType must be "facility" or "user"' });
@@ -1728,15 +1714,12 @@ app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
             [formType, businessId]
         );
 
-        console.log('[Form Schema Load] Query result:', { found: dbRes.rowCount > 0, count: dbRes.rowCount });
-
         if (dbRes.rowCount === 0) {
             // Try fallback to NULL business_id (global/default schema)
             const fallbackRes = await pool.query(
                 `SELECT * FROM ${tables.FORM_SCHEMAS} WHERE "formType" = $1 AND business_id IS NULL LIMIT 1`,
                 [formType]
             );
-            console.log('[Form Schema Load] Fallback query result:', { found: fallbackRes.rowCount > 0 });
 
             if (fallbackRes.rowCount > 0) {
                 const row = fallbackRes.rows[0];
@@ -1761,8 +1744,8 @@ app.get('/api/admin/form-schemas/:formType', requireAdmin, async (req, res) => {
             });
         }
 
+
         const row = dbRes.rows[0];
-        console.log('[Form Schema Load] Returning schema:', { id: row.id, fieldCount: Array.isArray(row.fields) ? row.fields.length : 'unknown' });
         res.json({
             id: row.id,
             name: row.name,
@@ -3504,7 +3487,6 @@ app.post('/auth/request-password-reset', async (req, res) => {
             const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' LIMIT 1`);
             if (sres.rows[0] && sres.rows[0].value) {
                 smtpConfig = sres.rows[0].value;
-                console.log('[Password Reset] Using SMTP config from database (host: ' + (smtpConfig.host || 'unknown') + ')');
             }
         } catch (e) { console.warn('Failed to load SMTP from database:', e.message); }
         
@@ -3520,10 +3502,7 @@ app.post('/auth/request-password-reset', async (req, res) => {
                 },
                 from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER
             };
-            console.log('[Password Reset] Using SMTP config from environment variables (host: ' + smtpConfig.host + ')');
-            console.log('[Password Reset] SMTP User: ' + smtpConfig.auth.user);
-            console.log('[Password Reset] SMTP Password length: ' + smtpConfig.auth.pass.length + ' chars');
-            console.log('[Password Reset] SMTP Port: ' + smtpConfig.port);
+            // SMTP config from environment is set
         }
         
         if (!smtpConfig) {

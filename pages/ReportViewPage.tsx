@@ -164,8 +164,6 @@ const ReportViewPage: React.FC = () => {
     }
     colIndex--;
 
-    console.log(`Resolving same-document ${cellRef}: rowIndex=${rowIndex}, colIndex=${colIndex}, letters=${letters}`);
-
     // Find the document - prioritize currently editing document, then search others
     const docsToCheck = [
       ...uploadedDocs.filter(doc => doc.id === editingDocId),
@@ -177,15 +175,12 @@ const ReportViewPage: React.FC = () => {
       if (rowIndex >= 0 && rowIndex < rows.length) {
         const row = rows[rowIndex];
         const keys = Object.keys(row || {});
-        console.log(`Row ${rowIndex} keys:`, keys);
         if (colIndex >= 0 && colIndex < keys.length) {
           const value = row[keys[colIndex]];
-          console.log(`Cell ${cellRef} raw value:`, value, `(type: ${typeof value})`);
           // Convert to number if it's a numeric string
           if (typeof value === 'string') {
             const numValue = Number(value);
             const result = isNaN(numValue) ? value : numValue;
-            console.log(`Converted string "${value}" to:`, result);
             return result;
           }
           return value;
@@ -235,7 +230,6 @@ const ReportViewPage: React.FC = () => {
 
         context[cellRef] = resolvedValue;
         refMap[cellRef] = resolvedValue;
-        console.log(`Resolved ${cellRef} to:`, resolvedValue, `(type: ${typeof resolvedValue})`);
       }
 
       // If the expression is just a single cell reference, return its value directly
@@ -267,8 +261,6 @@ const ReportViewPage: React.FC = () => {
         const escapedRef = cellRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         refvalue = refvalue.replace(new RegExp(escapedRef, 'g'), String(cellValue));
       }
-
-      console.log('Formula result:', result, 'Expression:', expression, 'Refvalue:', refvalue);
       return {
         value: result,
         refvalue: refvalue
@@ -409,13 +401,9 @@ const ReportViewPage: React.FC = () => {
             return aId - bId;
           });
           setAnswers(sortedAnswers);
-          console.log('Loaded answers:', sortedAnswers);
         }
         if (qRes.ok) {
           const questionsData = await qRes.json() || [];
-          console.log('Loaded questions:', questionsData);
-          console.log('Questions count:', questionsData.length);
-          console.log('📊 IMPORTANT: Loaded questions for activity_id:', jr.activity_id);
           if (questionsData.length === 0) {
             console.warn(`⚠️ NO QUESTIONS FOUND for activity_id=${jr.activity_id}. This means either:
 1. Questions don't exist in the database for this activity
@@ -423,7 +411,7 @@ const ReportViewPage: React.FC = () => {
 3. Questions were deleted`);
           }
           if (questionsData.length > 0) {
-            console.log('Sample question structure:', questionsData[0]);
+            // Sample question structure noted
           }
           setQuestions(questionsData);
         } else {
@@ -431,7 +419,6 @@ const ReportViewPage: React.FC = () => {
         }
         if (docs.ok) {
           const docsData = await docs.json() || [];
-          console.log('Loaded uploaded docs:', docsData);
           setUploadedDocs(docsData);
 
           // Extract column order from each doc's file content
@@ -449,7 +436,6 @@ const ReportViewPage: React.FC = () => {
         }
         if (actualTablesRes.ok) {
           const tablesData = await actualTablesRes.json() || [];
-          console.log('Loaded actual tables:', tablesData);
 
           // Fetch rows from physical tables for each table
           const tablesWithRows = await Promise.all(
@@ -458,8 +444,8 @@ const ReportViewPage: React.FC = () => {
                 const rowsRes = await apiFetch(`/api/actual_tables/${table.id}/physical-rows`, { credentials: 'include' });
                 if (rowsRes.ok) {
                   const tableData = await rowsRes.json();
-                  console.log(`[Table ${table.id}] Physical rows response:`, {
-                    rowCount: tableData.row_count,
+                   return { ...table, rows: tableData.rows || [] };
+                } else {
                     schemaKeys: tableData.schema ? Object.keys(tableData.schema) : [],
                     firstRow: tableData.rows ? tableData.rows[0] : null
                   });
@@ -478,7 +464,6 @@ const ReportViewPage: React.FC = () => {
             })
           );
 
-          console.log('Final tables with rows:', tablesWithRows);
           setActualTables(tablesWithRows);
         }
         if (uRes.ok) setUsers(await uRes.json() || []);
@@ -1124,16 +1109,6 @@ const ReportViewPage: React.FC = () => {
             {(() => {
               // Build a quick lookup map for questions by several possible keys
               const qMap: Record<string, any> = {};
-              console.log('DEBUG: questions array length =', questions?.length || 0);
-              console.log('DEBUG: Sample questions (first 5):', questions?.slice(0, 5).map((q: any) => ({
-                id: q?.id,
-                qid: q?.qid,
-                question_id: q?.question_id,
-                questionText: q?.questionText,
-                question_text: q?.question_text,
-                activity_id: q?.activity_id
-              })) || []);
-
               for (const q of questions) {
                 try {
                   if (q && (q.id !== undefined)) qMap[String(q.id)] = q;
@@ -1141,18 +1116,6 @@ const ReportViewPage: React.FC = () => {
                   if (q && (q.question_id !== undefined)) qMap[String(q.question_id)] = q;
                 } catch (e) { /* ignore malformed question */ }
               }
-              console.log('DEBUG: Built qMap with', Object.keys(qMap).length, 'questions.');
-              console.log('DEBUG: qMap keys:', Object.keys(qMap).slice(0, 20)); // First 20 keys
-
-              console.log('DEBUG: answers array length =', answers?.length || 0);
-              console.log('DEBUG: Sample answers (first 5):', answers?.slice(0, 5).map((a: any) => ({
-                id: a?.id,
-                question_id: a?.question_id,
-                questionId: a?.questionId,
-                qid: a?.qid,
-                answer_value: typeof a?.answer_value === 'string' ? a.answer_value.slice(0, 50) : a?.answer_value
-              })) || []);
-
               // Separate grouped and non-grouped answers
               const groupedAnswersMap: Record<string, any[]> = {};
               const nonGroupedAnswers: any[] = [];
@@ -1177,8 +1140,6 @@ const ReportViewPage: React.FC = () => {
                   nonGroupedAnswers.push(a);
                 }
               });
-
-              console.log('Grouped answers map:', groupedAnswersMap);
 
               return (
                 <div className="space-y-6">
@@ -1285,8 +1246,6 @@ const ReportViewPage: React.FC = () => {
 
                         const sortedRowIndices = Object.keys(rowMap).map(Number).sort((a, b) => a - b);
                         const columnDefs = Object.values(columnsMap);
-
-                        console.log(`Group "${groupName}" - rowMap:`, rowMap, 'sortedRowIndices:', sortedRowIndices, 'answers count:', groupAnswers.length);
 
                         // Convert to DataTable format with filters
                         const groupTableColumns = [
@@ -2209,14 +2168,11 @@ const ReportViewPage: React.FC = () => {
             {(() => {
               if (!report) return null;
 
-              console.log('Report ID:', report.id, 'All uploaded docs:', uploadedDocs);
-
               const filteredDocs = (uploadedDocs || []).filter(d => {
                 if (!d) return false;
                 // Match by report_id
                 const docReportId = d.report_id ?? d.reportId ?? d.report;
                 const reportId = report.id;
-                console.log('Checking doc:', d.filename, 'docReportId:', docReportId, 'reportId:', reportId, 'Match:', String(docReportId) === String(reportId));
                 if (String(docReportId) !== String(reportId)) return false;
                 return true;
               }).filter(d => {

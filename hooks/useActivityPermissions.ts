@@ -53,7 +53,7 @@ export const useActivityPermissions = (activityId?: string) => {
             setOriginalPermissions(originalData || null);
           }
         } catch (e) {
-          console.debug('Original permissions endpoint not available, using activity permissions only:', e);
+          // Original permissions endpoint not available, using activity permissions only
         }
       } catch (e) {
         console.error('Failed to fetch activity permissions:', e);

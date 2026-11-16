@@ -160,22 +160,11 @@ const LoginPage: React.FC = () => {
           if (heroImage) {
             heroImage = normalizeImageUrl(heroImage);
             setBackgroundImage(heroImage);
-            console.log('✓ Background image loaded from landing page config:', { 
-              size: (heroImage?.length || 0 / 1024).toFixed(2) + ' KB',
-              hasDataPrefix: heroImage?.startsWith('data:') || false,
-              isUrl: heroImage?.startsWith('/') || heroImage?.startsWith('http') || false
-            });
           } else if (settings?.backgroundImage) {
             const bgImage = normalizeImageUrl(settings.backgroundImage);
             setBackgroundImage(bgImage);
-            console.log('✓ Background image loaded from theme settings:', { 
-              size: (bgImage?.length || 0 / 1024).toFixed(2) + ' KB',
-              hasDataPrefix: bgImage?.startsWith('data:') || false,
-              isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
-            });
           } else {
             setBackgroundImage(null);
-            console.log('✗ No background image available (landing page or theme settings)');
           }
         } else {
           setAllowNewRegistrations(true);
@@ -183,8 +172,6 @@ const LoginPage: React.FC = () => {
           if (settings?.backgroundImage) {
             const bgImage = normalizeImageUrl(settings.backgroundImage);
             setBackgroundImage(bgImage);
-            console.log('✓ Background image loaded from theme settings (fallback):', { 
-              size: (bgImage?.length || 0 / 1024).toFixed(2) + ' KB',
               hasDataPrefix: bgImage?.startsWith('data:') || false,
               isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
             });
@@ -197,11 +184,6 @@ const LoginPage: React.FC = () => {
         if (settings?.backgroundImage) {
           const bgImage = normalizeImageUrl(settings.backgroundImage);
           setBackgroundImage(bgImage);
-          console.log('✓ Background image loaded from theme settings (error fallback):', { 
-            size: (bgImage?.length || 0 / 1024).toFixed(2) + ' KB',
-            hasDataPrefix: bgImage?.startsWith('data:') || false,
-            isUrl: bgImage?.startsWith('/') || bgImage?.startsWith('http') || false
-          });
         }
       }
     };
@@ -212,15 +194,7 @@ const LoginPage: React.FC = () => {
   // Debug: Log whenever background image changes
   React.useEffect(() => {
     if (backgroundImage) {
-      const preview = backgroundImage.substring(0, 50) + (backgroundImage.length > 50 ? '...' : '');
-      console.log('✓ Background image state updated:', { 
-        size: (backgroundImage.length / 1024).toFixed(2) + ' KB',
-        preview,
-        startsWithData: backgroundImage.startsWith('data:'),
-        startsWithHttp: backgroundImage.startsWith('http')
-      });
-    } else {
-      console.log('✗ Background image is null or undefined');
+      // Background image updated
     }
   }, [backgroundImage]);
 

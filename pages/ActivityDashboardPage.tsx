@@ -108,8 +108,8 @@ const ActivityDashboardPage: React.FC = () => {
   useEffect(() => {
     const userRole = String(currentUser?.role || '').toLowerCase().trim();
     const isAdmin = userRole === 'admin' || userRole === 'super-admin' || userRole === 'super_admin';
-    console.log('ActivityDashboardPage Debug:', {
-      currentUser,
+    
+    const handleActivityChange = async (activityId: string) => {
       userRole,
       isAdmin,
       permissions,

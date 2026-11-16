@@ -19,7 +19,6 @@
     }
 
     const pool = new Pool({ host: DB_HOST, port: DB_PORT, user: DB_USER, password: DB_PASSWORD, database: DB_NAME });
-    console.log('Connected to DB`);
 
     // Ensure minimal tables exist
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tables.PROGRAMS} (id SERIAL PRIMARY KEY, name TEXT, details TEXT, created_at TIMESTAMP DEFAULT NOW())`);
@@ -35,9 +34,8 @@
     if (!program) {
       const r = await pool.query(`INSERT INTO ${tables.PROGRAMS} (name, details) VALUES ($1,$2) RETURNING *`, [programName, 'Program for seeding energy audit activity across states']);
       program = r.rows[0];
-      console.log('Created program', program.id);
     } else {
-      console.log('Program already exists', program.id);
+      // Program already exists
     }
 
     // Create activity
@@ -49,18 +47,8 @@
 
       const ar = await pool.query(`INSERT INTO ${tables.ACTIVITIES} (title, program_id, form_definition) VALUES ($1,$2,$3) RETURNING *`, [activityTitle, program.id, formDef]);
       activity = ar.rows[0];
-      console.log('Created activity', activity.id);
-
-      // insert questions
-      const questions = [
-             ];
-      for (const q of questions) {
-        try {
-          await pool.query(`INSERT INTO ${tables.QUESTIONS} (id, activity_id, question_text, answer_type) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET question_text = EXCLUDED.question_text, answer_type = EXCLUDED.answer_type`, [q.id, q.activity_id, q.question_text, q.answer_type]);
-        } catch (e) { console.error('Failed to insert question', e); }
-      }
     } else {
-      console.log('Activity already exists', activity.id);
+      // Activity already exists
     }
 
     // Ensure 36 facilities (Nigerian states) exist. If fewer, create missing ones with random coords inside Nigeria bbox
@@ -77,7 +65,6 @@
       const lng = (Math.random() * (14.6 - 2.7) + 2.7).toFixed(5);
       await pool.query(`INSERT INTO ${tables.FACILITIES} (name, state, lat, lng) VALUES ($1,$2,$3,$4)`, [`Facility - ${st}`, st, Number(lat), Number(lng)]);
     }
-    console.log('Ensured 36 state facilities exist');
 
     const facilities = (await pool.query(`SELECT * FROM ${tables.FACILITIES} ORDER BY id`)).rows;
 
@@ -107,8 +94,6 @@
         } catch (e) { console.error('Failed to insert answer', e); }
       }
     }
-
-    console.log('Seeding complete');
     await pool.end();
     process.exit(0);
   } catch (e) {

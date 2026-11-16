@@ -78,7 +78,6 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
                     const computed: Record<string, any> = {};
                     if (cbj && cbj.computed) {
                       // Debug: surface server compute_bulk response in browser console
-                      try { console.debug('[FacilityCard] compute_bulk response for facility', fid, cbj); } catch (e) { }
                       for (const iid of Object.keys(cbj.computed)) {
                         const entry = cbj.computed[iid];
                         const resForFacility = entry.results && (entry.results[String(fid)] || entry.results[fid]) ? (entry.results[String(fid)] || entry.results[fid]) : null;
@@ -113,7 +112,6 @@ const FacilityCard: React.FC<{ facility: Facility; visibleIndicators?: Record<st
                         }
                         computed[iid] = value;
                       }
-                      try { console.debug('[FacilityCard] computed indicators mapping', computed); } catch (e) { }
                     }
                     setActivityIndicatorValues(computed);
                   }

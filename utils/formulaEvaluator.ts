@@ -42,7 +42,6 @@ export const resolveCellReferenceFromContext = (
         // Parse cell reference: reportId[.docId]_abbr_LETTER+NUMBER
         const match = cellRef.match(/^(report\d+(?:\.\d+)?)_[A-Z]{1,3}_([A-Z]+)(\d+)$/);
         if (!match) {
-            console.warn('Invalid cell reference format:', cellRef);
             return undefined;
         }
 
@@ -56,37 +55,29 @@ export const resolveCellReferenceFromContext = (
         }
         colIndex--;
 
-        console.log(`[Cross-Doc] Resolving ${cellRef}: docId=${docIdentifier}, col=${letters}, row=${rowStr}, colIndex=${colIndex}, rowIndex=${rowIndex}`);
-
         // Get the document data
         const docData = context[docIdentifier];
         if (!docData || !docData.fileContent) {
-            console.warn(`[Cross-Doc] Document not found in context: ${docIdentifier}. Available: ${Object.keys(context).join(', ')}`);
             return undefined;
         }
 
         const rows = Array.isArray(docData.fileContent) ? docData.fileContent : [];
         if (rowIndex < 0 || rowIndex >= rows.length) {
-            console.warn(`[Cross-Doc] Row index out of bounds: ${rowIndex} (total rows: ${rows.length}) for document ${docIdentifier}`);
             return undefined;
         }
 
         const row = rows[rowIndex];
         const keys = Object.keys(row || {});
         if (colIndex < 0 || colIndex >= keys.length) {
-            console.warn(`[Cross-Doc] Column index out of bounds: ${colIndex} (total columns: ${keys.length}) for document ${docIdentifier}`);
-            console.log(`[Cross-Doc] Available columns: ${keys.join(', ')}`);
             return undefined;
         }
 
         const value = row[keys[colIndex]];
-        console.log(`[Cross-Doc] Found ${cellRef} = ${value} (column: ${keys[colIndex]})`);
 
         // Convert to number if it's a numeric string
         if (typeof value === 'string') {
             const numValue = Number(value);
             const result = isNaN(numValue) ? value : numValue;
-            console.log(`[Cross-Doc] Converted string "${value}" to ${result}`);
             return result;
         }
         return value;
@@ -115,7 +106,6 @@ export const evaluateFormulaWithContext = (
             const resolvedValue = resolveCellReferenceFromContext(cellRef, context);
             resolvedContext[cellRef] = resolvedValue;
             refMap[cellRef] = resolvedValue;
-            console.log(`Resolved ${cellRef} to:`, resolvedValue);
         }
 
         // If the expression is just a single cell reference
@@ -136,7 +126,6 @@ export const evaluateFormulaWithContext = (
 
         // Handle NaN
         if (typeof result === 'number' && isNaN(result)) {
-            console.warn('Formula evaluated to NaN:', expression);
             return {
                 value: null,
                 refvalue: 'NaN'
@@ -151,7 +140,6 @@ export const evaluateFormulaWithContext = (
             refvalue = refvalue.replace(new RegExp(escapedRef, 'g'), replacement);
         }
 
-        console.log('Formula result:', result, 'Expression:', expression, 'Refvalue:', refvalue);
         return {
             value: result,
             refvalue: refvalue

@@ -97,8 +97,6 @@ const testCases = [
   }
 ];
 
-console.log('Testing Formula Preloading Feature:\n');
-
 let passed = 0;
 let failed = 0;
 
@@ -116,13 +114,8 @@ testCases.forEach((testCase, index) => {
       }
       
       if (isPass) {
-        console.log(`✓ Test ${index + 1} PASSED: ${testCase.name}`);
         passed++;
       } else {
-        console.log(`✗ Test ${index + 1} FAILED: ${testCase.name}`);
-        console.log(`  Expected formula to be: ${testCase.shouldPreload ? '[SQL/JS template]' : testCase.expectedFormula}`);
-        console.log(`  Got: ${result.formula?.substring(0, 50)}...`);
-        console.log(`  Description: ${testCase.description}`);
         failed++;
       }
     } else if (testCase.shouldContain !== undefined) {
@@ -131,32 +124,13 @@ testCases.forEach((testCase, index) => {
       const allContained = (testCase.shouldContain as string[]).every(str => template.includes(str));
       
       if (allContained) {
-        console.log(`✓ Test ${index + 1} PASSED: ${testCase.name}`);
         passed++;
       } else {
-        console.log(`✗ Test ${index + 1} FAILED: ${testCase.name}`);
-        console.log(`  Missing required strings in template`);
-        console.log(`  Description: ${testCase.description}`);
         failed++;
       }
     }
   } catch (e) {
-    console.log(`✗ Test ${index + 1} ERRORED: ${testCase.name}`);
-    console.log(`  Error: ${(e as any).message}`);
     failed++;
   }
+  
 });
-
-console.log(`\n${passed} passed, ${failed} failed out of ${testCases.length} tests`);
-
-if (failed === 0) {
-  console.log('\n✓ All tests passed! The formula preloading feature works correctly.');
-  console.log('\nKey behaviors verified:');
-  console.log('  1. SQL template is preloaded when switching to SQL with empty formula');
-  console.log('  2. JS template is preloaded when switching to Expression with empty formula');
-  console.log('  3. Existing formulas are preserved when switching types');
-  console.log('  4. Whitespace-only formulas are treated as empty');
-  console.log('  5. Templates contain all required elements for their respective types');
-} else {
-  console.log('\n✗ Some tests failed. Review the implementation.');
-}

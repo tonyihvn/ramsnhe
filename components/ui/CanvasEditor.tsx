@@ -75,7 +75,6 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
     }
     // sync internalHtml to editable content (without blocks) but avoid forcing a render on every tiny input by only updating when explicitly requested
     try { setInternalHtml(editableHtml); } catch (e) { }
-    try { console.debug('[CanvasEditor] emitChange', { blocksCount: blocks.length, combinedLength: (combined || '').length, lockExpiresAt: localChangeLockRef.current }); } catch (e) { }
     // sanitize blocks before sending to parent (remove internal-only fields)
     const sanitize = (b: any) => {
       const out: any = {};
@@ -346,7 +345,6 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
     // If editor is focused, avoid re-parsing incoming value to prevent clobbering the user's edits
     try {
       if (containerRef.current && containerRef.current.contains(document.activeElement)) {
-        try { console.debug('[CanvasEditor] skipping parse: editor focused'); } catch (e) { }
         return;
       }
 
@@ -361,12 +359,11 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
           // If we made a local change very recently, prefer local state — ignore incoming parent data for a short window
           try {
             if (Date.now() < (localChangeLockRef.current || 0)) {
-              try { console.debug('[CanvasEditor] ignoring incoming initialBlocks due to recent local change', { now: Date.now(), lock: localChangeLockRef.current }); } catch (e) { }
-              // do not update prevInitialBlocksRef so that future parent updates can be considered
+              // ignoring incoming initialBlocks due to recent local change
               return;
             }
           } catch (e) { }
-          try { console.debug('[CanvasEditor] initialBlocks changed; updating from prop', initialBlocks.length, 'prev:', prevInitialBlocksRef.current.length, 'current:', blocks.length); } catch (e) { }
+          // initialBlocks changed; updating from prop
 
           // Accept incoming initialBlocks if they're different from what we previously received
           // This allows us to accept both additions AND deletions from parent
@@ -378,12 +375,10 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
 
           // If the IDs are different, we should accept the incoming blocks (could be additions or deletions)
           if (idsChanged) {
-            try { console.debug('[CanvasEditor] block IDs changed; accepting incoming initialBlocks', { was: Array.from(prevIds).slice(0, 3), now: Array.from(incomingIds).slice(0, 3) }); } catch (e) { }
             prevInitialBlocksRef.current = initialBlocks;
             setBlocks((initialBlocks || []).map((b: any) => ({ ...b })));
             if (value) setInternalHtml(value);
           } else {
-            try { console.debug('[CanvasEditor] ignoring incoming blocks; has fewer blocks than current state'); } catch (e) { }
             prevInitialBlocksRef.current = initialBlocks;
           }
           return;
@@ -396,7 +391,6 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
       if (!value) { setBlocks([]); return; }
       if (blocks.length > 0) {
         // Already have blocks loaded (likely from structured persistence), don't re-parse
-        try { console.debug('[CanvasEditor] already have blocks; skipping parse'); } catch (e) { }
         return;
       }
 
@@ -405,7 +399,6 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
         const doc = parser.parseFromString(value, 'text/html');
         const found: any[] = [];
         const blockEls = Array.from(doc.querySelectorAll('div.tpl-block[data-block-id]'));
-        try { console.debug('[CanvasEditor] parse incoming value, found blocks:', blockEls.length); } catch (e) { }
         const seenIds = new Set<string>();
         for (let i = 0; i < blockEls.length; i++) {
           const be = blockEls[i] as HTMLElement;
@@ -608,30 +601,18 @@ const CanvasEditor = forwardRef(function CanvasEditorInner({ value = '', initial
                     try {
                       const cs = window.getComputedStyle(cur);
                       const rect = cur.getBoundingClientRect ? cur.getBoundingClientRect() : { x: 0, y: 0, width: 0, height: 0 };
-                      console.debug({
-                        el: cur.tagName.toLowerCase(),
-                        id: cur.id || null,
-                        className: cur.className || null,
-                        position: cs.position,
-                        zIndex: cs.zIndex,
-                        transform: cs.transform,
-                        opacity: cs.opacity,
-                        overflow: cs.overflow,
-                        contain: cs.contain,
-                        willChange: cs.willChange,
-                        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height }
-                      });
-                    } catch (e) { console.debug('[CanvasEditor][StackDebug] failed reading computed style for element', cur, e); }
+                    } catch (e) { }
                     if (cur.parentElement && cur.parentElement !== document.documentElement) cur = cur.parentElement; else { if (cur !== document.body) cur = document.body; else cur = null; }
                   }
-                  console.groupEnd();
-                } catch (e) { console.debug('[CanvasEditor][StackDebug] logging failed', e); }
-              };
+                };
 
-              try { logElInfo(blockEl as HTMLElement, 'Clicked tpl-block'); } catch (e) { console.debug(e); }
-              try { const insp = document.querySelector('.inspector-panel') as HTMLElement | null; if (insp) logElInfo(insp, 'Inspector panel (.inspector-panel)'); else console.debug('[CanvasEditor][StackDebug] .inspector-panel not found'); } catch (e) { console.debug(e); }
-              try { const canvasRoot = containerRef.current || (document.querySelector('.paper-root') as HTMLElement | null); if (canvasRoot) logElInfo(canvasRoot, 'Canvas root / paper-root'); } catch (e) { console.debug(e); }
-              try { const body = document.body; if (body) logElInfo(body, 'Document body'); } catch (e) { console.debug(e); }
+                logElInfo(blockEl as HTMLElement, 'Clicked tpl-block');
+                const insp = document.querySelector('.inspector-panel') as HTMLElement | null;
+                if (insp) logElInfo(insp, 'Inspector panel (.inspector-panel)');
+                const canvasRoot = containerRef.current || (document.querySelector('.paper-root') as HTMLElement | null);
+                if (canvasRoot) logElInfo(canvasRoot, 'Canvas root / paper-root');
+                const body = document.body;
+                if (body) logElInfo(body, 'Document body');
             }
           } catch (e) { /* swallow debug errors */ }
 
