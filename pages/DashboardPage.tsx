@@ -5,7 +5,7 @@ import Card from '../components/ui/Card';
 import { FolderIcon, ClipboardDocumentListIcon, BuildingOfficeIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
 import { useNavigate } from 'react-router-dom';
-const StatCard = ({ title, value, icon, to }: { title: string; value: number; icon: React.ReactNode; to: string }) => {
+const StatCard = ({ title, value, icon, to, isLoading }: { title: string; value: number; icon: React.ReactNode; to: string; isLoading: boolean }) => {
   const navigate = useNavigate();
   return (
     <Card className="cursor-pointer hover:shadow-lg transition" onClick={() => navigate(to)}>
@@ -15,7 +15,7 @@ const StatCard = ({ title, value, icon, to }: { title: string; value: number; ic
         </div>
         <div className="ml-4">
           <p className="text-sm font-medium text-gray-500 truncate">{title}</p>
-          <p className="text-2xl font-semibold text-gray-900">{value}</p>
+          <p className="text-2xl font-semibold text-gray-900">{isLoading ? 'Loading...' : value}</p>
         </div>
       </div>
     </Card>
@@ -24,7 +24,7 @@ const StatCard = ({ title, value, icon, to }: { title: string; value: number; ic
 
 
 const DashboardPage: React.FC = () => {
-  const { programs, activities, facilities, users, currentUser } = useData();
+  const { programs, activities, facilities, users, currentUser, isBusinessDataLoading } = useData();
   
   // Check if user is admin or super admin
   const userRole = String(currentUser?.role || '').toLowerCase().trim();
@@ -50,10 +50,10 @@ const DashboardPage: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="Total Programs" value={programs.length} icon={<FolderIcon className="h-6 w-6" />} to="/programs" />
-        <StatCard title="Total Activities" value={activities.length} icon={<ClipboardDocumentListIcon className="h-6 w-6" />} to="/activities" />
-        <StatCard title="Total Facilities" value={facilities.length} icon={<BuildingOfficeIcon className="h-6 w-6" />} to="/facilities" />
-        {isAdminUser && <StatCard title="Total Users" value={users.length} icon={<UserGroupIcon className="h-6 w-6" />} to="/users" />}
+        <StatCard title="Total Programs" value={programs.length} isLoading={isBusinessDataLoading} icon={<FolderIcon className="h-6 w-6" />} to="/programs" />
+        <StatCard title="Total Activities" value={activities.length} isLoading={isBusinessDataLoading} icon={<ClipboardDocumentListIcon className="h-6 w-6" />} to="/activities" />
+        <StatCard title="Total Facilities" value={facilities.length} isLoading={isBusinessDataLoading} icon={<BuildingOfficeIcon className="h-6 w-6" />} to="/facilities" />
+        {isAdminUser && <StatCard title="Total Users" value={users.length} isLoading={isBusinessDataLoading} icon={<UserGroupIcon className="h-6 w-6" />} to="/users" />}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

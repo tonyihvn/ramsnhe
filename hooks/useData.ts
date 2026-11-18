@@ -17,6 +17,7 @@ import { Program, Activity, Facility, User, ActivityReport, FormDefinition } fro
 // Context Definition
 interface DataContextType {
     currentUser: User | null;
+    isBusinessDataLoading: boolean;
     login: (email: string, password: string) => Promise<any>;
     logout: () => void;
 
@@ -70,6 +71,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     const [facilities, setFacilities] = useState<Facility[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [reports, setReports] = useState<ActivityReport[]>([]);
+    const [isBusinessDataLoading, setIsBusinessDataLoading] = useState(false);
 
     // Function to refresh all business data from the server
     const refreshBusinessData = useCallback(async () => {
@@ -79,9 +81,11 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
             setFacilities([]);
             setUsers([]);
             setReports([]);
+            setIsBusinessDataLoading(false);
             return;
         }
 
+        setIsBusinessDataLoading(true);
         try {
             async function safeJson(res: Response) {
                 try {
@@ -148,6 +152,8 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
             setFacilities([]);
             setUsers([]);
             setReports([]);
+        } finally {
+            setIsBusinessDataLoading(false);
         }
     }, [currentUser]);
 
@@ -390,7 +396,7 @@ export const DataProvider: FC<{ children: ReactNode }> = ({ children }) => {
     };
 
     const value = {
-        currentUser, login, logout,
+        currentUser, isBusinessDataLoading, login, logout,
         programs, activities, facilities, users, reports,
         getProgram, saveProgram, deleteProgram,
         getActivity, getActivitiesByProgram, saveActivity, deleteActivity,

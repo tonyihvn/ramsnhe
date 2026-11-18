@@ -1428,17 +1428,18 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     return (
         <div className="space-y-6">
             {!standaloneMode && (
-                <div className="flex items-center justify-between space-x-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center space-x-4">
                         <button onClick={() => history('/activities')} className="text-gray-500 hover:text-gray-700">
                             <ArrowLeftIcon className="h-6 w-6" />
                         </button>
                         <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-nowrap gap-2">
                         <Button
                             variant="secondary"
                             size="sm"
+                            className="whitespace-nowrap"
                             onClick={() => setShowVoiceCaptureModal(true)}
                             leftIcon={<MicrophoneIcon className="h-4 w-4" />}
                             title="Record interview conversation and auto-fill form"
@@ -1448,6 +1449,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         <Button
                             variant="secondary"
                             size="sm"
+                            className="whitespace-nowrap"
                             onClick={() => setShowAIAssistantModal(true)}
                             leftIcon={<SparklesIcon className="h-4 w-4" />}
                             title="Ask AI Assistant for insights and help"
