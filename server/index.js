@@ -646,6 +646,21 @@ app.post('/api/llm/generate_sql', async (req, res) => {
         const { prompt, context, scope, providerId, messages, overrideNote } = req.body || {};
         if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
+        // Include organization-level AI Context / RAG instructions in SQL generation.
+        let aiContextText = '';
+        try {
+            const businessId = req.session?.businessId || req.session?.business_id || null;
+            if (businessId) {
+                const aiContextRes = await pool.query(
+                    `SELECT ai_context_text FROM ${tables.AI_SETTINGS} WHERE business_id = $1 LIMIT 1`,
+                    [businessId]
+                );
+                aiContextText = aiContextRes.rows[0]?.ai_context_text || '';
+            }
+        } catch (e) {
+            console.warn('[LLM] Failed to load organization AI context:', e.message);
+        }
+
         // Combine prior conversation messages with current prompt
         let combinedPrompt = String(prompt);
         try {
@@ -924,6 +939,8 @@ app.post('/api/llm/generate_sql', async (req, res) => {
 1. Analyze the user's question in the context of retrieved data from the system
 2. Understand what they're asking by comparing to similar questions and answers
 3. Generate accurate SQL that retrieves the information they need
+
+${aiContextText ? `ORGANIZATION AI / RAG CONTEXT:\n${aiContextText}\n\n` : ''}
 
 ${retrievedDataSection}
 
@@ -1621,6 +1638,34 @@ const pool = new Pool({
 // Make pool available to all routes via app.locals
 app.locals.pool = pool;
 
+// Resolve authenticated session user for API routers that use req.user.
+// This keeps AI settings, voice capture, and Vanna routes consistently authenticated.
+app.use('/api', async (req, res, next) => {
+    try {
+        if (!req.session?.userId) return next();
+        const userResult = await pool.query(
+            `SELECT id, business_id, role, email, first_name, last_name FROM ${tables.USERS} WHERE id = $1 LIMIT 1`,
+            [req.session.userId]
+        );
+        if (userResult.rows.length === 0) return next();
+
+        const user = userResult.rows[0];
+        req.user = {
+            ...user,
+            businessId: user.business_id,
+            role: String(user.role || '').toLowerCase()
+        };
+        req.session.businessId = user.business_id || req.session.businessId || null;
+        req.session.business_id = req.session.businessId;
+        req.session.role = user.role;
+        req.session.user_id = user.id;
+        next();
+    } catch (error) {
+        console.error('[API auth] Failed to resolve authenticated user:', error);
+        next();
+    }
+});
+
 // Register Super Admin Routes
 registerSuperAdminRoutes(app, pool);
 
@@ -1635,6 +1680,28 @@ app.use('/api/vanna-server', vannaServerRoutes);
 app.use('/api', aiSettingsRouter);
 
 // Register Voice Capture Routes
+app.use('/api/voice-capture', async (req, res, next) => {
+    try {
+        if (!req.session?.userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const userResult = await pool.query(
+            `SELECT id, business_id, role, email, first_name, last_name FROM ${tables.USERS} WHERE id = $1 LIMIT 1`,
+            [req.session.userId]
+        );
+        if (userResult.rows.length === 0) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        req.user = userResult.rows[0];
+        if (!req.session.businessId && req.user.business_id) {
+            req.session.businessId = req.user.business_id;
+        }
+        next();
+    } catch (error) {
+        console.error('Voice capture authentication middleware error:', error);
+        res.status(500).json({ error: 'Failed to resolve authenticated user' });
+    }
+});
 app.use('/api/voice-capture', voiceCaptureRouter);
 
 // Form Schemas API Endpoints (Admin only)
@@ -1918,6 +1985,8 @@ async function initDb() {
             status TEXT,
             created_by INTEGER REFERENCES ${tables.USERS}(id) ON DELETE SET NULL,
             form_definition JSONB DEFAULT '{}'::jsonb,
+            dashboard_stats_config JSONB,
+            dashboard_charts_config JSONB,
             created_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE TABLE IF NOT EXISTS ${tables.ACTIVITY_ROLES} (
@@ -2117,6 +2186,77 @@ async function initDb() {
         await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_url TEXT`);
         await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_link_type TEXT`);
         await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS powerbi_mode TEXT`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS dashboard_stats_config JSONB`);
+        await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS dashboard_charts_config JSONB`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${tables.AI_SETTINGS} (
+                id SERIAL PRIMARY KEY,
+                business_id INTEGER NOT NULL UNIQUE,
+                vanna_api_url TEXT,
+                vanna_api_key TEXT,
+                vanna_model TEXT,
+                auto_train_ddl BOOLEAN DEFAULT TRUE,
+                training_interval INTEGER DEFAULT 24,
+                ai_context_text TEXT,
+                rag_auto_generate BOOLEAN DEFAULT FALSE,
+                lancedb_url TEXT,
+                lancedb_database TEXT,
+                lancedb_collection_name TEXT,
+                lancedb_vector_dimension INTEGER DEFAULT 1536,
+                vectordb_provider TEXT DEFAULT 'lancedb',
+                vectordb_host TEXT,
+                vectordb_port INTEGER,
+                vectordb_api_key TEXT,
+                vectordb_namespace TEXT,
+                chroma_url TEXT,
+                chroma_collection_name TEXT,
+                chroma_persist_directory TEXT,
+                embedding_model TEXT,
+                embedding_model_name TEXT,
+                embedding_dimension INTEGER DEFAULT 1536,
+                embedding_api_key TEXT,
+                embedding_endpoint TEXT,
+                llm_provider TEXT,
+                llm_model TEXT,
+                llm_temperature NUMERIC,
+                llm_max_tokens INTEGER,
+                llm_api_key TEXT,
+                llm_endpoint TEXT,
+                enable_ai_assistant BOOLEAN DEFAULT TRUE,
+                enable_chart_generation BOOLEAN DEFAULT TRUE,
+                enable_insights BOOLEAN DEFAULT TRUE,
+                conversation_context INTEGER DEFAULT 5,
+                response_tone_style TEXT DEFAULT 'professional',
+                vercel_ai_api_key TEXT,
+                vercel_ai_model TEXT,
+                vercel_ai_temperature NUMERIC,
+                vercel_ai_max_tokens INTEGER,
+                vercel_ai_provider TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE ${tables.AI_SETTINGS} ADD COLUMN IF NOT EXISTS ai_context_text TEXT`);
+        await pool.query(`ALTER TABLE ${tables.AI_SETTINGS} ADD COLUMN IF NOT EXISTS rag_auto_generate BOOLEAN DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE ${tables.AI_SETTINGS} ADD COLUMN IF NOT EXISTS chroma_url TEXT`);
+        await pool.query(`ALTER TABLE ${tables.AI_SETTINGS} ADD COLUMN IF NOT EXISTS chroma_collection_name TEXT`);
+        await pool.query(`ALTER TABLE ${tables.AI_SETTINGS} ADD COLUMN IF NOT EXISTS chroma_persist_directory TEXT`);
+        await pool.query(`ALTER TABLE ${tables.AI_SETTINGS} ADD COLUMN IF NOT EXISTS llm_endpoint TEXT`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${process.env.TABLE_PREFIX || 'dqatb_'}form_voice_guidelines (
+                id SERIAL PRIMARY KEY,
+                business_id INTEGER,
+                form_id INTEGER NOT NULL,
+                is_enabled BOOLEAN DEFAULT FALSE,
+                ai_guide_text TEXT,
+                interviewer_guide_text TEXT,
+                extraction_prompt_override TEXT,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE (business_id, form_id)
+            )
+        `);
         // Add show_in_menu flag for datasets so datasets can be shown in sidebar
         await pool.query(`ALTER TABLE ${tables.DATASETS} ADD COLUMN IF NOT EXISTS show_in_menu BOOLEAN DEFAULT FALSE`);
         // Create permissions and settings tables
@@ -4741,6 +4881,32 @@ app.delete('/api/admin/activities/:id/powerbi', requireAdmin, async (req, res) =
     } catch (e) {
         console.error('Failed to clear activity powerbi', e);
         res.status(500).json({ error: 'Failed to clear activity powerbi' });
+    }
+});
+
+// Admin: persist interactive dashboard configuration per activity
+app.put('/api/admin/activities/:id/dashboard-config', requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+        const { dashboard_stats_config, dashboard_charts_config } = req.body || {};
+
+        // Ensure columns exist (safe idempotent migration)
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS dashboard_stats_config JSONB`); } catch (e) { /* ignore */ }
+        try { await pool.query(`ALTER TABLE ${tables.ACTIVITIES} ADD COLUMN IF NOT EXISTS dashboard_charts_config JSONB`); } catch (e) { /* ignore */ }
+
+        const u = await pool.query(
+            `UPDATE ${tables.ACTIVITIES}
+             SET dashboard_stats_config = $1, dashboard_charts_config = $2
+             WHERE id = $3 RETURNING *`,
+            [dashboard_stats_config || null, dashboard_charts_config || null, id]
+        );
+        if (u.rowCount === 0) return res.status(404).json({ error: 'Activity not found' });
+        res.json({ ok: true, activity: u.rows[0] });
+    } catch (e) {
+        console.error('Failed to save dashboard config', e);
+        res.status(500).json({ error: 'Failed to save dashboard config' });
     }
 });
 
@@ -9641,6 +9807,28 @@ app.delete('/api/smtp-config', async (req, res) => {
         res.status(500).json({ error: String(e) });
     }
 });
+
+// Serve the production React build behind Caddy (or directly from Express)
+if (process.env.NODE_ENV === 'production') {
+    const distRoot = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distRoot)) {
+        app.use(express.static(distRoot, {
+            etag: true,
+            maxAge: '1h',
+            setHeaders: (res, filePath) => {
+                if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+                    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+                }
+            }
+        }));
+        app.get('*', (req, res, next) => {
+            if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path.startsWith('/uploads/') || req.path.startsWith('/builds/')) {
+                return next();
+            }
+            res.sendFile(path.join(distRoot, 'index.html'));
+        });
+    }
+}
 
 // Allow skipping DB init for metadata-only development by setting SKIP_DB_ON_INIT=true
 if (process.env.SKIP_DB_ON_INIT === 'true') {

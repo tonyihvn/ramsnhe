@@ -202,14 +202,13 @@ export async function stopVannaServer() {
     // Try to kill the process gracefully
     try {
       if (vannaServerProcess) {
-        // Kill the process group (all child processes)
-        process.kill(-vannaServerProcess.pid, 'SIGTERM');
+        vannaServerProcess.kill('SIGTERM');
         
         // Set a timeout to force kill if SIGTERM doesn't work
         const killTimeout = setTimeout(() => {
           console.log('[Vanna Server] Force killing process...');
           try {
-            process.kill(-vannaServerProcess.pid, 'SIGKILL');
+            vannaServerProcess.kill('SIGKILL');
           } catch (e) {
             console.error('[Vanna Server] Failed to force kill:', e.message);
           }

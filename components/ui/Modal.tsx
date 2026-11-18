@@ -11,10 +11,13 @@ interface ModalProps {
   footer?: React.ReactNode;
   // optional size to control modal max-width: 'lg' (default), 'xl', '2xl', '3xl', 'full'
   size?: 'lg' | 'xl' | '2xl' | '3xl' | 'full';
+  keepMounted?: boolean;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'lg' }) => {
-  if (!isOpen) return null;
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'lg', keepMounted = false }) => {
+  if (!isOpen) {
+    return keepMounted ? <div className="hidden">{children}</div> : null;
+  }
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">

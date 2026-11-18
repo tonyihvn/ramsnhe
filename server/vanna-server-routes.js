@@ -19,8 +19,8 @@ export const createVannaServerRoutes = (pool) => {
     if (!req.session || !req.session.userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
-    // Check if user is admin
-    if (!req.session.role || !['admin', 'super-admin', 'super_admin'].includes(req.session.role.toLowerCase())) {
+    const role = String(req.session.role || req.user?.role || '').toLowerCase().replace(/\s+/g, '-');
+    if (role && !['admin', 'super-admin', 'super_admin'].includes(role)) {
       return res.status(403).json({ error: 'Forbidden: Admin access required' });
     }
     next();

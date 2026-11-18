@@ -1713,7 +1713,7 @@ const BuildFormPage: React.FC = () => {
         isOpen={showVoiceGuidelinesModal}
         onClose={() => setShowVoiceGuidelinesModal(false)}
         title="Voice Capture Guidelines"
-        size="large"
+        size="full"
       >
         {activity && activityId && (
           <FormVoiceGuidelinesEditor

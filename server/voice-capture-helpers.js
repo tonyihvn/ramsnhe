@@ -233,9 +233,12 @@ export function buildExtractionPrompt(
     const fieldDefinitions = formFields.map(field => ({
         id: field.id,
         name: field.name,
-        label: field.label,
+        label: field.label || field.questionText,
         type: field.type,
-        options: field.options || [],
+        options: (field.options || []).map(option => {
+            if (typeof option === 'string') return { label: option, value: option };
+            return { label: option.label ?? option.text ?? option.value, value: option.value ?? option.label ?? option.text };
+        }),
         required: field.required || false
     }));
 
@@ -247,6 +250,8 @@ FORM FIELDS TO EXTRACT:
 ${JSON.stringify(fieldDefinitions, null, 2)}
 
 ${guidelines.ai_guide_text ? `VOICE GUIDELINES:\n${guidelines.ai_guide_text}\n\n` : ''}
+
+${guidelines.extraction_prompt_override ? `ADDITIONAL RAG / EXTRACTION INSTRUCTIONS (follow these instructions unless they conflict with required field output):\n${guidelines.extraction_prompt_override}\n\n` : ''}
 
 TASK:
 1. Identify each question asked by the interviewer
@@ -267,13 +272,13 @@ TASK:
 OUTPUT FORMAT (valid JSON only):
 {
   "extracted_data": {
-    "field_id_1": value1,
-    "field_id_2": value2,
+    "field_name_1": value1,
+    "field_name_2": value2,
     ...
   },
   "confidence_scores": {
-    "field_id_1": 95,
-    "field_id_2": 87,
+    "field_name_1": 95,
+    "field_name_2": 87,
     ...
   },
   "notes": "any important observations about the conversation",

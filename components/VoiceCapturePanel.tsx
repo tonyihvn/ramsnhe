@@ -14,9 +14,13 @@ interface VoiceCapturePanelProps {
         questionText: string;
         answerType: string;
         fieldName?: string;
+        options?: Array<{ label?: string; value?: string; score?: number }>;
     }>;
     onDataExtracted: (data: Record<string, any>) => void;
     onClose: () => void;
+    onGuidelinesLoaded?: (guidelines: any) => void;
+    onRecordingStateChange?: (isRecording: boolean) => void;
+    onStopRecordingReady?: (stopRecording: (() => Promise<void>) | null) => void;
 }
 
 interface RecordingPhase {
@@ -48,7 +52,10 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     activityId,
     formFields,
     onDataExtracted,
-    onClose
+    onClose,
+    onGuidelinesLoaded,
+    onRecordingStateChange,
+    onStopRecordingReady
 }) => {
     const { state: recordingState, startRecording, stopRecording, pauseRecording, resumeRecording, resetRecording } = useVoiceRecorder();
     const { loading: apiLoading, error: apiError, createRecording, uploadAudio, transcribeAudio, extractAndMapData, getFormGuidelines } = useVoiceApi();
@@ -66,6 +73,7 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
             try {
                 const data = await getFormGuidelines(formId);
                 setGuidelines(data);
+                onGuidelinesLoaded?.(data);
                 if (!data?.is_enabled) {
                     // If guidelines are disabled, go straight to recording
                     setPhase({ phase: 'recording' });
@@ -78,6 +86,12 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
         };
         loadGuidelines();
     }, [formId, getFormGuidelines]);
+
+    useEffect(() => {
+        if (recordingState.isRecording) {
+            onRecordingStateChange?.(true);
+        }
+    }, [recordingState.isRecording, onRecordingStateChange]);
 
     const handleStartRecording = async () => {
         try {
@@ -114,11 +128,23 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
 
             // Extract and map data
             setPhase({ phase: 'extracting', data: { status: 'Extracting form data...' } });
-            const extractedFormData = await extractAndMapData(recordingId, formId);
+            const extractionFields = formFields.map(field => ({
+                id: field.id,
+                name: field.fieldName || field.id,
+                label: field.questionText,
+                type: field.answerType,
+                options: (field.options || []).map(option => ({
+                    label: option.label,
+                    value: option.value
+                })),
+                required: false
+            }));
+            const extractedFormData = await extractAndMapData(recordingId, formId, extractionFields);
 
             setExtractedData(extractedFormData);
             setEditedData(extractedFormData.extracted_data);
             setPhase({ phase: 'review', data: extractedFormData });
+            onRecordingStateChange?.(false);
 
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Failed to process recording';
@@ -127,9 +153,23 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
         }
     };
 
+    useEffect(() => {
+        onStopRecordingReady?.(handleStopRecording);
+        return () => onStopRecordingReady?.(null as any);
+    }, [onStopRecordingReady]);
+
     const handleApplyData = () => {
-        // Pass edited data back to form
-        onDataExtracted(editedData);
+        // Map both field_name and question ID keys back to form question IDs
+        const mappedData: Record<string, any> = {};
+        formFields.forEach(field => {
+            const fieldName = field.fieldName || '';
+            if (Object.prototype.hasOwnProperty.call(editedData, field.id)) {
+                mappedData[field.id] = editedData[field.id];
+            } else if (fieldName && Object.prototype.hasOwnProperty.call(editedData, fieldName)) {
+                mappedData[field.id] = editedData[fieldName];
+            }
+        });
+        onDataExtracted(mappedData);
         // Close the panel
         onClose();
     };

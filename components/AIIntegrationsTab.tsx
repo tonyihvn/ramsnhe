@@ -49,6 +49,9 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
     vectordbPort: 8000,
     vectordbApiKey: '',
     vectordbNamespace: 'default',
+    chromaUrl: 'http://localhost:8000',
+    chromaCollectionName: 'ramsnhe',
+    chromaPersistDirectory: './chroma',
     
     // Embedding Model Settings
     embeddingModel: 'openai',
@@ -63,6 +66,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
     llmTemperature: 0.7,
     llmMaxTokens: 2000,
     llmApiKey: '',
+    llmEndpoint: 'http://127.0.0.1:11434',
     
     // AI Assistant Settings
     enableAIAssistant: true,
@@ -136,12 +140,31 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
       } else if (type === 'lancedb') {
         endpoint = '/api/lancedb/test-connection';
         payload = { ...payload, lancedbUrl: settings.lancedbUrl, lancedbDatabase: settings.lancedbDatabase };
+      } else if (type === 'vectordb') {
+        endpoint = '/api/vectordb/test-connection';
+        payload = {
+          ...payload,
+          provider: settings.vectordbProvider,
+          host: settings.vectordbHost,
+          port: settings.vectordbPort,
+          apiKey: settings.vectordbApiKey,
+          namespace: settings.vectordbNamespace,
+          chromaUrl: settings.chromaUrl,
+          chromaCollectionName: settings.chromaCollectionName,
+          chromaPersistDirectory: settings.chromaPersistDirectory
+        };
       } else if (type === 'embedding') {
         endpoint = '/api/embedding/test-connection';
         payload = { ...payload, embeddingModel: settings.embeddingModel, embeddingApiKey: settings.embeddingApiKey };
       } else if (type === 'llm') {
         endpoint = '/api/llm/test-connection';
-        payload = { ...payload, llmProvider: settings.llmProvider, llmApiKey: settings.llmApiKey };
+        payload = {
+          ...payload,
+          llmProvider: settings.llmProvider,
+          llmApiKey: settings.llmApiKey,
+          llmModel: settings.llmModel,
+          llmEndpoint: settings.llmEndpoint
+        };
       } else if (type === 'vercel-ai') {
         endpoint = '/api/vercel-ai/test-connection';
         payload = { ...payload, vercelAIProvider: settings.vercelAIProvider, vercelAIApiKey: settings.vercelAIApiKey, vercelAIModel: settings.vercelAIModel };
@@ -196,9 +219,11 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
 
   const checkVannaServerStatus = async () => {
     try {
-      const res = await fetch(`http://localhost:8888/health`);
+      const res = await fetch('/api/vanna-server/status', { credentials: 'include' });
       if (res.ok) {
-        setVannaServerStatus('running');
+        const data = await res.json();
+        const status = data?.data?.status || data?.status;
+        setVannaServerStatus(status === 'running' ? 'running' : status === 'starting' ? 'starting' : status === 'error' ? 'error' : 'stopped');
       } else {
         setVannaServerStatus('stopped');
       }
@@ -210,7 +235,10 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
   const detectOllamaModels = async () => {
     try {
       setDetectingOllama(true);
-      const res = await fetch('http://127.0.0.1:11434/api/tags');
+      let res = await fetch('/api/admin/detect-ollama', { credentials: 'include' });
+      if (res.status === 401 || res.status === 403) {
+        res = await fetch('/api/detect-ollama', { credentials: 'include' });
+      }
       if (res.ok) {
         const data = await res.json();
         if (data.models && Array.isArray(data.models)) {
@@ -699,7 +727,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
           )}
 
           {/* LanceDB Tab */}
-          {activeTab === 5 && (
+          {activeTab === 3 && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">LanceDB URL</label>
@@ -748,7 +776,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
           )}
 
           {/* VectorDB Settings Tab */}
-          {activeTab === 6 && (
+          {activeTab === 4 && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">VectorDB Provider</label>
@@ -761,28 +789,66 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
                   <option value="pinecone">Pinecone</option>
                   <option value="weaviate">Weaviate</option>
                   <option value="milvus">Milvus</option>
+                  <option value="chroma">Chroma DB</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Host</label>
-                <input
-                  type="text"
-                  value={settings.vectordbHost}
-                  onChange={e => handleChange('vectordbHost', e.target.value)}
-                  placeholder="localhost"
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Port</label>
-                <input
-                  type="number"
-                  value={settings.vectordbPort}
-                  onChange={e => handleChange('vectordbPort', parseInt(e.target.value))}
-                  placeholder="8000"
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
+              {settings.vectordbProvider === 'chroma' ? (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Chroma Server URL</label>
+                    <input
+                      type="text"
+                      value={settings.chromaUrl}
+                      onChange={e => handleChange('chromaUrl', e.target.value)}
+                      placeholder="http://localhost:8000"
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Collection Name</label>
+                    <input
+                      type="text"
+                      value={settings.chromaCollectionName}
+                      onChange={e => handleChange('chromaCollectionName', e.target.value)}
+                      placeholder="ramsnhe"
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Persist Directory</label>
+                    <input
+                      type="text"
+                      value={settings.chromaPersistDirectory}
+                      onChange={e => handleChange('chromaPersistDirectory', e.target.value)}
+                      placeholder="./chroma"
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Host</label>
+                    <input
+                      type="text"
+                      value={settings.vectordbHost}
+                      onChange={e => handleChange('vectordbHost', e.target.value)}
+                      placeholder="localhost"
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Port</label>
+                    <input
+                      type="number"
+                      value={settings.vectordbPort}
+                      onChange={e => handleChange('vectordbPort', parseInt(e.target.value))}
+                      placeholder="8000"
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+                </>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">API Key (if required)</label>
                 <input
@@ -803,6 +869,9 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
                   className="w-full px-3 py-2 border rounded-lg"
                 />
               </div>
+              <Button onClick={() => handleTest('vectordb')} disabled={testing === 'vectordb'} variant="secondary">
+                {testing === 'vectordb' ? 'Testing...' : `Test ${settings.vectordbProvider === 'chroma' ? 'Chroma DB' : 'VectorDB'} Connection`}
+              </Button>
             </div>
           )}
 

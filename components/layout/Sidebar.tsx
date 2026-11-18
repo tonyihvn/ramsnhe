@@ -15,7 +15,9 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
   const { settings } = useTheme();
   const { activities, currentUser } = useData();
   const [activitiesOpen, setActivitiesOpen] = React.useState(false);
+  const [mobileActivitiesOpen, setMobileActivitiesOpen] = React.useState(true);
   const [datasetsOpen, setDatasetsOpen] = React.useState(false);
+  const [mobileDatasetsOpen, setMobileDatasetsOpen] = React.useState(true);
   const [datasetsList, setDatasetsList] = useState<any[] | null>(null);
   const [pagePerms, setPagePerms] = useState<any[] | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
@@ -141,11 +143,79 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
                   const userRole = String(currentUser?.role || '').toLowerCase().trim();
                   const isSuperAdmin = userRole === 'super-admin' || userRole === 'super_admin';
                   if (item.superAdminOnly && !isSuperAdmin) return false;
+                  if (item.key === 'dashboard') return true;
                   return hasPermissionFlag('can_view', item.page_key || item.href, undefined, item.visibleToAll);
                 })
                 .map((item) => {
                 const isActive = location.pathname.startsWith(item.href);
                 const label = (item.key === 'programs' ? ((settings as any).programsLabel || item.defaultName) : (item.key === 'activities' ? ((settings as any).activitiesLabel || item.defaultName) : (item.defaultName)));
+
+                if (item.key === 'activities') {
+                  const allActivities = Array.isArray(activities) ? activities : [];
+                  return (
+                    <div key={item.key}>
+                      <button
+                        onClick={() => setMobileActivitiesOpen(o => !o)}
+                        className={`w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-primary-50 text-primary-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+                      >
+                        <item.icon className={`flex-shrink-0 h-6 w-6 ${isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'}`} aria-hidden="true" />
+                        <span className="ml-3 flex-1 text-left">{label}</span>
+                        <ChevronDownIcon className={`h-5 w-5 transition-transform ${mobileActivitiesOpen ? 'transform rotate-180' : ''} text-gray-400`} />
+                      </button>
+                      {mobileActivitiesOpen && (
+                        <div className="pl-8 mt-1 space-y-1">
+                          {allActivities.length === 0 && <div className="text-xs text-gray-400">No activities</div>}
+                          {allActivities.map(a => (
+                            <Link
+                              key={a.id}
+                              to={`/activities/dashboard/${a.id}`}
+                              onClick={onClose}
+                              className="flex items-center text-xs text-gray-600 hover:bg-primary-50 hover:text-primary-700 px-2 py-1 rounded-md"
+                            >
+                              <ChevronRightIcon className="flex-shrink-0 h-4 w-4 text-gray-400 mr-2" />
+                              <span className="truncate">{a.title || a.name || `Activity ${a.id}`}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (item.key === 'datasets') {
+                  const labelDatasets = (settings as any).datasetsLabel || item.defaultName || 'Datasets';
+                  return (
+                    <div key={item.key}>
+                      <button
+                        onClick={() => setMobileDatasetsOpen(o => !o)}
+                        className={`w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-primary-50 text-primary-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+                      >
+                        <item.icon className={`flex-shrink-0 h-6 w-6 ${isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'}`} aria-hidden="true" />
+                        <span className="ml-3 flex-1 text-left">{labelDatasets}</span>
+                        <ChevronDownIcon className={`h-5 w-5 transition-transform ${mobileDatasetsOpen ? 'transform rotate-180' : ''} text-gray-400`} />
+                      </button>
+                      {mobileDatasetsOpen && (
+                        <div className="pl-8 mt-1 space-y-1">
+                          {!datasetsList || datasetsList.length === 0 ? (
+                            <div className="text-xs text-gray-400">No datasets</div>
+                          ) : (
+                            datasetsList.map(ds => (
+                              <Link
+                                key={ds.id}
+                                to={`/datasets/${ds.id}`}
+                                onClick={onClose}
+                                className="flex items-center text-xs text-gray-600 hover:bg-primary-50 hover:text-primary-700 px-2 py-1 rounded-md"
+                              >
+                                <ChevronRightIcon className="flex-shrink-0 h-4 w-4 text-gray-400 mr-2" />
+                                <span className="truncate">{ds.name || `Dataset ${ds.id}`}</span>
+                              </Link>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
                 
                 // Handle opening in new window for super admin items
                 if ((item as any).openInNewWindow) {

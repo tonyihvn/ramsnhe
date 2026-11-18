@@ -24,7 +24,7 @@ export interface UseVoiceApiReturn {
     createRecording: (formId: number, activityId: number) => Promise<number>;
     uploadAudio: (recordingId: number, audioBlob: Blob) => Promise<void>;
     transcribeAudio: (recordingId: number) => Promise<string>;
-    extractAndMapData: (recordingId: number, formId: number) => Promise<ExtractedData>;
+    extractAndMapData: (recordingId: number, formId: number, formFields?: any[]) => Promise<ExtractedData>;
     getRecording: (recordingId: number) => Promise<RecordingMetadata>;
     deleteRecording: (recordingId: number) => Promise<void>;
     listRecordings: (formId?: number, activityId?: number) => Promise<RecordingMetadata[]>;
@@ -99,13 +99,14 @@ export const useVoiceApi = (): UseVoiceApiReturn => {
         }
     }, []);
 
-    const extractAndMapData = useCallback(async (recordingId: number, formId: number): Promise<ExtractedData> => {
+    const extractAndMapData = useCallback(async (recordingId: number, formId: number, formFields?: any[]): Promise<ExtractedData> => {
         setLoading(true);
         resetError();
         try {
             const response = await axios.post('/api/voice-capture/extract-and-map', {
                 recording_id: recordingId,
-                form_id: formId
+                form_id: formId,
+                form_fields: formFields
             });
             return response.data.extracted_data;
         } catch (err) {

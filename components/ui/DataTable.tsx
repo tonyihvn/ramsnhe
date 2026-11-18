@@ -24,9 +24,17 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
   const [page, setPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState<number>(pageSize);
   const [draggedCol, setDraggedCol] = useState<string | null>(null);
+  const [resizingCol, setResizingCol] = useState<string | null>(null);
 
   // compute a stable storage key when not provided
   const computedKey = persistKey || `datatable_visible_${columns.map(c => c.key).join('__')}`;
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(`${computedKey}_widths`);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    return {};
+  });
   const [visibleMap, setVisibleMap] = useState<Record<string, boolean>>(() => {
     try {
       const raw = localStorage.getItem(computedKey);
@@ -62,6 +70,40 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
     setColumnOrder(newOrder);
     try { localStorage.setItem(orderKey, JSON.stringify(newOrder)); } catch (e) { }
     setDraggedCol(null);
+  };
+
+  const widthStorageKey = `${computedKey}_widths`;
+
+  const startResize = (event: React.MouseEvent<HTMLDivElement>, key: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setResizingCol(key);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const startX = event.clientX;
+    const header = event.currentTarget.closest('th') as HTMLTableCellElement | null;
+    const startWidth = header?.offsetWidth || 150;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const nextWidth = Math.max(60, Math.min(800, startWidth + moveEvent.clientX - startX));
+      setColumnWidths(prev => {
+        const next = { ...prev, [key]: nextWidth };
+        try { localStorage.setItem(widthStorageKey, JSON.stringify(next)); } catch (e) { /* ignore */ }
+        return next;
+      });
+    };
+
+    const handleMouseUp = () => {
+      setResizingCol(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   useEffect(() => {
@@ -148,13 +190,33 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
+        <table className="min-w-full divide-y divide-gray-200 table-fixed">
           <thead className="bg-gray-50">
             <tr>
               {visibleColumns.map(col => (
-                <th key={col.key} draggable onDragStart={() => handleDragStart(col.key)} onDragOver={handleDragOver} onDrop={() => handleDrop(col.key)} style={{ width: col.width, cursor: 'move', opacity: draggedCol === col.key ? 0.5 : 1 }} className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}>
-                  <div className="flex flex-col">
-                    <span className="truncate">{col.label}</span>
+                <th
+                  key={col.key}
+                  data-column-key={col.key}
+                  draggable
+                  onDragStart={() => handleDragStart(col.key)}
+                  onDragOver={handleDragOver}
+                  onDrop={() => handleDrop(col.key)}
+                  style={{
+                    width: columnWidths[col.key] ? `${columnWidths[col.key]}px` : col.width,
+                    minWidth: columnWidths[col.key] ? `${columnWidths[col.key]}px` : undefined,
+                    maxWidth: columnWidths[col.key] ? `${columnWidths[col.key]}px` : undefined,
+                    cursor: resizingCol === col.key ? 'col-resize' : 'move',
+                    opacity: draggedCol === col.key ? 0.5 : 1,
+                    position: 'relative',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                    verticalAlign: 'top',
+                  }}
+                  className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}
+                >
+                  <div className="flex flex-col pr-2">
+                    <span className="whitespace-normal break-words leading-4" style={{ overflowWrap: 'anywhere' }}>{col.label}</span>
                     <input
                       placeholder="Search"
                       value={filters[col.key] || ''}
@@ -162,6 +224,13 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
                       className="mt-1 block w-full border-gray-200 rounded text-xs px-2 py-1"
                     />
                   </div>
+                  <div
+                    draggable={false}
+                    onDragStart={(event) => event.preventDefault()}
+                    onMouseDown={(event) => startResize(event, col.key)}
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-gray-300 hover:bg-blue-500"
+                    title="Drag to resize column"
+                  />
                 </th>
               ))}
             </tr>
@@ -170,7 +239,21 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
             {paged.map((row, rIdx) => (
               <tr key={rIdx} data-row-index={rIdx}>
                 {visibleColumns.map(col => (
-                  <td key={col.key} className="px-2 py-2 align-top text-sm">
+                  <td
+                    key={col.key}
+                    style={columnWidths[col.key] ? {
+                      width: `${columnWidths[col.key]}px`,
+                      minWidth: `${columnWidths[col.key]}px`,
+                      maxWidth: `${columnWidths[col.key]}px`,
+                      overflow: 'hidden',
+                      textOverflow: 'clip',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      verticalAlign: 'top',
+                    } : undefined}
+                    className="px-2 py-2 align-top text-sm whitespace-normal break-words"
+                  >
                     {col.editable && onCellEdit ? (
                       <input
                         value={row[col.key] ?? ''}

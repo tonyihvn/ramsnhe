@@ -9,7 +9,17 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   disabled?: boolean;
 }
 
-const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', size = 'md', leftIcon, disabled = false, ...props }) => {
+const Button: React.FC<ButtonProps> = ({
+  children,
+  variant = 'primary',
+  size = 'md',
+  leftIcon,
+  disabled = false,
+  className,
+  style,
+  type = 'button',
+  ...props
+}) => {
   const baseClasses = 'inline-flex items-center border border-transparent font-medium rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all duration-200 ease-in-out';
 
   const variantClasses = {
@@ -51,10 +61,10 @@ const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', size = '
 
   return (
     <button
-      type="button"
+      type={type}
       disabled={disabled}
-      className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${props.className || ''}`}
-      style={variantStyles[variant]}
+      className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${className || ''}`.trim()}
+      style={{ ...variantStyles[variant], ...style }}
       {...props}
     >
       {leftIcon && <span className={`mr-2 -ml-1 ${iconSizeClasses[size]}`}>{leftIcon}</span>}

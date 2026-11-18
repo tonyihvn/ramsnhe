@@ -23,6 +23,9 @@ export const startColumnResize = (
   onResize: (columnKey: string, newWidth: number) => void
 ) => {
   e.preventDefault();
+  e.stopPropagation();
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
   
   const startX = e.clientX;
   const header = e.currentTarget.closest('th') as HTMLTableCellElement;
@@ -37,6 +40,8 @@ export const startColumnResize = (
   };
 
   const handleMouseUp = () => {
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
   };

@@ -14,7 +14,7 @@ const ActivitySubmittedAnswersPage: React.FC = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [activityTitle, setActivityTitle] = useState<string | null>(null);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
-  const [transpose, setTranspose] = useState<boolean>(false);
+  const [transpose, setTranspose] = useState<boolean>(true);
 
   useEffect(() => {
     (async () => {

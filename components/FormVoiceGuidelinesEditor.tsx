@@ -57,91 +57,93 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
      * Auto-generate AI Extraction Guide from form definition
      */
     const generateAIGuide = () => {
-        if (!formDefinition || !formDefinition.questions) {
+        const questions: any[] = [];
+        for (const page of formDefinition?.pages || []) {
+            for (const section of page.sections || []) {
+                for (const question of section.questions || []) {
+                    questions.push(question);
+                }
+            }
+        }
+        if (!questions.length) {
             setLocalError('No form questions found. Please add questions to the form first.');
-            return;
+            return '';
         }
 
         let guide = 'Extract the following fields from the transcribed interview conversation:\n\n';
-        const fieldDescriptions: string[] = [];
+        questions.forEach((question: any) => {
+            const fieldName = question.fieldName || question.field_name || question.id;
+            const label = question.questionText || question.question_text || question.label || question.id;
+            const answerType = String(question.answerType || question.answer_type || question.type || 'textbox').toLowerCase();
+            const options = question.options || question.answers || [];
+            let typeDescription = 'text';
+            let expectedValue = 'Natural text response';
 
-        formDefinition.questions.forEach((section: any) => {
-            if (section.questions) {
-                section.questions.forEach((question: any) => {
-                    const fieldName = question.fieldName || `field_${question.id}`;
-                    const label = question.questionText || question.label || 'Unknown field';
-                    const elementType = question.elementType || question.type || 'text';
-                    
-                    let fieldDesc = `- ${fieldName}`;
-                    let typeDesc = '';
-                    let valueDesc = '';
-
-                    // Add type information
-                    switch (elementType) {
-                        case 'text':
-                        case 'textarea':
-                            typeDesc = '(string, required)';
-                            valueDesc = `natural text response from interview`;
-                            break;
-                        case 'number':
-                            typeDesc = '(number)';
-                            valueDesc = `numeric value (e.g., "42 years old" → 42)`;
-                            break;
-                        case 'email':
-                            typeDesc = '(string, email format)';
-                            valueDesc = `valid email address`;
-                            break;
-                        case 'phone':
-                            typeDesc = '(string, phone format)';
-                            valueDesc = `phone number (extract digits and format)`;
-                            break;
-                        case 'date':
-                            typeDesc = '(date, YYYY-MM-DD format)';
-                            valueDesc = `date (convert verbal descriptions like "last Monday" to YYYY-MM-DD)`;
-                            break;
-                        case 'select':
-                        case 'dropdown':
-                            typeDesc = '(string, select from options)';
-                            const options = question.options || question.answers || [];
-                            if (Array.isArray(options) && options.length > 0) {
-                                valueDesc = `one of: ${options.map((o: any) => `"${o.text || o}"`).join(', ')}`;
-                            } else {
-                                valueDesc = `one of predefined options`;
-                            }
-                            break;
-                        case 'checkbox':
-                            typeDesc = '(boolean)';
-                            valueDesc = `true/false based on user confirmation`;
-                            break;
-                        default:
-                            typeDesc = '(string)';
-                            valueDesc = `text response`;
+            switch (answerType) {
+                case 'number':
+                case 'rating':
+                    typeDescription = 'number';
+                    expectedValue = 'Numeric value only';
+                    break;
+                case 'date':
+                    typeDescription = 'date';
+                    expectedValue = 'YYYY-MM-DD';
+                    break;
+                case 'time':
+                    typeDescription = 'time';
+                    expectedValue = 'HH:MM in 24-hour format';
+                    break;
+                case 'checkbox':
+                    typeDescription = 'boolean';
+                    expectedValue = 'true or false';
+                    break;
+                case 'dropdown':
+                case 'radio':
+                    typeDescription = 'dropdown/radio text';
+                    if (Array.isArray(options) && options.length > 0) {
+                        expectedValue = `Match exactly one of these option values: ${options.map((option: any) =>
+                            typeof option === 'string' ? option : (option.value ?? option.label ?? '')
+                        ).filter(Boolean).join(', ')}`;
+                    } else {
+                        expectedValue = 'Use the exact response value';
                     }
-
-                    fieldDesc += `: ${label} (${typeDesc})`;
-                    fieldDescriptions.push(fieldDesc);
-                    guide += `${fieldDesc}\n`;
-                    
-                    if (valueDesc) {
-                        guide += `  Expected: ${valueDesc}\n`;
-                    }
-                    guide += `\n`;
-                });
+                    break;
+                case 'location':
+                    typeDescription = 'location';
+                    expectedValue = 'Location name or coordinates';
+                    break;
+                case 'file':
+                    typeDescription = 'file reference';
+                    expectedValue = 'Do not infer a file value unless the conversation explicitly identifies a file';
+                    break;
+                case 'computed':
+                case 'paragraph':
+                    typeDescription = 'non-input';
+                    expectedValue = 'Do not extract from conversation';
+                    break;
+                default:
+                    typeDescription = 'text';
+                    expectedValue = 'Natural text response';
             }
+
+            guide += `- field_name: ${fieldName}\n`;
+            guide += `  question_text: ${label}\n`;
+            guide += `  answer_value_type: ${typeDescription}\n`;
+            guide += `  expected_value: ${expectedValue}\n`;
+            if (answerType === 'dropdown' || answerType === 'radio') {
+                guide += `  answer_options: ${options.length ? JSON.stringify(options) : '[]'}\n`;
+            }
+            guide += `  required: ${question.required ? 'yes' : 'no'}\n\n`;
         });
 
-        guide += `\nIMPORTANT EXTRACTION RULES:\n`;
-        guide += `1. Map each interviewer question and responder answer to the corresponding form field above\n`;
-        guide += `2. For select/dropdown fields, only use values from the predefined options\n`;
-        guide += `3. For dates, always convert to YYYY-MM-DD format (e.g., "3/15/2024" → "2024-03-15")\n`;
-        guide += `4. For numbers, extract numeric values even if embedded in text\n`;
-        guide += `5. If a field cannot be confidently extracted, mark confidence as 0\n`;
-        guide += `6. Return confidence scores (0-1) for each extracted field\n`;
-        guide += `7. Preserve original spelling and capitalization for names and text fields\n`;
-        guide += `8. For multi-part answers, try to extract all relevant information\n`;
-        guide += `9. If the interviewer corrects a previous answer, use the final answer\n`;
-        guide += `10. Handle acronyms and abbreviations based on context\n`;
-
+        guide += `EXTRACTION RULES:\n`;
+        guide += `- Return extracted_data using field_name as the key, not the question text.\n`;
+        guide += `- Match dropdown/radio values exactly to the supplied answer options; never invent an option.\n`;
+        guide += `- Convert numbers to numeric values, dates to YYYY-MM-DD, and times to HH:MM.\n`;
+        guide += `- If a value is not discussed or cannot be confidently inferred, omit the field or return an empty string.\n`;
+        guide += `- Preserve the final answer if the interviewer or respondent corrects an earlier answer.\n`;
+        guide += `- Confidence scores must be numbers from 0 to 100.\n`;
+        guide += `- Ignore greetings and unrelated conversation unless they answer a form question.\n`;
         return guide;
     };
 
@@ -166,7 +168,26 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
 
                 const data = await getFormGuidelines(id);
                 if (data) {
-                    setGuidelines(data);
+                    const loaded = {
+                        id: data.id,
+                        is_enabled: data.is_enabled ?? true,
+                        ai_guide_text: data.ai_guide_text || '',
+                        interviewer_guide_text: data.interviewer_guide_text || '',
+                        extraction_prompt_override: data.extraction_prompt_override || ''
+                    };
+                    if (!loaded.ai_guide_text) {
+                        const questions: any[] = [];
+                        for (const page of formDefinition?.pages || []) {
+                            for (const section of page.sections || []) {
+                                for (const question of section.questions || []) questions.push(question);
+                            }
+                        }
+                        if (questions.length > 0) {
+                            const generated = generateAIGuide();
+                            if (generated) loaded.ai_guide_text = generated;
+                        }
+                    }
+                    setGuidelines(loaded);
                 } else {
                     // Initialize with empty guidelines
                     setGuidelines({
@@ -209,7 +230,7 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
     };
 
     return (
-        <Card title="🎤 Voice Capture Guidelines" className="max-w-3xl">
+        <Card className="w-full max-w-none">
             <div className="space-y-6">
                 {/* Error Display */}
                 {(error || localError) && (
@@ -259,7 +280,7 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
                             📋 Interviewer's Guide
                         </label>
                         <p className="text-xs text-gray-600 mb-3">
-                            This guide will be displayed to the interviewer BEFORE recording starts. 
+                            This guide will be displayed to the interviewer BEFORE recording starts.
                             It should contain instructions on how to ask questions and what to listen for.
                         </p>
                     </div>
@@ -285,7 +306,7 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
                             <label className="block text-sm font-semibold text-gray-900 mb-1">
                                 🤖 AI Extraction Guide
                             </label>
-                            {formDefinition && formDefinition.questions && (
+                            {formDefinition?.pages?.length > 0 && (
                                 <button
                                     onClick={() => setShowGeneratedPreview(!showGeneratedPreview)}
                                     className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-primary-50"
@@ -302,7 +323,7 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
                     </div>
 
                     {/* Auto-Generated Preview */}
-                    {showGeneratedPreview && formDefinition && formDefinition.questions && (
+                    {showGeneratedPreview && formDefinition?.pages?.length > 0 && (
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-3">
                             <div className="flex items-center justify-between mb-3">
                                 <p className="text-sm font-semibold text-blue-900">✨ Auto-Generated Guide Preview</p>
@@ -341,11 +362,11 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
                 <div className="space-y-2">
                     <div>
                         <label className="block text-sm font-semibold text-gray-900 mb-1">
-                            ⚙️ Custom Extraction Prompt (Optional)
+                            ⚙️ Additional AI RAG Instructions (Optional)
                         </label>
                         <p className="text-xs text-gray-600 mb-3">
-                            Advanced: Override the default extraction prompt with a custom one. 
-                            Leave empty to use the default system prompt.
+                            Enter domain instructions, abbreviations, response rules, or RAG context.
+                            These instructions are appended to the extraction prompt and saved with the form.
                         </p>
                     </div>
                     <textarea
@@ -354,7 +375,7 @@ export const FormVoiceGuidelinesEditor: React.FC<FormVoiceGuidelinesEditorProps>
                             ...prev,
                             extraction_prompt_override: e.target.value
                         }))}
-                        placeholder="Advanced prompt override (optional)"
+                        placeholder="Example: Map 'NR', 'negative', and 'non-reactive' to 'Negative'."
                         rows={4}
                         className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono text-xs"
                     />

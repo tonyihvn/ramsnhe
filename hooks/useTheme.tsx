@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { useData } from './useData';
 
 type ThemeSettings = {
     primaryColor: string;
@@ -72,6 +73,7 @@ const ThemeContext = createContext<{
 } | undefined>(undefined);
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
+    const { currentUser } = useData();
     // Initialize from localStorage (backup cache) for instant load
     const [settings, setSettingsState] = useState<ThemeSettings>(() => {
         try {
@@ -180,11 +182,10 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    // Load theme settings from database (for all users - ensures consistency across systems)
-    // Overwrites localStorage cache with API data when available
+    // Load theme settings from database and reload after login/business context changes
     useEffect(() => {
         loadSettings();
-    }, []);
+    }, [currentUser?.id, currentUser?.business_id]);
 
     // Debounced autosave: persist theme settings to database (admin only)
     // All users load settings from database, but only admins can save

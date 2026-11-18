@@ -26,7 +26,9 @@ const AIAssistantDashboard: React.FC<AIAssistantDashboardProps> = ({ activityId,
 
   const loadSettings = async () => {
     try {
-      const res = await fetch(`/api/ai-settings/${currentUser?.businessId}`);
+      const businessId = currentUser?.businessId || currentUser?.business_id;
+      if (!businessId) return;
+      const res = await fetch(`/api/ai-settings/${businessId}`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setSettings(data);

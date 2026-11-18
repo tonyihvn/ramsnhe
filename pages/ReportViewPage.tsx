@@ -537,6 +537,40 @@ const ReportViewPage: React.FC = () => {
   const userLabel = report.reported_by_name || report.reportedByName || report.reported_by || report.reportedBy || report.user_name || report.userName || (report.reported_by ? `User ${report.reported_by}` : null);
   const subjectLabel = activityResponseType === 'user' ? (userLabel || facilityName || facilityLabelFallback) : (facilityName || facilityLabelFallback);
 
+  const normalizeAnswerValue = (value: any): string => {
+    if (value === null || typeof value === 'undefined') return '';
+    if (typeof value === 'object') {
+      if (!Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, 'value')) {
+        return String(value.value ?? '');
+      }
+      if (Array.isArray(value)) {
+        return value.map(item => normalizeAnswerValue(item)).filter(Boolean).join(', ');
+      }
+      try {
+        return JSON.stringify(value);
+      } catch (e) {
+        return String(value);
+      }
+    }
+    return String(value).trim();
+  };
+
+  const scoreStatsMap: Record<string, { score: number; total: number; count: number; answers: Set<string> }> = {};
+  answers.forEach((answer: any) => {
+    if (answer.score === null || typeof answer.score === 'undefined' || String(answer.score).trim() === '') return;
+    const numericScore = Number(answer.score);
+    if (!Number.isFinite(numericScore)) return;
+    const key = String(numericScore);
+    if (!scoreStatsMap[key]) {
+      scoreStatsMap[key] = { score: numericScore, total: 0, count: 0, answers: new Set<string>() };
+    }
+    scoreStatsMap[key].total += numericScore;
+    scoreStatsMap[key].count += 1;
+    const answerValue = normalizeAnswerValue(answer.answer_value);
+    if (answerValue) scoreStatsMap[key].answers.add(answerValue);
+  });
+  const scoreStats = Object.values(scoreStatsMap).sort((a, b) => a.score - b.score);
+
   const handlePrint = () => window.print();
 
   const handleGeneratePDF = async () => {
@@ -1085,6 +1119,35 @@ const ReportViewPage: React.FC = () => {
               </div>
             </div>
           </>
+        )}
+      </Card>
+
+      <Card>
+        <h2 className="text-lg font-semibold mb-2">Score Statistics</h2>
+        <p className="text-sm text-gray-500">Summed totals for distinct scores assigned to submitted answers.</p>
+        {scoreStats.length === 0 ? (
+          <div className="mt-4 text-sm text-gray-500">No scored answers available for this report.</div>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {scoreStats.map(item => {
+              const answerLabels = Array.from(item.answers);
+              const formattedTotal = Number.isInteger(item.total) ? String(item.total) : String(Number(item.total.toFixed(2)));
+              return (
+                <div key={item.score} className="rounded-lg border border-blue-200 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow-sm">
+                  <div className="text-xs font-medium uppercase text-blue-700">Score {item.score}</div>
+                  {answerLabels.length > 0 && (
+                    <div className="mt-1 line-clamp-2 text-xs text-gray-600">
+                      {answerLabels.join(', ')}
+                    </div>
+                  )}
+                  <div className="mt-3 text-2xl font-bold text-blue-600">{formattedTotal}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    Summed from {item.count} answer{item.count === 1 ? '' : 's'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </Card>
 
@@ -2401,7 +2464,7 @@ const ReportViewPage: React.FC = () => {
 
 
                             <div className="overflow-x-auto">
-                              <table className="w-full text-sm border-collapse">
+                              <table className="w-full text-sm border-collapse table-fixed">
                                 <thead>
                                   <tr className="bg-gray-100">
                                     <th className="border border-gray-300 px-2 py-2 text-left font-medium text-gray-700 w-12">
@@ -2410,7 +2473,7 @@ const ReportViewPage: React.FC = () => {
                                     {editingDocData.length > 0 && (docColumnOrder[editingDocId || ''] || Object.keys(editingDocData[0]))
                                       .filter(key => !(deletedDocColumns[editingDocId || '']?.has(key)))
                                       .map((key, displayColIdx) => (
-                                        <th key={key} data-column-key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700 relative" style={{ width: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, minWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, overflow: 'hidden' }}>
+                                        <th key={key} data-column-key={key} className="border border-gray-300 px-3 py-2 text-left font-medium text-gray-700 relative whitespace-normal break-words" style={{ width: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, minWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, maxWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', verticalAlign: 'top' }}>
                                           <div className="absolute top-1 right-8">
                                             <button
                                               onClick={() => {
@@ -2451,7 +2514,7 @@ const ReportViewPage: React.FC = () => {
                                           />
                                           <div className="flex flex-col gap-1 pr-6">
                                             <div>
-                                              <div className="font-medium">{key}</div>
+                                              <div className="font-medium whitespace-normal break-words" style={{ overflowWrap: 'anywhere' }}>{key}</div>
                                               <div className="text-xs text-gray-500">
                                                 {generateCellName(d.id, d.filename, displayColIdx, 0).split('_').slice(1).join('_')}
                                               </div>
@@ -2654,8 +2717,8 @@ const ReportViewPage: React.FC = () => {
                                             <td
                                               key={cellKey}
                                               data-column-key={key}
-                                              className="border border-gray-300 px-3 py-2 relative group"
-                                              style={{ width: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, minWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, overflow: 'hidden' }}
+                                              className="border border-gray-300 px-3 py-2 relative group whitespace-normal break-words"
+                                              style={{ width: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, minWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, maxWidth: docColumnWidths[editingDocId || '']?.[key] || INITIAL_COLUMN_WIDTH, overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'normal', verticalAlign: 'top' }}
                                               onMouseDown={(e: React.MouseEvent) => {
                                                 // onMouseDown fires BEFORE input loses focus on blur
                                                 // This ensures editingModeRef still has the correct value
@@ -3175,22 +3238,27 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
 
   return (
     <div className="overflow-x-auto">
-      <table ref={tableRef} className="min-w-full divide-y divide-gray-200">
+      <table ref={tableRef} className="min-w-full divide-y divide-gray-200 table-fixed">
         <thead className="bg-gray-50"><tr>
           <th className="px-4 py-2 text-left w-12">#</th>
           {columns.map(c => (
             <th 
               key={c} 
               data-column-key={c}
-              className="px-4 py-2 text-left relative" 
+              className="px-4 py-2 text-left relative whitespace-normal break-words" 
               style={{ 
                 width: columnWidths[c] || INITIAL_COLUMN_WIDTH,
                 minWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
-                overflow: 'hidden'
+                maxWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
+                overflow: 'hidden',
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
+                whiteSpace: 'normal',
+                verticalAlign: 'top'
               }}
             >
               <div className="flex items-center justify-between">
-                <span>{c}</span>
+                <span className="whitespace-normal break-words" style={{ overflowWrap: 'anywhere' }}>{c}</span>
                 {/* Column Resize Handle */}
                 <div
                   className="absolute top-0 right-0 w-1 h-full bg-gray-300 hover:bg-blue-500 cursor-col-resize"
@@ -3215,14 +3283,17 @@ const EditableJsonTable: React.FC<{ doc: any, search?: string, onSaved?: (doc: a
               {columns.map(c => (
                 <td 
                   key={c} 
-                  className="px-4 py-2 text-sm"
+                  className="px-4 py-2 text-sm whitespace-normal break-words"
                   style={{ 
                     width: columnWidths[c] || INITIAL_COLUMN_WIDTH,
                     minWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
                     maxWidth: columnWidths[c] || INITIAL_COLUMN_WIDTH,
                     overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
+                    textOverflow: 'clip',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                    verticalAlign: 'top'
                   }}
                 >
                   <input 

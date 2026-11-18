@@ -1,13 +1,9 @@
-version: '3.8'
-
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: dqaplus-app
-    ports:
-      - "3000:3000"
     environment:
       NODE_ENV: production
       SERVER_PORT: 3000
@@ -17,12 +13,28 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: dqappdb
       DB_PORT: 5432
-      FRONTEND_HOST: http://41.223.44.116:9090
-      FRONTEND_HOSTS: http://41.223.44.116:9090
+      FRONTEND_HOST: https://ihvn.duckdns.org
+      FRONTEND_HOSTS: https://ihvn.duckdns.org
       ALLOW_ALL_ORIGINS: "true"
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - dqaplus-network
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: dqaplus-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
     networks:
       - dqaplus-network
     restart: unless-stopped
@@ -49,6 +61,10 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local
 
 networks:

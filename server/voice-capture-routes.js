@@ -29,6 +29,24 @@ const getBusinessId = (req) => req.user?.business_id || req.body?.business_id;
 // Helper: Get pool from app locals
 const getPool = (req) => req.app.locals.pool;
 
+const ensureVoiceGuidelinesTable = async (req) => {
+    await getPool(req).query(`
+        CREATE TABLE IF NOT EXISTS ${tablePrefix}form_voice_guidelines (
+            id SERIAL PRIMARY KEY,
+            business_id INTEGER,
+            form_id INTEGER NOT NULL,
+            is_enabled BOOLEAN DEFAULT FALSE,
+            ai_guide_text TEXT,
+            interviewer_guide_text TEXT,
+            extraction_prompt_override TEXT,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE (business_id, form_id)
+        )
+    `);
+};
+
 // ============================================================================
 // SPEECH-TO-TEXT SERVICE CONFIGURATION
 // ============================================================================
@@ -214,6 +232,7 @@ router.delete('/speech-services/:id', async (req, res) => {
  */
 router.get('/form/:formId/guidelines', async (req, res) => {
     try {
+        await ensureVoiceGuidelinesTable(req);
         const { formId } = req.params;
         const businessId = getBusinessId(req);
 
@@ -250,6 +269,7 @@ router.get('/form/:formId/guidelines', async (req, res) => {
  */
 router.post('/form/:formId/guidelines', async (req, res) => {
     try {
+        await ensureVoiceGuidelinesTable(req);
         const { formId } = req.params;
         const businessId = getBusinessId(req);
         const userId = req.user?.id;
@@ -531,13 +551,41 @@ router.post('/transcribe', async (req, res) => {
 router.post('/extract-and-map', async (req, res) => {
     try {
         const businessId = getBusinessId(req);
-        const { recording_id, form_id, form_fields, ai_context_id } = req.body;
+        let { recording_id, form_id, form_fields, ai_context_id } = req.body;
 
-        if (!recording_id || !form_id || !form_fields) {
+        if (!recording_id || !form_id) {
             return res.status(400).json({
                 success: false,
-                error: 'recording_id, form_id, and form_fields required'
+                error: 'recording_id and form_id required'
             });
+        }
+
+        if (!Array.isArray(form_fields) || form_fields.length === 0) {
+            const activityResult = await getPool(req).query(
+                `SELECT form_definition FROM ${tablePrefix}activities WHERE id = $1`,
+                [form_id]
+            );
+            if (activityResult.rows.length > 0) {
+                let formDefinition = activityResult.rows[0].form_definition;
+                if (typeof formDefinition === 'string') {
+                    try { formDefinition = JSON.parse(formDefinition); } catch (e) { formDefinition = null; }
+                }
+                form_fields = [];
+                for (const page of formDefinition?.pages || []) {
+                    for (const section of page.sections || []) {
+                        for (const question of section.questions || []) {
+                            form_fields.push({
+                                id: question.id,
+                                name: question.fieldName || question.field_name || question.id,
+                                label: question.questionText || question.question_text || question.label || question.id,
+                                type: question.answerType || question.answer_type || 'text',
+                                options: question.options || [],
+                                required: question.required === true
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         // Get recording and transcription

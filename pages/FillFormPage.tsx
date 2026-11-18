@@ -1,16 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useData } from '../hooks/useData';
 import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport, Facility, User } from '../types';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
-import { ArrowLeftIcon, SparklesIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
 import { filterOptionsByCondition } from '../utils/conditionEvaluator';
 import { buildFormulasContext, evaluateFormulaWithContext, evaluateFormulasForForm } from '../utils/formulaEvaluator';
 import VoiceCapturePanel from '../components/VoiceCapturePanel';
-import AIAssistantDashboard from '../components/AIAssistantDashboard';
 import Modal from '../components/ui/Modal';
 
 import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
@@ -488,7 +487,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [tableValidationMessage, setTableValidationMessage] = useState<string | null>(null);
     const [tableImportStatus, setTableImportStatus] = useState<any>(null);
     const [showVoiceCaptureModal, setShowVoiceCaptureModal] = useState(false);
-    const [showAIAssistantModal, setShowAIAssistantModal] = useState(false);
+    const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
+    const [interviewerGuide, setInterviewerGuide] = useState('');
+    const stopVoiceCaptureRef = useRef<(() => Promise<void>) | null>(null);
     const [expandedReviewerComments, setExpandedReviewerComments] = useState<Set<string>>(new Set());
 
     const location = useLocation();
@@ -1439,22 +1440,14 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         <Button
                             variant="secondary"
                             size="sm"
-                            className="whitespace-nowrap"
-                            onClick={() => setShowVoiceCaptureModal(true)}
-                            leftIcon={<MicrophoneIcon className="h-4 w-4" />}
-                            title="Record interview conversation and auto-fill form"
+                            className="whitespace-nowrap justify-center min-w-[118px]"
+                            onClick={isVoiceCapturing
+                                ? () => stopVoiceCaptureRef.current?.()
+                                : () => setShowVoiceCaptureModal(true)}
+                            leftIcon={isVoiceCapturing ? undefined : <MicrophoneIcon className="h-4 w-4" />}
+                            title={isVoiceCapturing ? 'Stop voice capture and process transcription' : 'Record interview conversation and auto-fill form'}
                         >
-                            Voice Capture
-                        </Button>
-                        <Button
-                            variant="secondary"
-                            size="sm"
-                            className="whitespace-nowrap"
-                            onClick={() => setShowAIAssistantModal(true)}
-                            leftIcon={<SparklesIcon className="h-4 w-4" />}
-                            title="Ask AI Assistant for insights and help"
-                        >
-                            AI Assistant
+                            {isVoiceCapturing ? 'Stop Voice Capture' : 'Voice Capture'}
                         </Button>
                     </div>
                 </div>
@@ -1810,48 +1803,58 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             {/* Voice Capture Modal */}
             <Modal
                 isOpen={showVoiceCaptureModal}
+                keepMounted={true}
                 onClose={() => setShowVoiceCaptureModal(false)}
                 title="Voice Data Capture"
                 size="large"
             >
                 {activityId && formDef && activity && (
-                    <VoiceCapturePanel
-                        formId={activity.id}
-                        activityId={parseInt(activityId)}
-                        formFields={
-                            (formDef.pages || []).flatMap(p =>
-                                (p.sections || []).flatMap(s =>
-                                    (s.questions || []).map(q => ({
-                                        id: q.id,
-                                        questionText: q.questionText || '',
-                                        answerType: q.answerType || '',
-                                        fieldName: q.fieldName
-                                    }))
+                    <div className="space-y-4">
+                        {interviewerGuide && (
+                            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                                <h3 className="text-sm font-semibold text-blue-900 mb-1">Interviewer's Guide</h3>
+                                <p className="text-sm text-blue-900 whitespace-pre-wrap">{interviewerGuide}</p>
+                            </div>
+                        )}
+                        <VoiceCapturePanel
+                            formId={activity.id}
+                            activityId={parseInt(activityId)}
+                            formFields={
+                                (formDef.pages || []).flatMap(p =>
+                                    (p.sections || []).flatMap(s =>
+                                        (s.questions || []).map(q => ({
+                                            id: q.id,
+                                            questionText: q.questionText || '',
+                                            answerType: q.answerType || '',
+                                            fieldName: q.fieldName,
+                                            options: q.options || []
+                                        }))
+                                    )
                                 )
-                            )
-                        }
-                        onDataExtracted={(extractedData) => {
-                            // Merge extracted data into form answers
-                            setAnswers(prev => ({ ...prev, ...extractedData }));
-                            setShowVoiceCaptureModal(false);
-                        }}
-                        onClose={() => setShowVoiceCaptureModal(false)}
-                    />
-                )}
-            </Modal>
-
-            {/* AI Assistant Modal */}
-            <Modal
-                isOpen={showAIAssistantModal}
-                onClose={() => setShowAIAssistantModal(false)}
-                title="AI Assistant"
-                size="large"
-            >
-                {activityId && currentUser && (
-                    <AIAssistantDashboard
-                        activityId={activityId}
-                        currentUser={currentUser}
-                    />
+                            }
+                            onGuidelinesLoaded={(guidelines) => {
+                                setInterviewerGuide(guidelines?.interviewer_guide_text || '');
+                            }}
+                            onRecordingStateChange={(recording) => {
+                                setIsVoiceCapturing(recording);
+                                setShowVoiceCaptureModal(!recording);
+                            }}
+                            onStopRecordingReady={(stopFn) => {
+                                stopVoiceCaptureRef.current = stopFn;
+                            }}
+                            onDataExtracted={(extractedData) => {
+                                setAnswers(prev => ({ ...prev, ...extractedData }));
+                                setIsVoiceCapturing(false);
+                                stopVoiceCaptureRef.current = null;
+                                setShowVoiceCaptureModal(false);
+                            }}
+                            onClose={() => {
+                                setIsVoiceCapturing(false);
+                                stopVoiceCaptureRef.current = null;
+                                setShowVoiceCaptureModal(false);
+                            }}
+                        />
+                    </div>
                 )}
             </Modal>
         </div>
