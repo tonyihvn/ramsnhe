@@ -41,6 +41,13 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
         try {
             setState(prev => ({ ...prev, error: null }));
 
+            if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+                throw new Error('Microphone access is unavailable in this browser/context. Use HTTPS (or localhost) and allow microphone permission.');
+            }
+            if (typeof MediaRecorder === 'undefined') {
+                throw new Error('Audio recording is not supported in this browser.');
+            }
+
             // Request microphone access
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
