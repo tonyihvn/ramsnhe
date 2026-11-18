@@ -52,6 +52,42 @@
     background-image: none !important;
   }
 
+  /* Keep mobile and desktop sidebar menu colors and typography identical */
+  .app-sidebar,
+  .app-mobile-sidebar {
+    background-color: var(--sidebar-menu-bg, #ffffff) !important;
+    color: var(--sidebar-menu-text, #111827) !important;
+  }
+
+  .app-sidebar nav,
+  .app-sidebar nav a,
+  .app-sidebar nav button,
+  .app-sidebar nav .group,
+  .app-sidebar nav span,
+  .app-sidebar nav [class*="text-gray"] {
+    color: var(--sidebar-menu-text, #111827) !important;
+  }
+
+  .app-sidebar nav a,
+  .app-sidebar nav button,
+  .app-sidebar nav .group {
+    background-color: transparent !important;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.95),
+                 0 0 1px rgba(255, 255, 255, 0.95) !important;
+  }
+
+  .app-sidebar nav a:hover,
+  .app-sidebar nav button:hover,
+  .app-sidebar nav .group:hover,
+  .app-sidebar nav .bg-primary-50 {
+    background-color: var(--sidebar-menu-bg, #ffffff) !important;
+  }
+
+  .app-sidebar nav svg,
+  .app-sidebar nav [class*="text-gray"] svg {
+    color: var(--sidebar-menu-text, #111827) !important;
+  }
+
   /* Force left-to-right input direction for editors and textareas to avoid accidental RTL behavior */
   textarea,
   input[type="text"],

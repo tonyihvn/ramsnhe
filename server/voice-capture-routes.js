@@ -47,6 +47,39 @@ const ensureVoiceGuidelinesTable = async (req) => {
     `);
 };
 
+const ensureVoiceCaptureTables = async (req) => {
+    await getPool(req).query(`
+        CREATE TABLE IF NOT EXISTS ${tablePrefix}voice_recordings (
+            id SERIAL PRIMARY KEY,
+            business_id INTEGER,
+            form_id INTEGER,
+            activity_id INTEGER,
+            recording_file_path TEXT,
+            transcription_text TEXT,
+            transcription_service TEXT,
+            extracted_data JSONB,
+            confidence_scores JSONB,
+            duration_seconds INTEGER DEFAULT 0,
+            file_size_bytes BIGINT DEFAULT 0,
+            status TEXT DEFAULT 'recording',
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+    await getPool(req).query(`
+        CREATE TABLE IF NOT EXISTS ${tablePrefix}voice_media_library (
+            id SERIAL PRIMARY KEY,
+            business_id INTEGER,
+            recording_id INTEGER,
+            file_name TEXT,
+            file_size_bytes BIGINT DEFAULT 0,
+            duration_seconds INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+};
+
 // ============================================================================
 // SPEECH-TO-TEXT SERVICE CONFIGURATION
 // ============================================================================
@@ -319,7 +352,12 @@ router.post('/form/:formId/guidelines', async (req, res) => {
  */
 router.post('/recordings', async (req, res) => {
     try {
-        const businessId = getBusinessId(req);
+        await ensureVoiceCaptureTables(req);
+        let businessId = getBusinessId(req);
+        if (!businessId) {
+            const sessionBusinessId = req.session?.businessId || req.session?.business_id;
+            businessId = sessionBusinessId || null;
+        }
         const userId = req.user?.id;
         const { activity_id, form_id, duration_seconds, file_size_bytes } = req.body;
 

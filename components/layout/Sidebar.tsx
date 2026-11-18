@@ -120,7 +120,7 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
   const mobileDrawer = mobileOpen ? (
     <div className="fixed inset-0 z-40 md:hidden">
       <div className="fixed inset-0 bg-black opacity-30" onClick={onClose} />
-      <aside className="relative w-64 h-full shadow-xl z-50" style={{ backgroundColor: 'var(--sidebar-menu-bg)', color: 'var(--sidebar-menu-text)' }}>
+      <aside className="app-sidebar app-mobile-sidebar relative w-64 h-full shadow-xl z-50" style={{ backgroundColor: 'var(--sidebar-menu-bg)', color: 'var(--sidebar-menu-text)' }}>
         <div className="flex flex-col h-full">
           <div className="flex items-center px-4 py-4">
             {settings?.logoDataUrl ? (

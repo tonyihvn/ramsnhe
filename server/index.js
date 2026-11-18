@@ -2293,6 +2293,36 @@ async function initDb() {
                 UNIQUE (business_id, form_id)
             )
         `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${process.env.TABLE_PREFIX || 'dqatb_'}voice_recordings (
+                id SERIAL PRIMARY KEY,
+                business_id INTEGER,
+                form_id INTEGER,
+                activity_id INTEGER,
+                recording_file_path TEXT,
+                transcription_text TEXT,
+                transcription_service TEXT,
+                extracted_data JSONB,
+                confidence_scores JSONB,
+                duration_seconds INTEGER DEFAULT 0,
+                file_size_bytes BIGINT DEFAULT 0,
+                status TEXT DEFAULT 'recording',
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${process.env.TABLE_PREFIX || 'dqatb_'}voice_media_library (
+                id SERIAL PRIMARY KEY,
+                business_id INTEGER,
+                recording_id INTEGER,
+                file_name TEXT,
+                file_size_bytes BIGINT DEFAULT 0,
+                duration_seconds INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
         // Add show_in_menu flag for datasets so datasets can be shown in sidebar
         await pool.query(`ALTER TABLE ${tables.DATASETS} ADD COLUMN IF NOT EXISTS show_in_menu BOOLEAN DEFAULT FALSE`);
         // Create permissions and settings tables
