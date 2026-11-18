@@ -26,9 +26,9 @@ import voiceCaptureRouter from './voice-capture-routes.js';
 // Helper: Prepare SMTP configuration with support for self-signed certificates and Gmail app passwords
 function prepareSMTPConfig(smtpConfig) {
     if (!smtpConfig) return null;
-    
+
     const config = { ...smtpConfig };
-    
+
     // Ensure TLS configuration
     if (!config.tls) {
         config.tls = {};
@@ -37,7 +37,7 @@ function prepareSMTPConfig(smtpConfig) {
         ...config.tls,
         rejectUnauthorized: false // Allow self-signed certificates
     };
-    
+
     // Create auth object if user/pass are at top level (from legacy form)
     if (!config.auth && (config.user || config.pass)) {
         config.auth = {
@@ -45,46 +45,46 @@ function prepareSMTPConfig(smtpConfig) {
             pass: config.pass?.trim()
         };
     }
-    
+
     // For Gmail: ensure auth credentials are properly formatted
     if (config.host === 'smtp.gmail.com' || config.host?.includes('gmail')) {
         // Ensure auth object exists
         if (!config.auth) {
             config.auth = {};
         }
-        
+
         // Merge all possible credential sources
         config.auth = {
             user: (config.auth.user || config.user || config.email || '').toString().trim(),
             pass: (config.auth.pass || config.pass || config.password || '').toString().trim()
         };
-        
+
         // Validate that we have credentials
         if (!config.auth.user || !config.auth.pass) {
             console.warn('[prepareSMTPConfig] Gmail SMTP config missing user or password credentials');
         } else {
             // Credentials are present
         }
-        
+
         // Gmail typically uses port 587 (TLS) or 465 (SSL)
         if (!config.port) {
             config.port = 587;
         }
-        
+
         // For port 465, use secure connection; for 587 use STARTTLS
         if (config.port === 465) {
             config.secure = true;
         } else if (config.port === 587) {
             config.secure = false; // Use STARTTLS instead
         }
-        
+
         // Ensure tls settings are optimal for Gmail
         config.tls = {
             rejectUnauthorized: false,
             minVersion: 'TLSv1.2'
         };
     }
-    
+
     // For non-Gmail providers, ensure auth exists if credentials provided
     if (!config.auth && (config.user || config.pass)) {
         config.auth = {
@@ -92,7 +92,7 @@ function prepareSMTPConfig(smtpConfig) {
             pass: config.pass?.trim()
         };
     }
-    
+
     return config;
 }
 
@@ -107,7 +107,7 @@ async function getSMTPConfigWithFallback(pool, businessId = null) {
     } catch (e) {
         console.warn('[getSMTPConfig] Failed to load SMTP from database:', e.message);
     }
-    
+
     // Fallback to environment variables
     if (process.env.SMTP_HOST) {
         const envConfig = {
@@ -122,7 +122,7 @@ async function getSMTPConfigWithFallback(pool, businessId = null) {
         };
         return envConfig;
     }
-    
+
     console.warn('[getSMTPConfig] No SMTP configuration found (database or environment)');
     return null;
 }
@@ -3480,7 +3480,7 @@ app.post('/auth/request-password-reset', async (req, res) => {
         const token = crypto.randomBytes(24).toString('hex');
         const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
         await pool.query(`INSERT INTO ${tables.PASSWORD_RESETS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [user.id, token, expires]);
-        
+
         // Try to send via SMTP from settings first
         let smtpConfig = null;
         try {
@@ -3489,7 +3489,7 @@ app.post('/auth/request-password-reset', async (req, res) => {
                 smtpConfig = sres.rows[0].value;
             }
         } catch (e) { console.warn('Failed to load SMTP from database:', e.message); }
-        
+
         // Fallback to environment variables
         if (!smtpConfig && process.env.SMTP_HOST) {
             smtpConfig = {
@@ -3504,21 +3504,21 @@ app.post('/auth/request-password-reset', async (req, res) => {
             };
             // SMTP config from environment is set
         }
-        
+
         if (!smtpConfig) {
             console.warn('SMTP not configured for password reset');
             // Still return success for security reasons
             return res.json({ ok: true, message: 'If the email exists, a password reset link has been sent.' });
         }
-        
-        const frontend = process.env.FRONTEND_URL || process.env.FRONTEND_HOST || `${req.protocol}://${req.get('host')}`;
+
+        const frontend = process.env.FRONTEND_URL || process.env.FRONTEND_HOST || 'http://41.223.44.116:9090';
         const resetUrl = `${frontend.replace(/\/$/, '')}/#/reset-password?token=${token}`;
-        
+
         try {
             const nm = await import('nodemailer');
             const transporter = nm.createTransport(prepareSMTPConfig(smtpConfig));
             const userName = user.first_name && user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name || 'User';
-            
+
             const htmlContent = `
             <!DOCTYPE html>
             <html>
@@ -3579,7 +3579,7 @@ app.post('/auth/request-password-reset', async (req, res) => {
             </body>
             </html>
             `;
-            
+
             const textContent = `Hello ${userName},
 
 We received a request to reset your password on the DQAi Data Collection Platform.
@@ -3593,7 +3593,7 @@ If you did not request this reset, please ignore this email.
 
 Best regards,
 DQAi Platform`;
-            
+
             await transporter.sendMail({
                 from: smtpConfig.from || smtpConfig.auth?.user || 'no-reply@example.com',
                 to: user.email,
@@ -3609,7 +3609,7 @@ DQAi Platform`;
             if (e.command) console.error('SMTP command that failed:', e.command);
             // Still return success for security reasons - user can try again if email fails
         }
-        
+
         return res.json({ ok: true, message: 'If the email exists, a password reset link has been sent.' });
     } catch (e) {
         console.error('request-password-reset error', e);
@@ -3624,19 +3624,19 @@ app.post('/auth/reset-password', async (req, res) => {
         if (!token) return res.status(400).json({ ok: false, error: 'Missing reset token' });
         if (!newPassword) return res.status(400).json({ ok: false, error: 'Missing new password' });
         if (newPassword.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters' });
-        
+
         const tres = await pool.query(`SELECT user_id, expires_at FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
         if (tres.rows.length === 0) {
             return res.status(400).json({ ok: false, error: 'Invalid or expired reset token' });
         }
-        
+
         const row = tres.rows[0];
         if (new Date(row.expires_at) < new Date()) {
             // Token expired - delete it
             await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
             return res.status(400).json({ ok: false, error: 'Reset token has expired. Please request a new password reset.' });
         }
-        
+
         // Hash the new password
         let hash;
         try {
@@ -3645,11 +3645,11 @@ app.post('/auth/reset-password', async (req, res) => {
             console.error('Password hashing failed:', e);
             return res.status(500).json({ ok: false, error: 'Failed to process password' });
         }
-        
+
         // Update password and clean up token
         await pool.query(`UPDATE ${tables.USERS} SET password = $1, updated_at = NOW() WHERE id = $2`, [hash, row.user_id]);
         await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE token = $1`, [token]);
-        
+
         // Get user info for logging
         try {
             const userInfo = await pool.query(`SELECT email FROM ${tables.USERS} WHERE id = $1`, [row.user_id]);
@@ -3657,7 +3657,7 @@ app.post('/auth/reset-password', async (req, res) => {
                 console.log(`Password reset successfully for user: ${userInfo.rows[0].email}`);
             }
         } catch (e) { /* ignore */ }
-        
+
         return res.json({ ok: true, message: 'Password has been successfully reset. You can now log in with your new password.' });
     } catch (e) {
         console.error('reset-password error', e);
@@ -3703,7 +3703,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
         const userId = req.session?.userId;
         let businessId = req.session?.businessId || null;
-        
+
         // Get user's business_id from database
         if (userId) {
             const userRes = await pool.query(`SELECT business_id FROM ${tables.USERS} WHERE id = $1 LIMIT 1`, [userId]);
@@ -3711,7 +3711,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
                 businessId = userRes.rows[0].business_id;
             }
         }
-        
+
         // Query for business-specific settings first, then fallback to NULL (global) settings
         // COALESCE picks business settings if they exist, otherwise global settings
         const result = await pool.query(`
@@ -3744,7 +3744,7 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     try {
         const userId = req.session?.userId;
         const payload = req.body || {};
-        
+
         // Get user's business_id from database
         let businessId = null;
         if (userId) {
@@ -3753,18 +3753,18 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
                 businessId = userRes.rows[0].business_id;
             }
         }
-        
+
         // Fallback to session businessId if available
         if (!businessId && req.session?.businessId) {
             businessId = req.session.businessId;
         }
-        
+
         for (const [k, v] of Object.entries(payload)) {
             // Convert the JS value to a JSON string and cast to jsonb on the SQL side.
             // Using `$2::jsonb` avoids PostgreSQL's "polymorphic type unknown" error
             // which can occur when calling functions like to_jsonb($2) with an unknown param type.
             const jsonString = JSON.stringify(v);
-            
+
             try {
                 await pool.query(
                     `INSERT INTO ${tables.SETTINGS} (key, value, business_id) VALUES ($1, $2::jsonb, $3) ON CONFLICT (key, business_id) DO UPDATE SET value = $2::jsonb`,
@@ -3776,7 +3776,7 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
                     `UPDATE ${tables.SETTINGS} SET value = $2::jsonb WHERE key = $1 AND business_id IS NOT DISTINCT FROM $3`,
                     [k, jsonString, businessId]
                 );
-                
+
                 if (updateRes.rowCount === 0) {
                     // If no row was updated, insert a new one
                     await pool.query(
@@ -3787,9 +3787,9 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
             }
         }
         res.json({ success: true });
-    } catch (e) { 
+    } catch (e) {
         console.error('Settings save error:', e);
-        res.status(500).json({ error: 'Failed to save settings', details: e.message }); 
+        res.status(500).json({ error: 'Failed to save settings', details: e.message });
     }
 });
 
@@ -6015,11 +6015,11 @@ app.get('/api/users', async (req, res) => {
         }
         q += ' ORDER BY created_at DESC';
         const result = await pool.query(q, params);
-        
+
         // Fetch roles and permissions for each user
         const mapped = await Promise.all(result.rows.map(async (r) => {
             const customFields = r.custom_fields ? (typeof r.custom_fields === 'string' ? JSON.parse(r.custom_fields) : r.custom_fields) : null;
-            
+
             // Fetch assigned roles
             let assignedRoles = [];
             try {
@@ -6031,7 +6031,7 @@ app.get('/api/users', async (req, res) => {
             } catch (e) {
                 console.warn(`Failed to fetch roles for user ${r.id}:`, e.message);
             }
-            
+
             // Fetch assigned permissions
             let assignedPermissions = [];
             try {
@@ -6043,7 +6043,7 @@ app.get('/api/users', async (req, res) => {
             } catch (e) {
                 console.warn(`Failed to fetch permissions for user ${r.id}:`, e.message);
             }
-            
+
             return {
                 ...r,
                 firstName: r.first_name,
@@ -6055,7 +6055,7 @@ app.get('/api/users', async (req, res) => {
                 ...(customFields || {})
             };
         }));
-        
+
         res.json(mapped);
     } catch (e) { res.status(500).send(e.message); }
 });
@@ -6222,7 +6222,7 @@ app.post('/api/users', async (req, res) => {
                         const toList = [u.email];
                         if (adminList) toList.push(adminList);
                         const subject = 'Welcome! Your Account Has Been Created';
-                        
+
                         // Fetch theme settings to get the logo text
                         let logoText = 'Data Collection Platform';
                         let appUrl = process.env.FRONTEND_HOST || 'http://41.223.44.116:9090/';
@@ -6238,12 +6238,12 @@ app.post('/api/users', async (req, res) => {
                         } catch (e) {
                             console.warn('Failed to fetch theme settings for email:', e.message);
                         }
-                        
+
                         // Ensure app URL ends with /
                         if (!appUrl.endsWith('/')) {
                             appUrl += '/';
                         }
-                        
+
                         // Build HTML email with credentials if password was provided
                         let htmlBody = `
                             <html>
@@ -6253,7 +6253,7 @@ app.post('/api/users', async (req, res) => {
                                         <h3 style="color: #34495e;">Welcome, ${u.first_name || 'User'}!</h3>
                                         <p>Your account has been successfully created on our platform.</p>
                         `;
-                        
+
                         if (password) {
                             htmlBody += `
                                 <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 15px; margin: 20px 0; border-radius: 4px;">
@@ -6287,7 +6287,7 @@ app.post('/api/users', async (req, res) => {
                                 </div>
                             `;
                         }
-                        
+
                         htmlBody += `
                                     <div style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-radius: 4px;">
                                         <h3 style="color: #2c3e50; margin-top: 0;">Next Steps</h3>
@@ -6310,7 +6310,7 @@ app.post('/api/users', async (req, res) => {
                             </body>
                         </html>
                         `;
-                        
+
                         // Also create plain text version
                         let textBody = `${logoText}\n${'='.repeat(50)}\n\nHello ${u.first_name || 'User'},\n\nYour account has been successfully created on our platform.\n\n`;
                         if (password) {
@@ -6327,7 +6327,7 @@ If you did not expect this account creation or have any questions, please contac
 
 ---
 This is an automated message. Please do not reply to this email.`;
-                        
+
                         await transporter.sendMail({
                             from: smtpConfig.from || smtpConfig.user || 'no-reply@example.com',
                             to: toList.join(','),
@@ -6366,67 +6366,67 @@ This is an automated message. Please do not reply to this email.`;
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     try {
         const id = req.params.id;
-        
+
         // fetch user for audit before any deletes
         const ures = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [id]);
         const target = ures.rows.length ? ures.rows[0] : null;
-        
+
         if (!target) {
             return res.status(404).json({ error: 'User not found' });
         }
-        
+
         // Delete all user-related data - do NOT use a transaction as try-catch won't prevent abort
         // Each delete is independent so one failure doesn't affect the others
-        
+
         // Delete user role assignments (known to exist)
         try {
             await pool.query(`DELETE FROM ${tables.USER_ROLES} WHERE user_id = $1`, [id]);
         } catch (e) {
             console.warn('Failed to delete user roles:', e.message);
         }
-        
+
         // Delete user permissions (known to exist)
         try {
             await pool.query(`DELETE FROM ${tables.USER_PERMISSIONS} WHERE user_id = $1`, [id]);
         } catch (e) {
             console.warn('Failed to delete user permissions:', e.message);
         }
-        
+
         // Delete user preferences (optional table)
         try {
             await pool.query(`DELETE FROM ${tables.USER_PREFERENCES} WHERE user_id = $1`, [id]);
         } catch (e) {
             console.warn('Failed to delete user preferences (table may not exist):', e.message);
         }
-        
+
         // Delete email verifications for this user
         try {
             await pool.query(`DELETE FROM ${tables.EMAIL_VERIFICATIONS} WHERE user_id = $1`, [id]);
         } catch (e) {
             console.warn('Failed to delete email verifications:', e.message);
         }
-        
+
         // Delete password reset tokens for this user
         try {
             await pool.query(`DELETE FROM ${tables.PASSWORD_RESETS} WHERE user_id = $1`, [id]);
         } catch (e) {
             console.warn('Failed to delete password resets:', e.message);
         }
-        
+
         // Delete user approvals
         try {
             await pool.query(`DELETE FROM ${tables.USER_APPROVALS} WHERE user_id = $1 OR approved_by = $1`, [id]);
         } catch (e) {
             console.warn('Failed to delete user approvals:', e.message);
         }
-        
+
         // Finally delete the user record itself
         const delRes = await pool.query(`DELETE FROM ${tables.USERS} WHERE id = $1`, [id]);
-        
+
         if (delRes.rowCount === 0) {
             return res.status(404).json({ error: 'User not found or already deleted' });
         }
-        
+
         // audit deletion
         try {
             const actorId = req.session && req.session.userId ? req.session.userId : null;
@@ -6454,19 +6454,19 @@ app.get('/api/user-preferences/:key', async (req, res) => {
     try {
         const userId = req.session?.userId;
         const preferenceKey = req.params.key;
-        
+
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
         if (!preferenceKey) return res.status(400).json({ error: 'Preference key required' });
-        
+
         const result = await pool.query(
             `SELECT preference_value FROM ${tables.USER_PREFERENCES} WHERE user_id = $1 AND preference_key = $2 LIMIT 1`,
             [userId, preferenceKey]
         );
-        
+
         if (result.rowCount === 0) {
             return res.json({ key: preferenceKey, value: null });
         }
-        
+
         const row = result.rows[0];
         res.json({ key: preferenceKey, value: row.preference_value });
     } catch (e) {
@@ -6479,19 +6479,19 @@ app.get('/api/user-preferences/:key', async (req, res) => {
 app.get('/api/user-preferences', async (req, res) => {
     try {
         const userId = req.session?.userId;
-        
+
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-        
+
         const result = await pool.query(
             `SELECT preference_key, preference_value FROM ${tables.USER_PREFERENCES} WHERE user_id = $1`,
             [userId]
         );
-        
+
         const preferences = {};
         for (const row of result.rows) {
             preferences[row.preference_key] = row.preference_value;
         }
-        
+
         res.json(preferences);
     } catch (e) {
         console.error('Failed to get user preferences:', e);
@@ -6505,10 +6505,10 @@ app.post('/api/user-preferences/:key', async (req, res) => {
         const userId = req.session?.userId;
         const preferenceKey = req.params.key;
         const preferenceValue = req.body.value !== undefined ? req.body.value : null;
-        
+
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
         if (!preferenceKey) return res.status(400).json({ error: 'Preference key required' });
-        
+
         // Upsert preference (INSERT ... ON CONFLICT UPDATE)
         const result = await pool.query(
             `INSERT INTO ${tables.USER_PREFERENCES} (user_id, preference_key, preference_value, created_at, updated_at)
@@ -6518,7 +6518,7 @@ app.post('/api/user-preferences/:key', async (req, res) => {
              RETURNING preference_key, preference_value`,
             [userId, preferenceKey, preferenceValue]
         );
-        
+
         const row = result.rows[0];
         res.json({ key: row.preference_key, value: row.preference_value });
     } catch (e) {
@@ -6532,15 +6532,15 @@ app.delete('/api/user-preferences/:key', async (req, res) => {
     try {
         const userId = req.session?.userId;
         const preferenceKey = req.params.key;
-        
+
         if (!userId) return res.status(401).json({ error: 'Unauthorized' });
         if (!preferenceKey) return res.status(400).json({ error: 'Preference key required' });
-        
+
         await pool.query(
             `DELETE FROM ${tables.USER_PREFERENCES} WHERE user_id = $1 AND preference_key = $2`,
             [userId, preferenceKey]
         );
-        
+
         res.json({ ok: true });
     } catch (e) {
         console.error('Failed to delete user preference:', e);
@@ -9525,11 +9525,11 @@ app.get('/api/public/facility_summary', async (req, res) => {
 app.post('/api/test-smtp', async (req, res) => {
     try {
         const { host, port, user, pass, from, to } = req.body;
-        
+
         if (!host || !port || !user || !pass) {
             return res.status(400).json({ error: 'Missing SMTP configuration: host, port, user, and pass are required' });
         }
-        
+
         const testConfig = {
             host: host.trim(),
             port: parseInt(port),
@@ -9537,16 +9537,16 @@ app.post('/api/test-smtp', async (req, res) => {
             auth: { user: user.trim(), pass: pass.trim() },
             tls: { rejectUnauthorized: false, minVersion: 'TLSv1.2' }
         };
-        
+
         const nm = await import('nodemailer');
         const transporter = nm.createTransport(testConfig);
-        
+
         // Verify SMTP connection
         await transporter.verify();
-        
+
         // Determine recipient email (use "to" parameter if provided, otherwise send to sender)
         const recipientEmail = to ? to.trim() : user.trim();
-        
+
         // Send a test email
         await transporter.sendMail({
             from: from || user.trim(),
@@ -9555,15 +9555,15 @@ app.post('/api/test-smtp', async (req, res) => {
             text: 'This is a test email to verify your SMTP configuration is working correctly.',
             html: '<h2>SMTP Configuration Test</h2><p>This is a test email to verify your SMTP configuration is working correctly.</p>'
         });
-        
-        res.json({ 
-            ok: true, 
+
+        res.json({
+            ok: true,
             message: `SMTP test successful! Test email sent to ${recipientEmail}`,
             config: { host, port, user, from: from || user.trim(), sentTo: recipientEmail }
         });
     } catch (e) {
         console.error('SMTP test error:', e.message);
-        res.status(500).json({ 
+        res.status(500).json({
             ok: false,
             error: e.message || String(e),
             code: e.code || 'UNKNOWN',
@@ -9580,10 +9580,10 @@ app.post('/api/test-smtp', async (req, res) => {
 app.get('/api/check-smtp-config', async (req, res) => {
     try {
         const sres = await pool.query(`SELECT key, value FROM ${tables.SETTINGS} WHERE key = 'smtp'`);
-        
+
         if (sres.rows.length === 0) {
-            return res.json({ 
-                ok: true, 
+            return res.json({
+                ok: true,
                 message: 'No SMTP config in database. Using environment variables.',
                 database: null,
                 environment: {
@@ -9595,10 +9595,10 @@ app.get('/api/check-smtp-config', async (req, res) => {
                 }
             });
         }
-        
+
         const dbConfig = sres.rows[0].value;
-        res.json({ 
-            ok: true, 
+        res.json({
+            ok: true,
             message: 'SMTP config found in database',
             database: {
                 host: dbConfig.host || 'NOT SET',
@@ -9626,8 +9626,8 @@ app.get('/api/check-smtp-config', async (req, res) => {
 app.delete('/api/smtp-config', async (req, res) => {
     try {
         await pool.query(`DELETE FROM ${tables.SETTINGS} WHERE key = 'smtp'`);
-        res.json({ 
-            ok: true, 
+        res.json({
+            ok: true,
             message: 'Database SMTP config deleted. Now using environment variables.',
             environment: {
                 host: process.env.SMTP_HOST || 'NOT SET',

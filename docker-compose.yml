@@ -17,7 +17,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: dqappdb
       DB_PORT: 5432
-      FRONTEND_HOSTS: http://localhost:3000
+      FRONTEND_HOST: http://41.223.44.116:9090
+      FRONTEND_HOSTS: http://41.223.44.116:9090
       ALLOW_ALL_ORIGINS: "true"
     depends_on:
       postgres:
