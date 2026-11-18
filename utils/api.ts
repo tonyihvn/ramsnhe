@@ -1,6 +1,6 @@
 const apiBase = (typeof window !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_API_BASE)
   ? (import.meta as any).env.VITE_API_BASE
-  : (typeof window !== 'undefined' && window.location && window.location.port === '5173' ? 'http://localhost:3000' : '');
+  : '';
 
 export const getApiBase = () => apiBase;
 

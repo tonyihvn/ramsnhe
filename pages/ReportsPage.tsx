@@ -137,7 +137,7 @@ const ReportsPage: React.FC = () => {
                     <button className="text-red-600 hover:text-red-900 flex items-center text-xs" onClick={async () => {
                       if (!confirm('Delete this report and its uploaded files?')) return;
                       try {
-                        const res = await fetch(`http://localhost:5000/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
+                        const res = await fetch(`/api/reports/${report.id}`, { method: 'DELETE', credentials: 'include' });
                         if (res.ok) {
                           alert('Report deleted');
                           window.location.reload();

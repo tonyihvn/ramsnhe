@@ -465,8 +465,7 @@ router.post('/llm/test-connection', requireAuth, async (req, res) => {
 
     // For Ollama/local LLM models, test the local tags endpoint.
     if (llmProvider === 'llama' || llmProvider === 'local' || llmProvider === 'ollama' || llmProvider === 'ollama-local') {
-      const endpoint = (llmEndpoint || 'http://127.0.0.1:11434').replace(/\/$/, '');
-      const response = await fetchWithTimeout(`${endpoint}/api/tags`, {}, 5000);
+      const response = await fetchWithTimeout('http://127.0.0.1:11434/api/tags', {}, 5000);
       if (!response.ok) {
         return res.status(400).json({ error: 'Ollama is not reachable', details: `Failed to reach ${endpoint}` });
       }

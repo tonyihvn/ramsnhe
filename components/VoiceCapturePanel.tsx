@@ -71,16 +71,32 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     useEffect(() => {
         const loadGuidelines = async () => {
             try {
-                const data = await getFormGuidelines(formId);
+                const data = await Promise.race([
+                    getFormGuidelines(formId),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Guidelines request timed out')), 8000))
+                ]) as any;
                 setGuidelines(data);
                 onGuidelinesLoaded?.(data);
-                if (!data?.is_enabled) {
-                    // If guidelines are disabled, go straight to recording
+                const hasInterviewerGuide = !!String(data?.interviewer_guide_text || '').trim();
+                if (data?.is_enabled || hasInterviewerGuide) {
+                    setPhase({ phase: 'guide' });
+                } else {
                     setPhase({ phase: 'recording' });
                 }
             } catch (err) {
                 console.error('Failed to load guidelines:', err);
-                // Continue without guidelines
+                setGuidelines({
+                    is_enabled: false,
+                    interviewer_guide_text: 'No saved interviewer guide is available. Ask each form question clearly and wait for the responder.',
+                    ai_guide_text: '',
+                    extraction_prompt_override: ''
+                });
+                onGuidelinesLoaded?.({
+                    is_enabled: false,
+                    interviewer_guide_text: 'No saved interviewer guide is available. Ask each form question clearly and wait for the responder.',
+                    ai_guide_text: '',
+                    extraction_prompt_override: ''
+                });
                 setPhase({ phase: 'recording' });
             }
         };

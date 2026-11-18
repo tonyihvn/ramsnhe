@@ -66,7 +66,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
     llmTemperature: 0.7,
     llmMaxTokens: 2000,
     llmApiKey: '',
-    llmEndpoint: 'http://127.0.0.1:11434',
+    llmEndpoint: '/api/ollama',
     
     // AI Assistant Settings
     enableAIAssistant: true,
@@ -255,7 +255,7 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
         setOllamaModels([]);
       }
     } catch (err) {
-      swalError('Error', 'Could not connect to Ollama at http://127.0.0.1:11434');
+      swalError('Error', 'Could not connect to the server-side Ollama detector');
       setOllamaModels([]);
     } finally {
       setDetectingOllama(false);
@@ -377,11 +377,11 @@ const AIIntegrationsTab: React.FC<AIIntegrationsTabProps> = ({ businessId }) => 
                 <label className="block text-sm font-medium text-gray-700 mb-2">Vanna Server Endpoint</label>
                 <input
                   type="text"
-                  value="http://localhost:8888"
+                  value="Managed through the application server"
                   disabled
                   className="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-600"
                 />
-                <p className="text-xs text-gray-500 mt-1">Fixed to localhost:8888 (automatically managed)</p>
+                <p className="text-xs text-gray-500 mt-1">Managed server-side on port 8888; no browser loopback access is required.</p>
               </div>
 
               <label className="flex items-center space-x-2">

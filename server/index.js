@@ -1666,6 +1666,42 @@ app.use('/api', async (req, res, next) => {
     }
 });
 
+// Server-side service proxy endpoints. External browsers must never request
+// localhost services directly because loopback is private to the server host.
+app.get('/api/ollama', async (req, res) => {
+    try {
+        const response = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) });
+        if (!response.ok) return res.status(502).json({ ok: false, error: 'Ollama is not reachable' });
+        const data = await response.json();
+        const models = Array.isArray(data.models)
+            ? data.models.map(model => model.name || model.model || String(model)).filter(Boolean)
+            : [];
+        res.json({ ok: true, models });
+    } catch (error) {
+        res.status(502).json({ ok: false, error: 'Ollama is not reachable', details: error.message });
+    }
+});
+
+app.post('/api/ollama/generate', async (req, res) => {
+    try {
+        const { model, prompt, system, stream = false } = req.body || {};
+        if (!model || !prompt) return res.status(400).json({ error: 'model and prompt are required' });
+        const response = await fetch('http://127.0.0.1:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, prompt, system, stream }),
+            signal: AbortSignal.timeout(60000)
+        });
+        if (!response.ok) {
+            const details = await response.text().catch(() => '');
+            return res.status(502).json({ error: 'Ollama generation failed', details });
+        }
+        res.json(await response.json());
+    } catch (error) {
+        res.status(502).json({ error: 'Ollama generation failed', details: error.message });
+    }
+});
+
 // Register Super Admin Routes
 registerSuperAdminRoutes(app, pool);
 

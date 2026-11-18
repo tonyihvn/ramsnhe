@@ -53,17 +53,6 @@ const LLMSettingsForm: React.FC = () => {
 
             // if server endpoints failed or returned no models, try direct local Ollama tag endpoint
             if (!r.ok) {
-                try {
-                    const direct = await fetch('http://127.0.0.1:11434/api/tags');
-                    if (direct.ok) {
-                        const jd = await direct.json();
-                        if (jd && Array.isArray(jd.models) && jd.models.length) {
-                            setDetectedModels(jd.models.map((m: any) => m.name || m.id || String(m)));
-                            setDetecting(false);
-                            return;
-                        }
-                    }
-                } catch (e) { /* ignore local probe failure */ }
                 swalInfo('Ollama Detection', 'No local Ollama detected or not authorized');
                 return;
             }
@@ -88,7 +77,7 @@ const LLMSettingsForm: React.FC = () => {
 
     const addDetectedAsProvider = () => {
         if (!selectedDetected) return swalInfo('Select Model', 'Please select a model first');
-        const base = 'http://127.0.0.1:11434';
+        const base = '/api/ollama';
         setLocal(prev => [...prev, { id: `ollama_${Date.now()}`, provider_id: `ollama_${Date.now()}`, name: 'ollama-local', model: selectedDetected, apiKey: '', serverUrl: base, priority: (prev || []).length + 1 }]);
         setDetectedModels([]);
         setSelectedDetected(null);

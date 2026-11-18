@@ -488,7 +488,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [tableImportStatus, setTableImportStatus] = useState<any>(null);
     const [showVoiceCaptureModal, setShowVoiceCaptureModal] = useState(false);
     const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
-    const [interviewerGuide, setInterviewerGuide] = useState('');
     const stopVoiceCaptureRef = useRef<(() => Promise<void>) | null>(null);
     const [expandedReviewerComments, setExpandedReviewerComments] = useState<Set<string>>(new Set());
 
@@ -1810,12 +1809,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             >
                 {activityId && formDef && activity && (
                     <div className="space-y-4">
-                        {interviewerGuide && (
-                            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                                <h3 className="text-sm font-semibold text-blue-900 mb-1">Interviewer's Guide</h3>
-                                <p className="text-sm text-blue-900 whitespace-pre-wrap">{interviewerGuide}</p>
-                            </div>
-                        )}
                         <VoiceCapturePanel
                             formId={activity.id}
                             activityId={parseInt(activityId)}
@@ -1832,9 +1825,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                     )
                                 )
                             }
-                            onGuidelinesLoaded={(guidelines) => {
-                                setInterviewerGuide(guidelines?.interviewer_guide_text || '');
-                            }}
                             onRecordingStateChange={(recording) => {
                                 setIsVoiceCapturing(recording);
                                 setShowVoiceCaptureModal(!recording);

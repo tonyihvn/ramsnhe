@@ -14,11 +14,6 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: frontendPort,
-      hmr: {
-        host: 'localhost',
-        port: frontendPort,
-        protocol: 'ws'
-      },
       proxy: {
         '/api': {
           target: `http://localhost:${serverPort}`,
