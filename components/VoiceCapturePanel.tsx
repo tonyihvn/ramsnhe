@@ -104,9 +104,7 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     }, [formId, getFormGuidelines]);
 
     useEffect(() => {
-        if (recordingState.isRecording) {
-            onRecordingStateChange?.(true);
-        }
+        onRecordingStateChange?.(recordingState.isRecording);
     }, [recordingState.isRecording, onRecordingStateChange]);
 
     const handleStartRecording = async () => {
@@ -128,15 +126,15 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
             setPhase({ phase: 'transcribing', data: { status: 'Stopping recording...' } });
             
             // Stop recording
-            await stopRecording();
+            const audioBlob = await stopRecording();
 
-            if (!recordingState.audioBlob || !recordingId) {
+            if (!audioBlob || !recordingId) {
                 throw new Error('No audio data recorded');
             }
 
             // Upload audio file
             setPhase({ phase: 'transcribing', data: { status: 'Uploading audio...' } });
-            await uploadAudio(recordingId, recordingState.audioBlob);
+            await uploadAudio(recordingId, audioBlob);
 
             // Transcribe audio
             setPhase({ phase: 'transcribing', data: { status: 'Transcribing audio...' } });
@@ -171,8 +169,8 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
 
     useEffect(() => {
         onStopRecordingReady?.(handleStopRecording);
-        return () => onStopRecordingReady?.(null as any);
-    }, [onStopRecordingReady]);
+        return () => onStopRecordingReady?.(null);
+    }, [onStopRecordingReady, handleStopRecording]);
 
     const handleApplyData = () => {
         // Map both field_name and question ID keys back to form question IDs

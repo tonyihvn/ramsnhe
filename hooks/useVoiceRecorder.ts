@@ -11,7 +11,7 @@ export interface RecordingState {
 export interface UseVoiceRecorderReturn {
     state: RecordingState;
     startRecording: () => Promise<void>;
-    stopRecording: () => Promise<void>;
+    stopRecording: () => Promise<Blob | null>;
     pauseRecording: () => void;
     resumeRecording: () => void;
     resetRecording: () => void;
@@ -37,19 +37,75 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
     const startTimeRef = useRef<number>(0);
     const pausedTimeRef = useRef<number>(0);
 
+    const getMicrophoneErrorMessage = (err: unknown): string => {
+        if (err instanceof DOMException) {
+            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                return 'Microphone permission was denied. Allow microphone access in your browser/site settings and try again.';
+            }
+            if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                return 'No microphone device was found. Connect a microphone and try again.';
+            }
+            if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                return 'Microphone is busy or unavailable. Close other apps using it and try again.';
+            }
+            if (err.name === 'SecurityError') {
+                return 'Microphone access is blocked by browser security policy. Use HTTPS (or localhost) and allow microphone access.';
+            }
+        }
+        if (err instanceof Error && err.message) {
+            return err.message;
+        }
+        return 'Failed to access microphone';
+    };
+
     const startRecording = useCallback(async () => {
         try {
             setState(prev => ({ ...prev, error: null }));
 
-            if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-                throw new Error('Microphone access is unavailable in this browser/context. Use HTTPS (or localhost) and allow microphone permission.');
+            if (typeof navigator === 'undefined') {
+                throw new Error('Microphone access is unavailable in this environment.');
             }
+
+            const legacyNavigator = navigator as Navigator & {
+                getUserMedia?: (constraints: MediaStreamConstraints, successCallback: NavigatorUserMediaSuccessCallback, errorCallback: NavigatorUserMediaErrorCallback) => void;
+                webkitGetUserMedia?: (constraints: MediaStreamConstraints, successCallback: NavigatorUserMediaSuccessCallback, errorCallback: NavigatorUserMediaErrorCallback) => void;
+                mozGetUserMedia?: (constraints: MediaStreamConstraints, successCallback: NavigatorUserMediaSuccessCallback, errorCallback: NavigatorUserMediaErrorCallback) => void;
+            };
+
+            const legacyGetUserMedia =
+                legacyNavigator.getUserMedia ||
+                legacyNavigator.webkitGetUserMedia ||
+                legacyNavigator.mozGetUserMedia;
+
+            const supportsModernGetUserMedia =
+                !!navigator.mediaDevices &&
+                typeof navigator.mediaDevices.getUserMedia === 'function';
+
+            if (!supportsModernGetUserMedia && !legacyGetUserMedia) {
+                const secureContextHint =
+                    typeof window !== 'undefined' && !window.isSecureContext
+                        ? ' Use HTTPS (or localhost).'
+                        : '';
+                throw new Error(`Microphone access is unavailable in this browser/context.${secureContextHint}`);
+            }
+
             if (typeof MediaRecorder === 'undefined') {
                 throw new Error('Audio recording is not supported in this browser.');
             }
 
+            const getUserMedia = supportsModernGetUserMedia
+                ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+                : (constraints: MediaStreamConstraints) =>
+                      new Promise<MediaStream>((resolve, reject) => {
+                          if (!legacyGetUserMedia) {
+                              reject(new Error('Microphone access is unavailable in this browser/context.'));
+                              return;
+                          }
+                          legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+                      });
+
             // Request microphone access
-            const stream = await navigator.mediaDevices.getUserMedia({
+            const stream = await getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
@@ -98,7 +154,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
             }, 100);
 
         } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : 'Failed to access microphone';
+            const errorMessage = getMicrophoneErrorMessage(err);
             setState(prev => ({
                 ...prev,
                 error: errorMessage,
@@ -107,10 +163,10 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
         }
     }, []);
 
-    const stopRecording = useCallback(async (): Promise<void> => {
+    const stopRecording = useCallback(async (): Promise<Blob | null> => {
         return new Promise((resolve) => {
             if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
-                resolve();
+                resolve(null);
                 return;
             }
 
@@ -138,7 +194,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
                     audioBlob: blob
                 }));
 
-                resolve();
+                resolve(blob);
             };
 
             recorder.stop();
