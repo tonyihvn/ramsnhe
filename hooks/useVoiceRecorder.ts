@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface RecordingState {
     isRecording: boolean;
@@ -22,6 +22,9 @@ export interface UseVoiceRecorderReturn {
  * Supports pause/resume and provides audio blob for upload
  */
 export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
+    const recordingInstanceRef = useRef<number>(Math.random());
+    console.log('[useVoiceRecorder] Hook initialized or re-rendered - instance:', recordingInstanceRef.current);
+    
     const [state, setState] = useState<RecordingState>({
         isRecording: false,
         isPaused: false,
@@ -30,12 +33,29 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
         error: null
     });
 
+    // Log state changes for debugging
+    const setStateWithLog = (newState: RecordingState | ((prev: RecordingState) => RecordingState)) => {
+        setState(prev => {
+            const updated = typeof newState === 'function' ? newState(prev) : newState;
+            console.log(`[useVoiceRecorder #${recordingInstanceRef.current.toFixed(4)}] State update:`, {
+                prevIsRecording: prev.isRecording,
+                updatedIsRecording: updated.isRecording,
+                prevDuration: prev.duration,
+                updatedDuration: updated.duration,
+                mediaRecorderState: mediaRecorderRef.current?.state
+            });
+            
+            return updated;
+        });
+    };
+
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const startTimeRef = useRef<number>(0);
     const pausedTimeRef = useRef<number>(0);
+    const isRecordingRefForced = useRef<boolean>(false);
 
     const getMicrophoneErrorMessage = (err: unknown): string => {
         if (err instanceof DOMException) {
@@ -60,7 +80,8 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
 
     const startRecording = useCallback(async () => {
         try {
-            setState(prev => ({ ...prev, error: null }));
+            console.log('[useVoiceRecorder] Starting recording');
+            setStateWithLog(prev => ({ ...prev, error: null }));
 
             if (typeof navigator === 'undefined') {
                 throw new Error('Microphone access is unavailable in this environment.');
@@ -105,6 +126,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
                       });
 
             // Request microphone access
+            console.log('[useVoiceRecorder] Requesting microphone access');
             const stream = await getUserMedia({
                 audio: {
                     echoCancellation: true,
@@ -112,6 +134,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
                     autoGainControl: true,
                 }
             });
+            console.log('[useVoiceRecorder] Microphone access granted');
 
             streamRef.current = stream;
             chunksRef.current = [];
@@ -134,28 +157,40 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
             };
 
             // Start recording
+            console.log('[useVoiceRecorder] Starting MediaRecorder');
             recorder.start();
             startTimeRef.current = Date.now();
             pausedTimeRef.current = 0;
+            isRecordingRefForced.current = true;
 
-            setState(prev => ({
-                ...prev,
-                isRecording: true,
-                isPaused: false,
-                duration: 0
-            }));
+            setState(prev => {
+                const updated = {
+                    ...prev,
+                    isRecording: true,
+                    isPaused: false,
+                    duration: 0
+                };
+                console.log('[useVoiceRecorder] setState isRecording: true - prev:', prev.isRecording, 'updated:', updated.isRecording);
+                return updated;
+            });
+            console.log('[useVoiceRecorder] Recording state set to true - waiting for state to settle');
+            
+            // Ensure state settles before returning
+            await new Promise(resolve => setTimeout(resolve, 50));
 
             // Update duration every 100ms
             durationIntervalRef.current = setInterval(() => {
-                setState(prev => ({
+                setStateWithLog(prev => ({
                     ...prev,
                     duration: Math.floor((Date.now() - startTimeRef.current - pausedTimeRef.current) / 1000)
                 }));
             }, 100);
 
         } catch (err) {
+            isRecordingRefForced.current = false;
             const errorMessage = getMicrophoneErrorMessage(err);
-            setState(prev => ({
+            console.error('[useVoiceRecorder] Error:', errorMessage);
+            setStateWithLog(prev => ({
                 ...prev,
                 error: errorMessage,
                 isRecording: false
@@ -164,6 +199,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
     }, []);
 
     const stopRecording = useCallback(async (): Promise<Blob | null> => {
+        console.log('[useVoiceRecorder] stopRecording called, mediaRecorder state:', mediaRecorderRef.current?.state);
         return new Promise((resolve) => {
             if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
                 resolve(null);
@@ -187,6 +223,8 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
                     streamRef.current.getTracks().forEach(track => track.stop());
                 }
 
+                isRecordingRefForced.current = false;
+
                 setState(prev => ({
                     ...prev,
                     isRecording: false,
@@ -206,7 +244,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
             mediaRecorderRef.current.pause();
             pausedTimeRef.current += Date.now() - startTimeRef.current;
             startTimeRef.current = Date.now();
-            setState(prev => ({ ...prev, isPaused: true }));
+            setStateWithLog(prev => ({ ...prev, isPaused: true }));
         }
     }, []);
 
@@ -214,11 +252,13 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
             mediaRecorderRef.current.resume();
             startTimeRef.current = Date.now();
-            setState(prev => ({ ...prev, isPaused: false }));
+            setStateWithLog(prev => ({ ...prev, isPaused: false }));
         }
     }, []);
 
     const resetRecording = useCallback(() => {
+        console.log('[useVoiceRecorder] resetRecording called');
+        isRecordingRefForced.current = false;
         if (durationIntervalRef.current) {
             clearInterval(durationIntervalRef.current);
         }
@@ -229,13 +269,22 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
         mediaRecorderRef.current = null;
         streamRef.current = null;
 
-        setState({
+        setStateWithLog({
             isRecording: false,
             isPaused: false,
             duration: 0,
             audioBlob: null,
             error: null
         });
+    }, []);
+
+    // Add cleanup logging
+    useEffect(() => {
+        console.log('[useVoiceRecorder] Component mounted/updated');
+        return () => {
+            console.log('[useVoiceRecorder] Component will unmount or cleanup');
+            isRecordingRefForced.current = false;
+        };
     }, []);
 
     return {

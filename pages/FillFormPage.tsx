@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useData } from '../hooks/useData';
 import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport, Facility, User } from '../types';
@@ -491,6 +491,35 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const stopVoiceCaptureRef = useRef<(() => Promise<void>) | null>(null);
     const voiceRecordingStartedRef = useRef(false);
     const [expandedReviewerComments, setExpandedReviewerComments] = useState<Set<string>>(new Set());
+
+    // Memoized callbacks for VoiceCapturePanel to avoid infinite re-renders
+    const handleRecordingStateChange = useCallback((recording: boolean) => {
+        console.log('[handleRecordingStateChange] called with:', recording);
+        setIsVoiceCapturing(recording);
+        if (recording) {
+            // Hide modal during recording so user can navigate the form
+            setShowVoiceCaptureModal(false);
+        }
+    }, []);
+
+    const handleStopRecordingReady = useCallback((stopFn: (() => Promise<void>) | null) => {
+        stopVoiceCaptureRef.current = stopFn;
+    }, []);
+
+    const handleDataExtracted = useCallback((extractedData: Record<string, any>) => {
+        setAnswers(prev => ({ ...prev, ...extractedData }));
+        setIsVoiceCapturing(false);
+        voiceRecordingStartedRef.current = false;
+        stopVoiceCaptureRef.current = null;
+        setShowVoiceCaptureModal(false);
+    }, []);
+
+    const handleVoiceCaptureClose = useCallback(() => {
+        setIsVoiceCapturing(false);
+        voiceRecordingStartedRef.current = false;
+        stopVoiceCaptureRef.current = null;
+        setShowVoiceCaptureModal(false);
+    }, []);
 
     const location = useLocation();
     const search = new URLSearchParams(location.search);
@@ -1829,30 +1858,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                     )
                                 )
                             }
-                            onRecordingStateChange={(recording) => {
-                                setIsVoiceCapturing(recording);
-                                if (recording) {
-                                    voiceRecordingStartedRef.current = true;
-                                    // Close modal when recording starts so form is visible
-                                    setShowVoiceCaptureModal(false);
-                                }
-                            }}
-                            onStopRecordingReady={(stopFn) => {
-                                stopVoiceCaptureRef.current = stopFn;
-                            }}
-                            onDataExtracted={(extractedData) => {
-                                setAnswers(prev => ({ ...prev, ...extractedData }));
-                                setIsVoiceCapturing(false);
-                                voiceRecordingStartedRef.current = false;
-                                stopVoiceCaptureRef.current = null;
-                                setShowVoiceCaptureModal(false);
-                            }}
-                            onClose={() => {
-                                setIsVoiceCapturing(false);
-                                voiceRecordingStartedRef.current = false;
-                                stopVoiceCaptureRef.current = null;
-                                setShowVoiceCaptureModal(false);
-                            }}
+                            onRecordingStateChange={handleRecordingStateChange}
+                            onStopRecordingReady={handleStopRecordingReady}
+                            onDataExtracted={handleDataExtracted}
+                            onClose={handleVoiceCaptureClose}
                         />
                     </div>
                 )}

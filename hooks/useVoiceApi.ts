@@ -65,10 +65,9 @@ export const useVoiceApi = (): UseVoiceApiReturn => {
         resetError();
         try {
             const formData = new FormData();
-            formData.append('recording_id', recordingId.toString());
             formData.append('audio', audioBlob, 'recording.webm');
 
-            await axios.post('/api/voice-capture/upload-audio', formData, {
+            await axios.post(`/api/voice-capture/recordings/${recordingId}/save-audio`, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 }

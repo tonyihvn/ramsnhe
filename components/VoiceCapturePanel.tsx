@@ -57,6 +57,8 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     onRecordingStateChange,
     onStopRecordingReady
 }) => {
+    console.log('[VoiceCapturePanel] Component rendering');
+    
     const { state: recordingState, startRecording, stopRecording, pauseRecording, resumeRecording, resetRecording } = useVoiceRecorder();
     const { loading: apiLoading, error: apiError, createRecording, uploadAudio, transcribeAudio, extractAndMapData, getFormGuidelines } = useVoiceApi();
 
@@ -104,19 +106,27 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     }, [formId, getFormGuidelines]);
 
     useEffect(() => {
+        console.log('[VoiceCapturePanel] useEffect: recordingState.isRecording changed to:', recordingState.isRecording);
+        console.log('[VoiceCapturePanel] useEffect: onRecordingStateChange type:', typeof onRecordingStateChange);
         onRecordingStateChange?.(recordingState.isRecording);
     }, [recordingState.isRecording, onRecordingStateChange]);
 
     const handleStartRecording = async () => {
         try {
+            console.log('[VoiceCapturePanel] handleStartRecording START');
             setPhase({ phase: 'recording' });
             // Create recording entry in database
+            console.log('[VoiceCapturePanel] Creating recording...');
             const recId = await createRecording(formId, activityId);
+            console.log('[VoiceCapturePanel] Recording created with ID:', recId);
             setRecordingId(recId);
             // Start audio recording
             // The useEffect hook will notify parent when recordingState.isRecording becomes true
+            console.log('[VoiceCapturePanel] Calling startRecording()...');
             await startRecording();
+            console.log('[VoiceCapturePanel] startRecording() completed');
         } catch (err) {
+            console.log('[VoiceCapturePanel] ERROR:', err);
             const errorMsg = err instanceof Error ? err.message : 'Failed to start recording';
             setPhase({ phase: 'error', error: errorMsg });
             onRecordingStateChange?.(false);
