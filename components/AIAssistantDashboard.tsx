@@ -44,6 +44,22 @@ const AIAssistantDashboard: React.FC<AIAssistantDashboardProps> = ({ activityId,
       return;
     }
 
+    const businessId = currentUser?.businessId || currentUser?.business_id;
+    if (!businessId) {
+      setError('Business ID not found. Please log in again.');
+      return;
+    }
+
+    if (!settings) {
+      setError('AI settings not loaded. Please refresh the page.');
+      return;
+    }
+
+    if (!settings.vanna_api_url || !settings.vanna_api_key) {
+      setError('Vanna AI is not configured. Please configure it in settings.');
+      return;
+    }
+
     setAiLoading(true);
     setError(null);
     setAiResponseText(null);
@@ -57,7 +73,7 @@ const AIAssistantDashboard: React.FC<AIAssistantDashboardProps> = ({ activityId,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          businessId: currentUser?.businessId,
+          businessId: businessId,
           prompt: aiPrompt,
           context: { 
             activityId,
@@ -67,7 +83,8 @@ const AIAssistantDashboard: React.FC<AIAssistantDashboardProps> = ({ activityId,
       });
 
       if (!vannaResponse.ok) {
-        throw new Error(`Vanna API error: ${vannaResponse.statusText}`);
+        const errorData = await vannaResponse.json().catch(() => ({}));
+        throw new Error(`Vanna API error: ${vannaResponse.statusText}. ${errorData.error || ''}`);
       }
 
       const vannaData = await vannaResponse.json();

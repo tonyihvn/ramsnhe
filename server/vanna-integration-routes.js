@@ -18,6 +18,16 @@ router.post('/vanna/generate-sql', requireAuth, async (req, res) => {
     const { businessId, prompt, context } = req.body;
     const pool = req.app.locals.pool;
 
+    if (!businessId) {
+      console.error('Missing businessId in request');
+      return res.status(400).json({ error: 'Business ID is required' });
+    }
+
+    if (!prompt) {
+      console.error('Missing prompt in request');
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
     // Get AI settings for this business
     const settingsResult = await pool.query(
       `SELECT * FROM ${tables.AI_SETTINGS} WHERE business_id = $1`,
@@ -25,13 +35,15 @@ router.post('/vanna/generate-sql', requireAuth, async (req, res) => {
     );
 
     if (settingsResult.rows.length === 0) {
-      return res.status(400).json({ error: 'AI settings not configured' });
+      console.error(`No AI settings found for business ${businessId}`);
+      return res.status(400).json({ error: 'AI settings not configured for this business' });
     }
 
     const settings = settingsResult.rows[0];
 
     if (!settings.vanna_api_url || !settings.vanna_api_key) {
-      return res.status(400).json({ error: 'Vanna API not configured' });
+      console.error(`Vanna API credentials missing for business ${businessId}`);
+      return res.status(400).json({ error: 'Vanna API credentials not configured' });
     }
 
     // Get activity DDL schema for context
@@ -45,6 +57,8 @@ router.post('/vanna/generate-sql', requireAuth, async (req, res) => {
         ddlContext = activityResult.rows[0].ddl_schema || '';
       }
     }
+
+    console.log(`Calling Vanna API for business ${businessId} with prompt: "${prompt.substring(0, 50)}..."`);
 
     // Call Vanna API to generate SQL
     const vannaResponse = await axios.post(
@@ -79,8 +93,8 @@ router.post('/vanna/generate-sql', requireAuth, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Vanna SQL generation error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Vanna SQL generation error:', error.message, error.response?.data);
+    res.status(500).json({ error: error.message || 'Failed to generate SQL' });
   }
 });
 

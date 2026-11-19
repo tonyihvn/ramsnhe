@@ -42,6 +42,7 @@ import AccountApprovalPage from './pages/AccountApprovalPage';
 import { DataProvider, useData } from './hooks/useData';
 import { ThemeProvider } from './hooks/useTheme';
 import ErrorBoundary from './components/ErrorBoundary';
+import { PublicClientApplication } from '@azure/msal-browser';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useData();
@@ -138,6 +139,43 @@ const AppRoutes = () => {
 }
 
 const App: React.FC = () => {
+  useEffect(() => {
+    const hasAuthResponse = window.location.hash.includes('code=')
+      || window.location.hash.includes('error=')
+      || window.location.search.includes('code=')
+      || window.location.search.includes('error=');
+    if (!hasAuthResponse) return;
+
+    const clientId = import.meta.env.VITE_POWERBI_CLIENT_ID;
+    const tenantId = import.meta.env.VITE_POWERBI_TENANT_ID || 'common';
+    if (!clientId) return;
+
+    const redirectUri = String(import.meta.env.VITE_POWERBI_REDIRECT_URI || `${window.location.origin}/powerbi-callback.html`);
+    const msal = new PublicClientApplication({
+      auth: {
+        clientId,
+        authority: `https://login.microsoftonline.com/${tenantId}`,
+        redirectUri,
+      },
+      cache: {
+        cacheLocation: 'sessionStorage',
+        storeAuthStateInCookie: false,
+      },
+    });
+
+    msal.initialize()
+      .then(() => msal.handleRedirectPromise())
+      .then((result) => {
+        if (result?.account) {
+          msal.setActiveAccount(result.account);
+        }
+        sessionStorage.removeItem('powerbi_quick_create_pending');
+      })
+      .catch((error) => {
+        console.error('Microsoft authentication redirect failed', error);
+      });
+  }, []);
+
   // Materialize removed: no longer needed
   useEffect(() => {
     const loadTitle = async () => {

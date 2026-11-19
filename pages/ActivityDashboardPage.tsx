@@ -27,6 +27,9 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Filler, Title, Tooltip, Legend);
 
+const EMPTY_ARRAY: any[] = [];
+const EMPTY_OBJECT: Record<string, any> = {};
+
 type StatCondition = {
   id: string;
   questionId: string;
@@ -69,7 +72,10 @@ const ActivityDashboardPage: React.FC = () => {
   const [powerbiSaving, setPowerbiSaving] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [quickCreateLoading, setQuickCreateLoading] = useState(false);
+  const [quickCreatePayload, setQuickCreatePayload] = useState<any>(null);
+  const [quickCreateStatus, setQuickCreateStatus] = useState<string>('Preparing data');
   const quickCreateContainerRef = useRef<HTMLDivElement | null>(null);
+  const quickCreateInFlightRef = useRef(false);
   // AI assistant states
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -186,11 +192,13 @@ const ActivityDashboardPage: React.FC = () => {
 
 
   const activity = data?.activity || {};
-  const questions = Array.isArray(data?.questions) ? data.questions : [];
-  const reports = Array.isArray(data?.reports) ? data.reports : [];
-  const answersByQuestion = data?.answersByQuestion || {};
-  const uploadedDocs = Array.isArray(data?.uploadedDocs) ? data.uploadedDocs : [];
-  const allAnswers = Array.isArray(data?.answers) ? data.answers : [];
+  const questions = Array.isArray(data?.questions) ? data.questions : EMPTY_ARRAY;
+  const reports = Array.isArray(data?.reports) ? data.reports : EMPTY_ARRAY;
+  const answersByQuestion = data?.answersByQuestion && typeof data.answersByQuestion === 'object'
+    ? data.answersByQuestion
+    : EMPTY_OBJECT;
+  const uploadedDocs = Array.isArray(data?.uploadedDocs) ? data.uploadedDocs : EMPTY_ARRAY;
+  const allAnswers = Array.isArray(data?.answers) ? data.answers : EMPTY_ARRAY;
 
   const normalizeAnswerValue = (value: any): string => {
     let v = value;
@@ -496,9 +504,13 @@ const ActivityDashboardPage: React.FC = () => {
   };
 
   const launchQuickCreate = async () => {
+    if (quickCreateInFlightRef.current) return;
+    quickCreateInFlightRef.current = true;
+
     const clientId = import.meta.env.VITE_POWERBI_CLIENT_ID;
     const tenantId = import.meta.env.VITE_POWERBI_TENANT_ID || 'common';
     if (!clientId) {
+      quickCreateInFlightRef.current = false;
       swalError(
         'Power BI setup required',
         'Set VITE_POWERBI_CLIENT_ID, VITE_POWERBI_TENANT_ID, and VITE_POWERBI_REDIRECT_URI in .env, then restart the app.'
@@ -508,11 +520,15 @@ const ActivityDashboardPage: React.FC = () => {
 
     setQuickCreateLoading(true);
     setQuickCreateOpen(true);
+    setQuickCreatePayload(null);
+    setQuickCreateStatus('Preparing collected data');
     setPowerbiModalOpen(false);
 
+    let msal: PublicClientApplication | null = null;
     try {
-      const redirectUri = import.meta.env.VITE_POWERBI_REDIRECT_URI || window.location.origin;
-      const msal = new PublicClientApplication({
+      const configuredRedirectUri = String(import.meta.env.VITE_POWERBI_REDIRECT_URI || '').trim();
+      const redirectUri = configuredRedirectUri || `${window.location.origin}/powerbi-callback.html`;
+      msal = new PublicClientApplication({
         auth: {
           clientId,
           authority: `https://login.microsoftonline.com/${tenantId}`,
@@ -523,34 +539,6 @@ const ActivityDashboardPage: React.FC = () => {
           storeAuthStateInCookie: false,
         },
       });
-
-      await msal.initialize();
-      const scopes = [
-        'openid',
-        'profile',
-        'offline_access',
-        'https://analysis.windows.net/powerbi/api/Content.Create',
-        'https://analysis.windows.net/powerbi/api/Dataset.ReadWrite.All',
-        'https://analysis.windows.net/powerbi/api/Report.Read.All',
-        'https://analysis.windows.net/powerbi/api/Workspace.Read.All',
-      ];
-
-      const accounts = msal.getAllAccounts();
-      let account = msal.getActiveAccount() || accounts[0] || null;
-      if (!account) {
-        const loginResult = await msal.loginPopup({ scopes });
-        account = loginResult.account;
-        msal.setActiveAccount(account);
-      }
-
-      let accessToken = '';
-      try {
-        const silent = await msal.acquireTokenSilent({ account, scopes });
-        accessToken = silent.accessToken;
-      } catch (silentError) {
-        const interactive = await msal.acquireTokenPopup({ account, scopes });
-        accessToken = interactive.accessToken;
-      }
 
       const entityType = String(activity.response_type || activity.responseType || '').toLowerCase();
       const entityColumn = entityType === 'user'
@@ -602,13 +590,13 @@ const ActivityDashboardPage: React.FC = () => {
       const inferDataType = (index: number) => {
         const values = rows.map(row => row[index]).filter(value => value !== '');
         if (index === 1 && values.length > 0 && values.every(value => !Number.isNaN(Date.parse(value)))) {
-          return powerbiSdk.models.DataType.DateTime;
+          return 'DateTime';
         }
         if (values.length > 0 && values.every(value => !Number.isNaN(Number(value)))) {
           const decimals = values.some(value => value.includes('.'));
-          return decimals ? powerbiSdk.models.DataType.Number : powerbiSdk.models.DataType.Int32;
+          return decimals ? 'Number' : 'Int32';
         }
-        return powerbiSdk.models.DataType.Text;
+        return 'Text';
       };
 
       const tableName = 'Table';
@@ -625,6 +613,59 @@ const ActivityDashboardPage: React.FC = () => {
         rows,
       }];
 
+      const payloadPreview = {
+        modelName: `${activity.title || 'Activity'} Collected Data`,
+        locale: 'en_US',
+        tableSchemaList,
+        data,
+      };
+      setQuickCreatePayload(payloadPreview);
+      setQuickCreateStatus(`Payload ready: ${rows.length} row(s), ${columnNames.length} column(s)`);
+
+      await msal.initialize();
+      setQuickCreateStatus('Waiting for Microsoft authentication');
+      const scopes = [
+        'openid',
+        'profile',
+        'offline_access',
+        'https://analysis.windows.net/powerbi/api/Content.Create',
+        'https://analysis.windows.net/powerbi/api/Dataset.ReadWrite.All',
+        'https://analysis.windows.net/powerbi/api/Report.Read.All',
+        'https://analysis.windows.net/powerbi/api/Workspace.Read.All',
+      ];
+
+      const accounts = msal.getAllAccounts();
+      let account = msal.getActiveAccount() || accounts[0] || null;
+      let accessToken = '';
+
+      if (!account) {
+        sessionStorage.setItem('powerbi_quick_create_pending', String(activityId));
+        await msal.loginRedirect({
+          scopes,
+          redirectUri,
+        });
+        return;
+      }
+
+      try {
+        const silent = await msal.acquireTokenSilent({ account, scopes });
+        accessToken = silent.accessToken;
+      } catch (silentError) {
+        setQuickCreateStatus('Redirecting to Microsoft authentication');
+        sessionStorage.setItem('powerbi_quick_create_pending', String(activityId));
+        await msal.acquireTokenRedirect({
+          ...({ account } as any),
+          scopes,
+          redirectUri,
+        });
+        return;
+      }
+
+      if (!accessToken) {
+        throw new Error('Microsoft authentication did not return an access token.');
+      }
+
+      setQuickCreateStatus('Loading Power BI Quick Create');
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (!quickCreateContainerRef.current) {
         throw new Error('Power BI report container is not available.');
@@ -639,7 +680,7 @@ const ActivityDashboardPage: React.FC = () => {
       const config: any = {
         type: 'quickCreate',
         accessToken,
-        tokenType: powerbiSdk.models.TokenType.Aad,
+        tokenType: 0,
         embedUrl: 'https://app.powerbi.com/quickcreate',
         datasetCreateConfig: {
           modelName: `${activity.title || 'Activity'} Collected Data`,
@@ -647,7 +688,7 @@ const ActivityDashboardPage: React.FC = () => {
           tableSchemaList,
           data,
         },
-        reportCreationMode: powerbiSdk.models.ReportCreationMode.QuickExplore,
+        reportCreationMode: 'QuickExplore',
         settings: {
           localeSettings: {
             language: 'en_US',
@@ -658,10 +699,22 @@ const ActivityDashboardPage: React.FC = () => {
       service.quickCreate(quickCreateContainerRef.current, config);
     } catch (error: any) {
       console.error('Power BI Quick Create failed', error);
-      const message = String(error?.message || error || 'Unable to start Power BI Quick Create.');
+      const errorCode = error?.errorCode || '';
+      let message = String(error?.message || error || 'Unable to start Power BI Quick Create.');
+      if (errorCode === 'timed_out' || /timed_out/i.test(message)) {
+        message = 'Microsoft authentication timed out. Complete sign-in in the popup within the permitted time, or allow popups for http://localhost:9090 and try again.';
+        try {
+          if (msal) await msal.clearCache();
+        } catch (cacheError) {
+          console.warn('Could not clear failed MSAL interaction state', cacheError);
+        }
+      } else if (errorCode === 'interaction_in_progress' || /interaction_in_progress/i.test(message)) {
+        message = 'Another Microsoft authentication is still in progress. Close existing sign-in windows, wait briefly, then try again.';
+      }
+      setQuickCreateStatus(message);
       swalError('Power BI Quick Create failed', message);
-      setQuickCreateOpen(false);
     } finally {
+      quickCreateInFlightRef.current = false;
       setQuickCreateLoading(false);
     }
   };
@@ -780,11 +833,49 @@ const ActivityDashboardPage: React.FC = () => {
               </div>
               <Button size="sm" variant="secondary" onClick={() => setQuickCreateOpen(false)}>Close</Button>
             </div>
-            <div
-              ref={quickCreateContainerRef}
-              className="flex-1 min-h-0"
-              style={{ minHeight: '500px' }}
-            />
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-0">
+              <aside className="lg:col-span-1 border-r overflow-hidden flex flex-col">
+                <div className="px-4 py-3 border-b">
+                  <div className="text-sm font-medium">Data payload</div>
+                  <div className="mt-1 text-xs text-gray-500">{quickCreateStatus}</div>
+                </div>
+                {quickCreatePayload ? (
+                  <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-600">Model</div>
+                      <div className="text-sm break-words">{quickCreatePayload.modelName}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-gray-600">Columns</div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {quickCreatePayload.tableSchemaList[0]?.columns?.map((column: any) => (
+                          <span key={column.name} className="rounded bg-gray-100 px-2 py-1 text-xs">
+                            {column.name} ({column.dataType})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <pre className="rounded border bg-gray-950 p-3 text-xs text-green-100 whitespace-pre-wrap break-words max-h-[58vh] overflow-auto">
+                      {JSON.stringify(quickCreatePayload, null, 2)}
+                    </pre>
+                  </div>
+                ) : (
+                  <div className="p-4 text-sm text-gray-500">Building payload...</div>
+                )}
+              </aside>
+              <div className="lg:col-span-2 min-h-0 relative">
+                {quickCreateLoading && (
+                  <div className="absolute inset-x-0 top-2 z-10 mx-auto w-fit rounded bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                    {quickCreateStatus}
+                  </div>
+                )}
+                <div
+                  ref={quickCreateContainerRef}
+                  className="h-full"
+                  style={{ minHeight: '500px' }}
+                />
+              </div>
+            </div>
           </div>
         </div>
       )}

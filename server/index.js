@@ -22,6 +22,7 @@ import { initializeVannaServer, shutdownVannaServer } from './vanna-server-manag
 import { createVannaServerRoutes } from './vanna-server-routes.js';
 import aiSettingsRouter from './ai-settings-routes.js';
 import voiceCaptureRouter from './voice-capture-routes.js';
+import vannaIntegrationRouter from './vanna-integration-routes.js';
 
 // Helper: Prepare SMTP configuration with support for self-signed certificates and Gmail app passwords
 function prepareSMTPConfig(smtpConfig) {
@@ -1714,6 +1715,9 @@ app.use('/api/vanna-server', vannaServerRoutes);
 
 // Register AI Settings Routes
 app.use('/api', aiSettingsRouter);
+
+// Register Vanna integration routes used by the dashboard AI assistant
+app.use('/api', vannaIntegrationRouter);
 
 // Register Voice Capture Routes
 app.use('/api/voice-capture', async (req, res, next) => {
