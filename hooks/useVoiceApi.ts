@@ -1,6 +1,9 @@
 import { useState, useCallback } from 'react';
 import axios from 'axios';
 
+// Ensure axios sends cookies with requests
+axios.defaults.withCredentials = true;
+
 export interface ExtractedData {
     extracted_data: Record<string, any>;
     confidence_scores: Record<string, number>;
@@ -46,13 +49,46 @@ export const useVoiceApi = (): UseVoiceApiReturn => {
         setLoading(true);
         resetError();
         try {
+            console.log('[useVoiceApi.createRecording] Starting - formId:', formId, 'activityId:', activityId);
             const response = await axios.post('/api/voice-capture/recordings', {
                 form_id: formId,
                 activity_id: activityId
+            }, {
+                withCredentials: true
             });
+            console.log('[useVoiceApi.createRecording] Success, response:', response.status, response.data);
             return response.data.recording_id;
-        } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to create recording';
+        } catch (err: any) {
+            let message = 'Failed to create recording';
+            if (err.response) {
+                // Server responded with error status
+                message = `Server error (${err.response.status}): ${err.response.data?.error || err.response.statusText}`;
+            } else if (err.request) {
+                // Request was sent but no response
+                message = 'No response from server: ' + (err.message || 'Network error');
+            } else {
+                // Error in request setup
+                message = err.message || 'Failed to create recording';
+            }
+            console.error('[useVoiceApi] createRecording error:', {
+                message,
+                status: err.response?.status,
+                data: err.response?.data,
+                errorDetails: err
+            });
+            
+            // Store error in localStorage for debugging
+            try {
+                localStorage.setItem('voiceApiError', JSON.stringify({
+                    timestamp: new Date().toISOString(),
+                    message: message,
+                    status: err.response?.status,
+                    data: err.response?.data
+                }));
+            } catch (e) {
+                console.error('Failed to store error in localStorage:', e);
+            }
+            
             setError(message);
             throw new Error(message);
         } finally {

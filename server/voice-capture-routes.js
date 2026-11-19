@@ -15,8 +15,9 @@ const tablePrefix = process.env.TABLE_PREFIX || 'dqatb_';
 
 // Middleware: Check authentication
 const requireAuth = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  // Allow if req.user is set (by API middleware) or if session has userId
+  if (!req.user && !req.session?.userId) {
+    return res.status(401).json({ error: 'Unauthorized: No user session found' });
   }
   next();
 };
@@ -24,7 +25,21 @@ const requireAuth = (req, res, next) => {
 // Middleware: Extract business_id from authenticated user
 router.use(requireAuth);
 
-const getBusinessId = (req) => req.user?.business_id || req.body?.business_id;
+const getBusinessId = (req) => {
+  // Try req.user first (populated by /api middleware), then fall back to session
+  if (req.user?.business_id) return req.user.business_id;
+  if (req.body?.business_id) return req.body.business_id;
+  if (req.session?.businessId) return req.session.businessId;
+  if (req.session?.business_id) return req.session.business_id;
+  return null;
+};
+
+const getUserId = (req) => {
+  // Try req.user first (populated by /api middleware), then fall back to session
+  if (req.user?.id) return req.user.id;
+  if (req.session?.userId) return req.session.userId;
+  return null;
+};
 
 // Helper: Get pool from app locals
 const getPool = (req) => req.app.locals.pool;
@@ -305,7 +320,7 @@ router.post('/form/:formId/guidelines', async (req, res) => {
         await ensureVoiceGuidelinesTable(req);
         const { formId } = req.params;
         const businessId = getBusinessId(req);
-        const userId = req.user?.id;
+        const userId = getUserId(req);
         const { is_enabled, ai_guide_text, interviewer_guide_text, extraction_prompt_override } = req.body;
 
         const result = await getPool(req).query(
@@ -358,7 +373,7 @@ router.post('/recordings', async (req, res) => {
             const sessionBusinessId = req.session?.businessId || req.session?.business_id;
             businessId = sessionBusinessId || null;
         }
-        const userId = req.user?.id;
+        const userId = getUserId(req);
         const { activity_id, form_id, duration_seconds, file_size_bytes } = req.body;
 
         if (!activity_id || !form_id) {

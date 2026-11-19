@@ -163,16 +163,12 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
             pausedTimeRef.current = 0;
             isRecordingRefForced.current = true;
 
-            setState(prev => {
-                const updated = {
-                    ...prev,
-                    isRecording: true,
-                    isPaused: false,
-                    duration: 0
-                };
-                console.log('[useVoiceRecorder] setState isRecording: true - prev:', prev.isRecording, 'updated:', updated.isRecording);
-                return updated;
-            });
+            setStateWithLog(prev => ({
+                ...prev,
+                isRecording: true,
+                isPaused: false,
+                duration: 0
+            }));
             console.log('[useVoiceRecorder] Recording state set to true - waiting for state to settle');
             
             // Ensure state settles before returning
@@ -195,6 +191,8 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
                 error: errorMessage,
                 isRecording: false
             }));
+            // Throw error so parent can handle it
+            throw new Error(errorMessage);
         }
     }, []);
 
@@ -225,7 +223,7 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
 
                 isRecordingRefForced.current = false;
 
-                setState(prev => ({
+                setStateWithLog(prev => ({
                     ...prev,
                     isRecording: false,
                     isPaused: false,
@@ -280,12 +278,12 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
 
     // Add cleanup logging
     useEffect(() => {
-        console.log('[useVoiceRecorder] Component mounted/updated');
+        console.log('[useVoiceRecorder] Component mounted/updated, current state:', state);
         return () => {
             console.log('[useVoiceRecorder] Component will unmount or cleanup');
             isRecordingRefForced.current = false;
         };
-    }, []);
+    }, [state]);
 
     return {
         state,

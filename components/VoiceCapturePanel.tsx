@@ -21,6 +21,7 @@ interface VoiceCapturePanelProps {
     onGuidelinesLoaded?: (guidelines: any) => void;
     onRecordingStateChange?: (isRecording: boolean) => void;
     onStopRecordingReady?: (stopRecording: (() => Promise<void>) | null) => void;
+    onError?: (error: string) => void;
 }
 
 interface RecordingPhase {
@@ -55,7 +56,8 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     onClose,
     onGuidelinesLoaded,
     onRecordingStateChange,
-    onStopRecordingReady
+    onStopRecordingReady,
+    onError
 }) => {
     console.log('[VoiceCapturePanel] Component rendering');
     
@@ -70,6 +72,13 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     const [editedData, setEditedData] = useState<Record<string, any>>({});
 
     // Load form guidelines on mount
+    useEffect(() => {
+        console.log('[VoiceCapturePanel] Component MOUNTED/updated');
+        return () => {
+            console.log('[VoiceCapturePanel] Component UNMOUNTING');
+        };
+    }, []);
+    
     useEffect(() => {
         const loadGuidelines = async () => {
             try {
@@ -103,13 +112,21 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
             }
         };
         loadGuidelines();
+        loadGuidelines();
     }, [formId, getFormGuidelines]);
 
     useEffect(() => {
         console.log('[VoiceCapturePanel] useEffect: recordingState.isRecording changed to:', recordingState.isRecording);
-        console.log('[VoiceCapturePanel] useEffect: onRecordingStateChange type:', typeof onRecordingStateChange);
         onRecordingStateChange?.(recordingState.isRecording);
     }, [recordingState.isRecording, onRecordingStateChange]);
+
+    // Alert when recording starts
+    useEffect(() => {
+        if (recordingState.isRecording) {
+            console.log('[VoiceCapturePanel] ALERT: Recording started! isRecording is true');
+            // Don't use alert() as it will block audio
+        }
+    }, [recordingState.isRecording]);
 
     const handleStartRecording = async () => {
         try {
@@ -121,13 +138,22 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
             console.log('[VoiceCapturePanel] Recording created with ID:', recId);
             setRecordingId(recId);
             // Start audio recording
-            // The useEffect hook will notify parent when recordingState.isRecording becomes true
             console.log('[VoiceCapturePanel] Calling startRecording()...');
             await startRecording();
             console.log('[VoiceCapturePanel] startRecording() completed');
+            
+            // Notify parent immediately that recording started
+            // Don't wait for state to sync - call directly
+            console.log('[VoiceCapturePanel] Calling onRecordingStateChange(true) directly after startRecording');
+            onRecordingStateChange?.(true);
         } catch (err) {
-            console.log('[VoiceCapturePanel] ERROR:', err);
-            const errorMsg = err instanceof Error ? err.message : 'Failed to start recording';
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            console.error('[VoiceCapturePanel] ERROR in handleStartRecording:', errorMsg);
+            console.error('[VoiceCapturePanel] Full error object:', err);
+            
+            // Notify parent of error
+            onError?.(errorMsg);
+            
             setPhase({ phase: 'error', error: errorMsg });
             onRecordingStateChange?.(false);
         }
