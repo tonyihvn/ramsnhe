@@ -156,9 +156,9 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
                 }
             };
 
-            // Start recording
+            // Start recording - request data every 100ms to ensure chunks are collected
             console.log('[useVoiceRecorder] Starting MediaRecorder');
-            recorder.start();
+            recorder.start(100); // Collect data every 100ms
             startTimeRef.current = Date.now();
             pausedTimeRef.current = 0;
             isRecordingRefForced.current = true;
@@ -198,42 +198,113 @@ export const useVoiceRecorder = (): UseVoiceRecorderReturn => {
 
     const stopRecording = useCallback(async (): Promise<Blob | null> => {
         console.log('[useVoiceRecorder] stopRecording called, mediaRecorder state:', mediaRecorderRef.current?.state);
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+                console.log('[useVoiceRecorder] MediaRecorder is inactive or not available, returning null');
                 resolve(null);
                 return;
             }
 
             const recorder = mediaRecorderRef.current;
+            let stopTimeout: NodeJS.Timeout | null = null;
+            let resolved = false;
 
+            // Define handlers first, before calling stop()
             recorder.onstop = () => {
-                // Clear interval
+                if (resolved) return; // Prevent double resolution
+                resolved = true;
+
+                // Clear timeout
+                if (stopTimeout) {
+                    clearTimeout(stopTimeout);
+                    stopTimeout = null;
+                }
+
+                try {
+                    // Clear interval
+                    if (durationIntervalRef.current) {
+                        clearInterval(durationIntervalRef.current);
+                    }
+
+                    console.log('[useVoiceRecorder] onstop handler called, chunks count:', chunksRef.current.length, 'total size:', chunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0));
+
+                    // Create blob from chunks
+                    const mimeType = 'audio/webm;codecs=opus';
+                    const blob = new Blob(chunksRef.current, { type: mimeType });
+
+                    console.log('[useVoiceRecorder] Blob created, size:', blob.size);
+
+                    // Stop stream
+                    if (streamRef.current) {
+                        streamRef.current.getTracks().forEach(track => track.stop());
+                    }
+
+                    isRecordingRefForced.current = false;
+
+                    setStateWithLog(prev => ({
+                        ...prev,
+                        isRecording: false,
+                        isPaused: false,
+                        audioBlob: blob
+                    }));
+
+                    resolve(blob);
+                } catch (error) {
+                    console.error('[useVoiceRecorder] Error in onstop handler:', error);
+                    reject(error);
+                }
+            };
+
+            // Also handle error event
+            recorder.onerror = (event: Event) => {
+                if (resolved) return;
+                resolved = true;
+
+                if (stopTimeout) {
+                    clearTimeout(stopTimeout);
+                    stopTimeout = null;
+                }
+                console.error('[useVoiceRecorder] MediaRecorder error:', event);
+                reject(new Error(`Voice Capture recording could not be stopped - MediaRecorder error`));
+            };
+
+            // Set a timeout to prevent hanging if onstop doesn't fire
+            stopTimeout = setTimeout(() => {
+                if (resolved) return;
+                resolved = true;
+
+                console.error('[useVoiceRecorder] stopRecording timeout - onstop event did not fire');
+                // Force cleanup
                 if (durationIntervalRef.current) {
                     clearInterval(durationIntervalRef.current);
                 }
-
-                // Create blob from chunks
-                const mimeType = 'audio/webm;codecs=opus';
-                const blob = new Blob(chunksRef.current, { type: mimeType });
-
-                // Stop stream
                 if (streamRef.current) {
                     streamRef.current.getTracks().forEach(track => track.stop());
                 }
-
                 isRecordingRefForced.current = false;
-
                 setStateWithLog(prev => ({
                     ...prev,
                     isRecording: false,
-                    isPaused: false,
-                    audioBlob: blob
+                    isPaused: false
                 }));
+                reject(new Error('Voice Capture recording could not be stopped - timeout'));
+            }, 5000); // 5 second timeout
 
-                resolve(blob);
-            };
+            try {
+                console.log('[useVoiceRecorder] Calling recorder.stop()');
+                recorder.stop();
+                console.log('[useVoiceRecorder] recorder.stop() called successfully');
+            } catch (error) {
+                if (resolved) return;
+                resolved = true;
 
-            recorder.stop();
+                if (stopTimeout) {
+                    clearTimeout(stopTimeout);
+                    stopTimeout = null;
+                }
+                console.error('[useVoiceRecorder] Error calling recorder.stop():', error);
+                reject(new Error(`Voice Capture recording could not be stopped - ${error instanceof Error ? error.message : 'unknown error'}`));
+            }
         });
     }, []);
 

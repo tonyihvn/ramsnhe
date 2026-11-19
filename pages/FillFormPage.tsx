@@ -5,7 +5,7 @@ import { FormDefinition, Question, AnswerType, UploadedFile, ActivityReport, Fac
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import MInput from '../components/ui/MInput';
-import { ArrowLeftIcon, MicrophoneIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, MicrophoneIcon, PauseIcon, PlayIcon } from '@heroicons/react/24/outline';
 import * as ExcelJS from 'exceljs';
 import { filterOptionsByCondition } from '../utils/conditionEvaluator';
 import { buildFormulasContext, evaluateFormulaWithContext, evaluateFormulasForForm } from '../utils/formulaEvaluator';
@@ -462,6 +462,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const history = useNavigate();
     const activityId = activityIdOverride || activityIdParam;
     const { getActivity, saveReport, currentUser, facilities, users, reports } = useData();
+    const { settings: themeSettings } = useTheme();
     
     // State for activity fetching
     const [activity, setActivity] = useState<Activity | undefined>(undefined);
@@ -488,7 +489,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [tableImportStatus, setTableImportStatus] = useState<any>(null);
     const [showVoiceCaptureModal, setShowVoiceCaptureModal] = useState(false);
     const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
+    const [isVoiceCapturingPaused, setIsVoiceCapturingPaused] = useState(false);
     const stopVoiceCaptureRef = useRef<(() => Promise<void>) | null>(null);
+    const pauseVoiceCaptureRef = useRef<(() => void) | null>(null);
+    const resumeVoiceCaptureRef = useRef<(() => void) | null>(null);
     const voiceRecordingStartedRef = useRef(false);
     const [expandedReviewerComments, setExpandedReviewerComments] = useState<Set<string>>(new Set());
 
@@ -513,18 +517,29 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
         stopVoiceCaptureRef.current = stopFn;
     }, []);
 
+    const handlePauseResumeReady = useCallback((pauseFn: (() => void) | null, resumeFn: (() => void) | null) => {
+        pauseVoiceCaptureRef.current = pauseFn;
+        resumeVoiceCaptureRef.current = resumeFn;
+    }, []);
+
     const handleDataExtracted = useCallback((extractedData: Record<string, any>) => {
         setAnswers(prev => ({ ...prev, ...extractedData }));
         setIsVoiceCapturing(false);
+        setIsVoiceCapturingPaused(false);
         voiceRecordingStartedRef.current = false;
         stopVoiceCaptureRef.current = null;
+        pauseVoiceCaptureRef.current = null;
+        resumeVoiceCaptureRef.current = null;
         setShowVoiceCaptureModal(false);
     }, []);
 
     const handleVoiceCaptureClose = useCallback(() => {
         setIsVoiceCapturing(false);
+        setIsVoiceCapturingPaused(false);
         voiceRecordingStartedRef.current = false;
         stopVoiceCaptureRef.current = null;
+        pauseVoiceCaptureRef.current = null;
+        resumeVoiceCaptureRef.current = null;
         setShowVoiceCaptureModal(false);
     }, []);
 
@@ -1478,30 +1493,52 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                         <h1 className="text-2xl font-bold text-gray-800">Data Collection: {activity.title}</h1>
                     </div>
                     <div className="flex flex-nowrap gap-2">
-                        <Button
-                            variant="secondary"
-                            size="sm"
-                            className="whitespace-nowrap justify-center min-w-[118px]"
-                            onClick={isVoiceCapturing
-                                ? () => stopVoiceCaptureRef.current?.()
-                                : () => {
-                                    console.log('[FillFormPage] Voice Capture button clicked, isVoiceCapturing:', isVoiceCapturing);
-                                    if (isVoiceCapturing) {
-                                        // Stop recording
-                                        if (stopVoiceCaptureRef.current) {
-                                            stopVoiceCaptureRef.current();
-                                        }
-                                    } else {
-                                        // Start recording
-                                        voiceRecordingStartedRef.current = true;
-                                        setShowVoiceCaptureModal(true);
-                                    }
+                        {!isVoiceCapturing ? (
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                className="whitespace-nowrap justify-center min-w-[118px]"
+                                onClick={() => {
+                                    console.log('[FillFormPage] Voice Capture button clicked');
+                                    voiceRecordingStartedRef.current = true;
+                                    setShowVoiceCaptureModal(true);
                                 }}
-                            leftIcon={isVoiceCapturing ? undefined : <MicrophoneIcon className="h-4 w-4" />}
-                            title={isVoiceCapturing ? 'Stop voice capture and process transcription' : 'Record interview conversation and auto-fill form'}
-                        >
-                            {isVoiceCapturing ? 'Stop Voice Capture' : 'Voice Capture'}
-                        </Button>
+                                leftIcon={<MicrophoneIcon className="h-4 w-4" />}
+                                title="Record interview conversation and auto-fill form"
+                            >
+                                Voice Capture
+                            </Button>
+                        ) : (
+                            <>
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="whitespace-nowrap justify-center min-w-[100px]"
+                                    onClick={() => {
+                                        if (isVoiceCapturingPaused) {
+                                            resumeVoiceCaptureRef.current?.();
+                                            setIsVoiceCapturingPaused(false);
+                                        } else {
+                                            pauseVoiceCaptureRef.current?.();
+                                            setIsVoiceCapturingPaused(true);
+                                        }
+                                    }}
+                                    leftIcon={isVoiceCapturingPaused ? <PlayIcon className="h-4 w-4" /> : <PauseIcon className="h-4 w-4" />}
+                                    title={isVoiceCapturingPaused ? 'Resume recording' : 'Pause recording'}
+                                >
+                                    {isVoiceCapturingPaused ? 'Resume' : 'Pause'}
+                                </Button>
+                                <Button
+                                    variant="danger"
+                                    size="sm"
+                                    className="whitespace-nowrap justify-center min-w-[118px]"
+                                    onClick={() => stopVoiceCaptureRef.current?.()}
+                                    title="Stop voice capture and process transcription"
+                                >
+                                    Stop Capture
+                                </Button>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
@@ -1514,10 +1551,23 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             {!formSubmitted ? (
                 <Card>
                     <form onSubmit={handleSubmit}>
-                        <div className="border-b border-gray-200">
+                        <div className="border-b border-gray-200" style={{ backgroundColor: (themeSettings as any).settingsTabsBgColor || '#f3f4f6' }}>
                             <nav className="-mb-px flex space-x-8 overflow-x-auto" aria-label="Tabs">
                                 {visiblePages.map((page, index) => (
-                                    <button type="button" key={page.id} onClick={() => setActivePageIndex(index)} className={`${index === safeActivePageIndex ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}>
+                                    <button 
+                                        type="button" 
+                                        key={page.id} 
+                                        onClick={() => setActivePageIndex(index)} 
+                                        style={index === safeActivePageIndex ? { 
+                                            backgroundColor: (themeSettings as any).settingsTabsActiveBgColor || '#eff6ff',
+                                            color: (themeSettings as any).settingsTabsActiveTextColor || '#1e40af',
+                                            borderBottomColor: (themeSettings as any).settingsTabsActiveTextColor || '#1e40af'
+                                        } : { 
+                                            color: (themeSettings as any).settingsTabsTextColor || '#6b7280',
+                                            borderBottomColor: 'transparent'
+                                        }}
+                                        className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors`}
+                                    >
                                         {page.name}
                                     </button>
                                 ))}
@@ -1881,6 +1931,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             }
                             onRecordingStateChange={handleRecordingStateChange}
                             onStopRecordingReady={handleStopRecordingReady}
+                            onPauseResumeReady={handlePauseResumeReady}
                             onDataExtracted={handleDataExtracted}
                             onClose={handleVoiceCaptureClose}
                             onError={handleVoiceCaptureError}

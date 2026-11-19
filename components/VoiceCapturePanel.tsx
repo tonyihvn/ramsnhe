@@ -21,6 +21,7 @@ interface VoiceCapturePanelProps {
     onGuidelinesLoaded?: (guidelines: any) => void;
     onRecordingStateChange?: (isRecording: boolean) => void;
     onStopRecordingReady?: (stopRecording: (() => Promise<void>) | null) => void;
+    onPauseResumeReady?: (pauseFn: (() => void) | null, resumeFn: (() => void) | null) => void;
     onError?: (error: string) => void;
 }
 
@@ -57,6 +58,7 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     onGuidelinesLoaded,
     onRecordingStateChange,
     onStopRecordingReady,
+    onPauseResumeReady,
     onError
 }) => {
     console.log('[VoiceCapturePanel] Component rendering');
@@ -70,6 +72,7 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     const [guideAccepted, setGuideAccepted] = useState(false);
     const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
     const [editedData, setEditedData] = useState<Record<string, any>>({});
+    const [transcriptionText, setTranscriptionText] = useState<string>('');
 
     // Load form guidelines on mount
     useEffect(() => {
@@ -163,12 +166,30 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
         try {
             setPhase({ phase: 'transcribing', data: { status: 'Stopping recording...' } });
             
-            // Stop recording
-            const audioBlob = await stopRecording();
+            // Stop recording with timeout
+            let audioBlob: Blob | null = null;
+            try {
+                audioBlob = await Promise.race([
+                    stopRecording(),
+                    new Promise<null>((_, reject) => 
+                        setTimeout(() => reject(new Error('Recording stop timeout - please try again (timeout: 15s)')), 15000)
+                    )
+                ]);
+            } catch (stopError) {
+                const stopErrorMsg = stopError instanceof Error ? stopError.message : 'Failed to stop recording';
+                throw new Error(`Voice Capture recording could not be stopped: ${stopErrorMsg}`);
+            }
 
-            if (!audioBlob || !recordingId) {
+            if (!audioBlob) {
                 throw new Error('No audio data recorded');
             }
+
+            if (!recordingId) {
+                throw new Error('Recording ID is missing');
+            }
+
+            // Log blob info for debugging
+            console.log('[VoiceCapturePanel] Audio blob received:', { size: audioBlob.size, type: audioBlob.type });
 
             // Upload audio file
             setPhase({ phase: 'transcribing', data: { status: 'Uploading audio...' } });
@@ -176,7 +197,8 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
 
             // Transcribe audio
             setPhase({ phase: 'transcribing', data: { status: 'Transcribing audio...' } });
-            const transcriptionText = await transcribeAudio(recordingId);
+            const transcribedText = await transcribeAudio(recordingId);
+            setTranscriptionText(transcribedText);
 
             // Extract and map data
             setPhase({ phase: 'extracting', data: { status: 'Extracting form data...' } });
@@ -200,6 +222,7 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
 
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Failed to process recording';
+            console.error('[VoiceCapturePanel] Error in handleStopRecording:', errorMsg, err);
             setPhase({ phase: 'error', error: errorMsg });
             resetRecording();
         }
@@ -209,6 +232,14 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
         onStopRecordingReady?.(handleStopRecording);
         return () => onStopRecordingReady?.(null);
     }, [onStopRecordingReady, handleStopRecording]);
+
+    useEffect(() => {
+        onPauseResumeReady?.(
+            () => pauseRecording(),
+            () => resumeRecording()
+        );
+        return () => onPauseResumeReady?.(null, null);
+    }, [onPauseResumeReady, pauseRecording, resumeRecording]);
 
     const handleApplyData = () => {
         // Map both field_name and question ID keys back to form question IDs
@@ -414,6 +445,14 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
                     <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded text-sm text-blue-900">
                         💡 Review the extracted data below. You can edit any fields before applying them to the form.
                     </div>
+
+                    {/* Transcription Text Display */}
+                    {transcriptionText && (
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                            <h3 className="font-semibold text-sm text-gray-700 mb-2">📝 Transcription</h3>
+                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{transcriptionText}</p>
+                        </div>
+                    )}
 
                     {/* Data Grid */}
                     <div className="space-y-3">
