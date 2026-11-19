@@ -1827,7 +1827,6 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             }
                             onRecordingStateChange={(recording) => {
                                 setIsVoiceCapturing(recording);
-                                setShowVoiceCaptureModal(!recording);
                             }}
                             onStopRecordingReady={(stopFn) => {
                                 stopVoiceCaptureRef.current = stopFn;
