@@ -489,6 +489,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [showVoiceCaptureModal, setShowVoiceCaptureModal] = useState(false);
     const [isVoiceCapturing, setIsVoiceCapturing] = useState(false);
     const stopVoiceCaptureRef = useRef<(() => Promise<void>) | null>(null);
+    const voiceRecordingStartedRef = useRef(false);
     const [expandedReviewerComments, setExpandedReviewerComments] = useState<Set<string>>(new Set());
 
     const location = useLocation();
@@ -1442,7 +1443,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             className="whitespace-nowrap justify-center min-w-[118px]"
                             onClick={isVoiceCapturing
                                 ? () => stopVoiceCaptureRef.current?.()
-                                : () => setShowVoiceCaptureModal(true)}
+                                : () => {
+                                    voiceRecordingStartedRef.current = false;
+                                    setShowVoiceCaptureModal(true);
+                                }}
                             leftIcon={isVoiceCapturing ? undefined : <MicrophoneIcon className="h-4 w-4" />}
                             title={isVoiceCapturing ? 'Stop voice capture and process transcription' : 'Record interview conversation and auto-fill form'}
                         >
@@ -1801,8 +1805,9 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
             {/* Voice Capture Modal */}
             <Modal
-                isOpen={showVoiceCaptureModal}
+                isOpen={showVoiceCaptureModal || isVoiceCapturing}
                 keepMounted={true}
+                hideBackdrop={isVoiceCapturing}
                 onClose={() => setShowVoiceCaptureModal(false)}
                 title="Voice Data Capture"
                 size="large"
@@ -1827,6 +1832,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             }
                             onRecordingStateChange={(recording) => {
                                 setIsVoiceCapturing(recording);
+                                if (recording) {
+                                    voiceRecordingStartedRef.current = true;
+                                    // Keep modal open but invisible during recording
+                                }
                             }}
                             onStopRecordingReady={(stopFn) => {
                                 stopVoiceCaptureRef.current = stopFn;
@@ -1834,11 +1843,13 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                             onDataExtracted={(extractedData) => {
                                 setAnswers(prev => ({ ...prev, ...extractedData }));
                                 setIsVoiceCapturing(false);
+                                voiceRecordingStartedRef.current = false;
                                 stopVoiceCaptureRef.current = null;
                                 setShowVoiceCaptureModal(false);
                             }}
                             onClose={() => {
                                 setIsVoiceCapturing(false);
+                                voiceRecordingStartedRef.current = false;
                                 stopVoiceCaptureRef.current = null;
                                 setShowVoiceCaptureModal(false);
                             }}
