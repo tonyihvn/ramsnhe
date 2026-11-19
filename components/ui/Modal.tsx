@@ -12,16 +12,11 @@ interface ModalProps {
   // optional size to control modal max-width: 'lg' (default), 'xl', '2xl', '3xl', 'full'
   size?: 'lg' | 'xl' | '2xl' | '3xl' | 'full';
   keepMounted?: boolean;
-  hideBackdrop?: boolean; // Hide modal backdrop and content but keep component mounted
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'lg', keepMounted = false, hideBackdrop = false }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'lg', keepMounted = false }) => {
   if (!isOpen) {
     return keepMounted ? <div className="hidden">{children}</div> : null;
-  }
-
-  if (hideBackdrop) {
-    return <div className="hidden">{children}</div>;
   }
 
   return (

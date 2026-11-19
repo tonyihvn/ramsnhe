@@ -110,6 +110,8 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
     const handleStartRecording = async () => {
         try {
             setPhase({ phase: 'recording' });
+            // Notify parent that recording is starting (closes modal on form page)
+            onRecordingStateChange?.(true);
             // Create recording entry in database
             const recId = await createRecording(formId, activityId);
             setRecordingId(recId);
@@ -118,6 +120,7 @@ export const VoiceCapturePanel: React.FC<VoiceCapturePanelProps> = ({
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Failed to start recording';
             setPhase({ phase: 'error', error: errorMsg });
+            onRecordingStateChange?.(false);
         }
     };
 

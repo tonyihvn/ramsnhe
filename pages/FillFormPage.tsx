@@ -1805,9 +1805,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
 
             {/* Voice Capture Modal */}
             <Modal
-                isOpen={showVoiceCaptureModal || isVoiceCapturing}
+                isOpen={showVoiceCaptureModal}
                 keepMounted={true}
-                hideBackdrop={isVoiceCapturing}
                 onClose={() => setShowVoiceCaptureModal(false)}
                 title="Voice Data Capture"
                 size="large"
@@ -1834,7 +1833,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 setIsVoiceCapturing(recording);
                                 if (recording) {
                                     voiceRecordingStartedRef.current = true;
-                                    // Keep modal open but invisible during recording
+                                    // Close modal when recording starts so form is visible
+                                    setShowVoiceCaptureModal(false);
                                 }
                             }}
                             onStopRecordingReady={(stopFn) => {
