@@ -496,9 +496,8 @@ const ActivityDashboardPage: React.FC = () => {
   };
 
   const launchQuickCreate = async () => {
-    const env = (import.meta as any)?.env || {};
-    const clientId = env.VITE_POWERBI_CLIENT_ID;
-    const tenantId = env.VITE_POWERBI_TENANT_ID || 'common';
+    const clientId = import.meta.env.VITE_POWERBI_CLIENT_ID;
+    const tenantId = import.meta.env.VITE_POWERBI_TENANT_ID || 'common';
     if (!clientId) {
       swalError(
         'Power BI setup required',
@@ -512,7 +511,7 @@ const ActivityDashboardPage: React.FC = () => {
     setPowerbiModalOpen(false);
 
     try {
-      const redirectUri = env.VITE_POWERBI_REDIRECT_URI || window.location.origin;
+      const redirectUri = import.meta.env.VITE_POWERBI_REDIRECT_URI || window.location.origin;
       const msal = new PublicClientApplication({
         auth: {
           clientId,
