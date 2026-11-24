@@ -190,8 +190,72 @@ export const buildFormulasContext = (
 };
 
 /**
+ * Resolve field score references in formula
+ * Format: fieldname->score
+ * Returns the score value from field answers that have {value: ..., score: ...} structure
+ */
+export const resolveScoreReferences = (
+    formula: string,
+    fieldMap: Record<string, any>
+): string => {
+    // Pattern to match fieldname->score references
+    const scoreRefPattern = /([a-z_][a-z0-9_]*)\s*->\s*score/gi;
+    
+    let processedFormula = formula;
+    let match;
+    
+    // Create a regex to track matches
+    const regex = new RegExp(scoreRefPattern);
+    
+    while ((match = regex.exec(formula)) !== null) {
+        const fieldName = match[1];
+        const fieldValue = fieldMap[fieldName];
+        
+        // Extract score from field value
+        let scoreValue = 'null';
+        if (fieldValue && typeof fieldValue === 'object' && 'score' in fieldValue) {
+            scoreValue = String(fieldValue.score);
+        } else if (typeof fieldValue === 'number') {
+            // If field value itself is a number, treat it as the score
+            scoreValue = String(fieldValue);
+        }
+        
+        // Replace the reference with the score value
+        const fullMatch = match[0];
+        const escapedMatch = fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        processedFormula = processedFormula.replace(new RegExp(escapedMatch, 'g'), scoreValue);
+    }
+    
+    return processedFormula;
+};
+
+/**
+ * Extract field names from formula to build complete variable map
+ * Handles both regular field names and score references
+ */
+export const extractFieldNamesFromFormula = (formula: string): Set<string> => {
+    const fieldNames = new Set<string>();
+    
+    // Match regular field names: word characters that aren't reserved keywords
+    const identifierPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+    const reserved = new Set(['true', 'false', 'null', 'undefined', 'age', 'parseDate', 'diffDays', 'try', 'return', 'catch', 'e', 'if', 'else', 'function']);
+    
+    let match;
+    const regex = new RegExp(identifierPattern);
+    while ((match = regex.exec(formula)) !== null) {
+        const name = match[1];
+        if (!reserved.has(name)) {
+            fieldNames.add(name);
+        }
+    }
+    
+    return fieldNames;
+};
+
+/**
  * Evaluate formulas for computed fields in forms
  * This integrates with existing field values and cell references
+ * Supports score references via fieldname->score syntax
  */
 export const evaluateFormulasForForm = (
     formula: string,
@@ -203,9 +267,12 @@ export const evaluateFormulasForForm = (
     try {
         let processedFormula = formula;
 
-        // First, resolve cell references using the context
+        // First, resolve score references (fieldname->score)
+        processedFormula = resolveScoreReferences(processedFormula, fieldMap);
+
+        // Then, resolve cell references using the context
         const cellRefPattern = /report\d+(?:\.\d+)?_[A-Z]{1,3}_[A-Z]+\d+/g;
-        const cellMatches = formula.match(cellRefPattern) || [];
+        const cellMatches = processedFormula.match(cellRefPattern) || [];
 
         for (const cellRef of cellMatches) {
             const cellValue = resolveCellReferenceFromContext(cellRef, formulasContext);
@@ -218,15 +285,20 @@ export const evaluateFormulasForForm = (
             }
         }
 
-        // Then resolve field references from fieldMap
-        const fieldRefPattern = /\b[a-z_][a-z0-9_]*\b/gi;
-        const varNames = Object.keys(fieldMap || {}).filter(n => !n.match(cellRefPattern));
-
-        const args = varNames.map(n => {
+        // Extract field names from processed formula
+        const fieldNames = Array.from(extractFieldNamesFromFormula(processedFormula));
+        
+        // Build arguments for function execution
+        const args = fieldNames.map(n => {
             const v = fieldMap[n];
+            // Extract value from {value: ..., score: ...} objects
+            let actualValue = v;
+            if (v && typeof v === 'object' && 'value' in v && !('score' in v && Object.keys(v).length === 2)) {
+                actualValue = v.value;
+            }
             // Try to coerce numeric strings to numbers
-            if (typeof v === 'string' && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
-            return v;
+            if (typeof actualValue === 'string' && /^-?\d+(?:\.\d+)?$/.test(actualValue)) return Number(actualValue);
+            return actualValue;
         });
 
         // Helper functions for date calculations
@@ -256,7 +328,7 @@ export const evaluateFormulasForForm = (
         };
 
         const fn = new Function(
-            ...varNames,
+            ...fieldNames,
             'age',
             'parseDate',
             'diffDays',

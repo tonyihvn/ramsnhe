@@ -695,34 +695,70 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const evaluateFormula = (formula: string, fieldMap: Record<string, any>, formulasContext?: any) => {
         if (!formula || typeof formula !== 'string') return null;
         try {
+            let processedFormula = formula;
+
             // If we have a formulas context (cross-document references), use the utility
             if (formulasContext) {
                 const result = evaluateFormulasForForm(formula, fieldMap, formulasContext);
                 return result;
             }
 
-            // Extract all identifiers from the formula that look like variable names
+            // Handle score references (fieldname->score)
+            const scoreRefPattern = /([a-z_][a-z0-9_]*)\s*->\s*score/gi;
+            let scoreMatch;
+            const scoreRegex = new RegExp(scoreRefPattern);
+            
+            while ((scoreMatch = scoreRegex.exec(formula)) !== null) {
+                const fieldName = scoreMatch[1];
+                const fieldValue = fieldMap[fieldName];
+                
+                // Extract score from field value
+                let scoreValue = 'null';
+                if (fieldValue && typeof fieldValue === 'object' && 'score' in fieldValue) {
+                    scoreValue = String(fieldValue.score);
+                } else if (typeof fieldValue === 'number') {
+                    scoreValue = String(fieldValue);
+                }
+                
+                // Replace the reference with the score value
+                const fullMatch = scoreMatch[0];
+                const escapedMatch = fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                processedFormula = processedFormula.replace(new RegExp(escapedMatch, 'g'), scoreValue);
+            }
+
+            // Extract all identifiers from the processed formula that look like variable names
             const identifierPattern = /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g;
-            const identifiersInFormula = new Set((formula.match(identifierPattern) || [])
+            const identifiersInFormula = new Set((processedFormula.match(identifierPattern) || [])
                 .filter(id => !['true', 'false', 'null', 'undefined', 'age', 'parseDate', 'diffDays', 'try', 'return', 'catch', 'e'].includes(id)));
             
-            // Build a complete variable map with all identifiers in the formula
+            // Build a complete variable map with all identifiers in the processed formula
             const completeVarMap: Record<string, any> = {};
             identifiersInFormula.forEach(id => {
                 // Try to find the value in fieldMap (with various key formats)
-                completeVarMap[id] = fieldMap[id] !== undefined ? fieldMap[id] : undefined;
+                let value = fieldMap[id] !== undefined ? fieldMap[id] : undefined;
+                // Extract value from {value: ..., score: ...} objects
+                if (value && typeof value === 'object' && 'value' in value && !('score' in value && Object.keys(value).length === 2)) {
+                    value = value.value;
+                }
+                completeVarMap[id] = value;
             });
 
             // Use safer evaluation approach with variable passing instead of string substitution
             const cellRefPattern = /report\d+(?:\.\d+)?_[A-Z]{1,3}_[A-Z]+\d+/g;
             const varNames = Object.keys(completeVarMap || {}).filter(n => !n.match(cellRefPattern));
-            const args = varNames.map(n => completeVarMap[n]);
+            const args = varNames.map(n => {
+                const v = completeVarMap[n];
+                // Try to coerce numeric strings to numbers
+                if (typeof v === 'string' && /^-?\d+(?:\.\d+)?$/.test(v)) return Number(v);
+                return v;
+            });
             
             
             // Build the function with variable parameters (safer than string substitution)
             // The formula uses variable names directly, e.g., "!!gender && gender==='Female'"
+            // Score references have been resolved to their numeric values
             // eslint-disable-next-line no-new-func
-            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${formula}; } catch(e){ console.error('Formula execution error:', e, 'formula:', '${formula}'); return null; }`);
+            const fn = new Function(...varNames, 'age', 'parseDate', 'diffDays', `try { return ${processedFormula}; } catch(e){ console.error('Formula execution error:', e, 'formula:', '${processedFormula}'); return null; }`);
             const result = fn(...args, age, parseDate, diffDays);
             
             return result;
