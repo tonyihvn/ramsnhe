@@ -45,6 +45,9 @@ const LoginPage: React.FC = () => {
   const [regMessage, setRegMessage] = useState<string | null>(null);
   const [regError, setRegError] = useState<string | null>(null);
   const [landingConfig, setLandingConfig] = useState<any>(null);
+  const [regFacility, setRegFacility] = useState<string>('');
+  const [facilities, setFacilities] = useState<any[]>([]);
+  const [resendLoading, setResendLoading] = useState(false);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -95,8 +98,16 @@ const LoginPage: React.FC = () => {
     setRegLoading(true);
     setRegError(null);
     setRegMessage(null);
+
+    // Validate facility selection
+    if (!regFacility) {
+      setRegError('Please select a facility');
+      setRegLoading(false);
+      return;
+    }
+
     try {
-      const r = await fetch('/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstName: regFirst, lastName: regLast, email: regEmail, password: regPassword, organizationName: regOrg || undefined, phoneNumber: regPhone || undefined }) });
+      const r = await fetch('/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstName: regFirst, lastName: regLast, email: regEmail, password: regPassword, organizationName: regOrg || undefined, phoneNumber: regPhone || undefined, facilityId: regFacility }) });
       if (!r.ok) {
         let txt = '';
         try { txt = await r.text(); } catch (e) { txt = String(e); }
@@ -110,13 +121,49 @@ const LoginPage: React.FC = () => {
         return;
       }
       const j = await r.json();
-      setRegMessage(j.message || 'Registration successful. Please check your email for verification if required.');
-      // keep modal open so user sees the message; optionally auto-close after a short delay
-      setTimeout(() => { setRegOpen(false); }, 3000);
+      setRegMessage(j.message || 'Registration successful!');
+      // Keep registration data visible so resend works if needed
+      // Clear the form fields for next registration only after close
+      setTimeout(() => {
+        setRegFirst('');
+        setRegLast('');
+        setRegEmail('');
+        setRegPassword('');
+        setRegOrg('');
+        setRegPhone('');
+        setRegFacility('');
+      }, 5000);
     } catch (e) {
       setRegError(String(e));
     }
     setRegLoading(false);
+  };
+
+  const resendVerificationEmail = async () => {
+    if (!regEmail) {
+      setRegError('Email address not found');
+      return;
+    }
+    
+    setResendLoading(true);
+    try {
+      const response = await fetch('/auth/resend-verification-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: regEmail })
+      });
+      
+      if (response.ok) {
+        setRegMessage('Verification email resent! Please check your inbox and spam folder.');
+      } else {
+        const errorText = await response.text();
+        setRegError(errorText || 'Failed to resend verification email. Please try again.');
+      }
+    } catch (error) {
+      setRegError('Error resending verification email: ' + String(error));
+    } finally {
+      setResendLoading(false);
+    }
   };
 
   // Fetch landing page config to check if registrations are allowed and get styling
@@ -138,6 +185,29 @@ const LoginPage: React.FC = () => {
     };
     fetchConfig();
   }, []);
+
+  // Fetch facilities when registration modal opens
+  React.useEffect(() => {
+    const fetchFacilities = async () => {
+      try {
+        // Fetch facilities for the organization
+        // If lockedOrgId is set, fetch facilities for that org; otherwise fetch all
+        const url = lockedOrgId ? `/api/facilities?organizationId=${lockedOrgId}` : '/api/facilities';
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          setFacilities(Array.isArray(data) ? data : []);
+        }
+      } catch (e) {
+        console.error('Failed to fetch facilities:', e);
+        setFacilities([]);
+      }
+    };
+    
+    if (regOpen) {
+      fetchFacilities();
+    }
+  }, [regOpen, lockedOrgId]);
 
   // Determine background image and app name
   const heroFeaturedImages = landingConfig?.heroFeaturedImages || landingConfig?.hero_featured_images || [];
@@ -186,7 +256,7 @@ const LoginPage: React.FC = () => {
           <a className="text-sm text-primary-600 hover:underline" href="#/request-reset">Forgot password?</a>
         </div>
 
-        <Modal isOpen={regOpen} onClose={() => setRegOpen(false)} title="Register">
+        <Modal isOpen={regOpen} onClose={() => { setRegOpen(false); setRegFacility(''); setRegMessage(null); setRegError(null); }} title="Register">
           <div className="space-y-3">
             {!allowNewRegistrations ? (
               <div className="p-3 text-blue-700 bg-blue-100 rounded">
@@ -195,24 +265,79 @@ const LoginPage: React.FC = () => {
               </div>
             ) : (
               <>
-                {regMessage ? <div className="p-2 text-green-700 bg-green-100 rounded">{regMessage}</div> : null}
-                {regError ? <div className="p-2 text-red-700 bg-red-100 rounded">{regError}</div> : null}
-                <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
-                <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
-                <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
+                {regMessage ? (
+                  <div className="space-y-4">
+                    <div className="p-4 text-green-700 bg-green-50 rounded border border-green-200">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="h-5 w-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-green-900 mb-2">Registration Successful!</h3>
+                          <p className="text-sm text-green-800 mb-3">We've sent a verification email to <strong>{regEmail}</strong></p>
+                          <div className="bg-white bg-opacity-50 p-3 rounded text-sm text-green-800 space-y-2">
+                            <p>✓ Check your email for a verification link</p>
+                            <p>✓ Click the link to confirm your email address</p>
+                            <p>✓ An admin will review and approve your account</p>
+                            <p>✓ You'll be able to log in once everything is verified and approved</p>
+                          </div>
+                          <p className="text-xs text-green-700 mt-3">Didn't receive the email? Check your spam folder or click the resend button below.</p>
+                          <div className="flex gap-2 mt-4">
+                            <Button 
+                              size="sm"
+                              onClick={resendVerificationEmail}
+                              disabled={resendLoading}
+                              variant="secondary"
+                            >
+                              {resendLoading ? 'Sending...' : 'Resend Verification Email'}
+                            </Button>
+                            <Button 
+                              size="sm"
+                              onClick={() => { setRegOpen(false); setRegMessage(null); }}
+                            >
+                              Close
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {regError ? <div className="p-2 text-red-700 bg-red-100 rounded">{regError}</div> : null}
+                    <input className="p-2 border rounded w-full" placeholder="First name" value={regFirst} onChange={e => setRegFirst(e.target.value)} disabled={!!regMessage} />
+                    <input className="p-2 border rounded w-full" placeholder="Last name" value={regLast} onChange={e => setRegLast(e.target.value)} disabled={!!regMessage} />
+                    <input className="p-2 border rounded w-full" placeholder="Email" value={regEmail} onChange={e => setRegEmail(e.target.value)} disabled={!!regMessage} />
+                
+                {/* Facility Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Select Facility *</label>
+                  <select className="p-2 border rounded w-full" value={regFacility} onChange={e => setRegFacility(e.target.value)} disabled={!!regMessage}>
+                    <option value="">-- Choose a facility --</option>
+                    {facilities.map(f => (
+                      <option key={f.id} value={f.id}>{f.name || f.facility_name || f.id}</option>
+                    ))}
+                  </select>
+                  {facilities.length === 0 && regOpen && (
+                    <p className="text-sm text-gray-500 mt-1">Loading facilities...</p>
+                  )}
+                </div>
+
                 {!lockedOrgId ? (
                   <input className="p-2 border rounded w-full" placeholder="Organization name (optional)" value={regOrg} onChange={e => setRegOrg(e.target.value)} disabled={!!regMessage} />
-                ) : (
-                  <div className="p-2 text-sm text-gray-700 bg-gray-50 rounded">Registration will be assigned to the configured organization.</div>
-                )}
+                ) : null}
                 <input className="p-2 border rounded w-full" placeholder="Phone number (optional)" value={regPhone} onChange={e => setRegPhone(e.target.value)} disabled={!!regMessage} />
                 <input className="p-2 border rounded w-full" placeholder="Password" type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} disabled={!!regMessage} />
+                    <div className="flex justify-end gap-2 mt-4">
+                      <Button variant="secondary" onClick={() => setRegOpen(false)}>Cancel</Button>
+                      <Button onClick={doRegister} disabled={regLoading}>{regLoading ? 'Registering...' : 'Register'}</Button>
+                    </div>
+                  </>
+                )}
               </>
             )}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setRegOpen(false)}>Cancel</Button>
-              <Button onClick={doRegister} disabled={regLoading || !!regMessage}>{regLoading ? 'Registering...' : 'Register'}</Button>
-            </div>
           </div>
         </Modal>
       </div>

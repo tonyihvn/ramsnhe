@@ -501,7 +501,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                 if (cellValue !== undefined && cellValue !== null) {
                     // If numeric, use the number directly; otherwise wrap in quotes
                     const replacement = typeof cellValue === 'number' ? cellValue : JSON.stringify(cellValue);
-                    processedFormula = processedFormula.replace(new RegExp('\\b' + cellRef + '\\b', 'g'), replacement);
+                    processedFormula = processedFormula.replace(new RegExp('\\b' + cellRef + '\\b', 'g'), String(replacement));
                 }
             }
 
@@ -1319,7 +1319,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                 {String(activity.responseType || '').toLowerCase() === 'facility' ? (
                                     <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
                                         <option value="">Select facility...</option>
-                                        {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                                        {(currentUser?.role === 'Data Collector' && currentUser?.facilityId
+                                          ? facilities.filter(f => f.id === currentUser.facilityId)
+                                          : facilities
+                                        ).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                                     </select>
                                 ) : String(activity.responseType || '').toLowerCase() === 'user' ? (
                                     <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
@@ -1330,7 +1333,10 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                                     <div className="space-y-2">
                                         <select value={selectedFacilityId || ''} onChange={e => setSelectedFacilityId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
                                             <option value="">(Optional) Select facility...</option>
-                                            {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                                            {(currentUser?.role === 'Data Collector' && currentUser?.facilityId
+                                              ? facilities.filter(f => f.id === currentUser.facilityId)
+                                              : facilities
+                                            ).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                                         </select>
                                         <select value={selectedUserId || ''} onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : undefined)} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
                                             <option value="">(Optional) Select user...</option>

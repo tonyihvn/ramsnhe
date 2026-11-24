@@ -46,6 +46,8 @@ export const tables = new Proxy({}, {
             ROLE_PERMISSIONS: 'role_permissions',
             USER_ROLES: 'user_roles',
             USER_PERMISSIONS: 'user_permissions',
+            USER_ACTIVITY_ASSIGNMENTS: 'user_activity_assignments',
+            USER_STATE_ACCESS: 'user_state_access',
             RAG_CHROMA_IDS: 'rag_chroma_ids',
             AUDIT_BATCHES: 'audit_batches',
             EMAIL_VERIFICATIONS: 'email_verifications',

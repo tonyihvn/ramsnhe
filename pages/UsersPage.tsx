@@ -34,6 +34,71 @@ const UsersPage: React.FC = () => {
 
   const canEdit = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
 
+  // Approval state
+  const [approvalAction, setApprovalAction] = useState<{ userId: string | null; action: 'approve' | 'reject' }>({ userId: null, action: 'approve' });
+  const [approvalNotes, setApprovalNotes] = useState('');
+  const [approvalLoading, setApprovalLoading] = useState(false);
+
+  // Delete confirmation state
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; userId: string | null; userName: string }>({ isOpen: false, userId: null, userName: '' });
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const handleApproveUser = async (userId: string, action: 'approve' | 'reject') => {
+    setApprovalLoading(true);
+    try {
+      const response = await fetch(`/api/admin/users/${userId}/approval`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, notes: approvalNotes })
+      });
+      if (response.ok) {
+        // Refresh users list
+        const updatedUsers = users.map(u => 
+          u.id === userId ? { ...u, approval_status: action === 'approve' ? 'approved' : 'rejected' } : u
+        );
+        // You may need to update the users context here
+        setApprovalNotes('');
+        setApprovalAction({ userId: null, action: 'approve' });
+        alert(`User ${action === 'approve' ? 'approved' : 'rejected'} successfully`);
+      } else {
+        alert('Failed to update approval status');
+      }
+    } catch (e) {
+      console.error('Approval error:', e);
+      alert('Error processing approval');
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteConfirmation.userId) return;
+    
+    setDeleteLoading(true);
+    try {
+      const response = await fetch(`/api/admin/users/${deleteConfirmation.userId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        // Call the deleteUser function to update state
+        deleteUser(deleteConfirmation.userId);
+        setDeleteConfirmation({ isOpen: false, userId: null, userName: '' });
+        alert(`User "${deleteConfirmation.userName}" has been deleted successfully.`);
+      } else {
+        const errorText = await response.text();
+        alert(`Failed to delete user: ${errorText || 'Please try again.'}`);
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert('Error deleting user: ' + String(error));
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const loadUserSchema = async () => {
     try {
       const response = await fetch('/api/form-schemas/user', {
@@ -95,6 +160,12 @@ const UsersPage: React.FC = () => {
     }
 
     const toSave = { ...currentUserEdit } as Partial<User>;
+    
+    // Only send password if it's not empty (preserve existing password if untouched)
+    if (!toSave.password) {
+      delete toSave.password;
+    }
+    
     if (avatarFile) {
       try {
         const dataUrl = await readFileAsDataUrl(avatarFile);
@@ -174,13 +245,72 @@ const UsersPage: React.FC = () => {
               )
             },
             {
+              key: 'approval_status', label: 'Approval', render: (row: any) => (
+                <>
+                  {!row.approval_status && (
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">Approved</span>
+                  )}
+                  {row.approval_status === 'pending' && (
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Pending</span>
+                  )}
+                  {row.approval_status === 'approved' && (
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Approved</span>
+                  )}
+                  {row.approval_status === 'rejected' && (
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Rejected</span>
+                  )}
+                </>
+              )
+            },
+            {
+              key: 'email_verified', label: 'Email', render: (row: any) => (
+                <>
+                  {row.email_verified && (
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Verified</span>
+                  )}
+                  {!row.email_verified && (
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800">Pending</span>
+                  )}
+                </>
+              )
+            },
+            {
               key: 'actions', label: 'Actions', render: (row: any) => {
                 const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
+                const isPending = row.approval_status === 'pending';
                 return (
                   <div className="flex gap-2">
-                    <button onClick={() => openModal(row)} className="text-indigo-600 hover:text-indigo-900"><PencilIcon className="h-5 w-5" /></button>
+                    <button onClick={() => openModal(row)} className="text-indigo-600 hover:text-indigo-900" title="Edit"><PencilIcon className="h-5 w-5" /></button>
                     {isAdmin && (
-                      <button onClick={() => { if (confirm('Delete user?')) deleteUser(row.id) }} className="text-red-600 hover:text-red-900"><TrashIcon className="h-5 w-5" /></button>
+                      <>
+                        {isPending && (
+                          <>
+                            <button 
+                              onClick={() => handleApproveUser(row.id, 'approve')}
+                              className="text-green-600 hover:text-green-900 text-xs font-semibold"
+                              title="Approve"
+                              disabled={approvalLoading}
+                            >
+                              ✓
+                            </button>
+                            <button 
+                              onClick={() => handleApproveUser(row.id, 'reject')}
+                              className="text-red-600 hover:text-red-900 text-xs font-semibold"
+                              title="Reject"
+                              disabled={approvalLoading}
+                            >
+                              ✗
+                            </button>
+                          </>
+                        )}
+                        <button 
+                          onClick={() => setDeleteConfirmation({ isOpen: true, userId: String(row.id), userName: `${row.firstName} ${row.lastName}` })} 
+                          className="text-red-600 hover:text-red-900"
+                          title="Delete"
+                        >
+                          <TrashIcon className="h-5 w-5" />
+                        </button>
+                      </>
                     )}
                   </div>
                 );
@@ -314,6 +444,48 @@ const UsersPage: React.FC = () => {
               setCurrentUserEdit({ ...currentUserEdit, [fieldName]: value });
             }}
           />
+        </div>
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal 
+        isOpen={deleteConfirmation.isOpen} 
+        onClose={() => setDeleteConfirmation({ isOpen: false, userId: null, userName: '' })}
+        title="Delete User"
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-2 w-full">
+            <button 
+              onClick={() => setDeleteConfirmation({ isOpen: false, userId: null, userName: '' })}
+              className="px-4 py-2 text-gray-700 bg-gray-200 rounded hover:bg-gray-300"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={handleDeleteUser}
+              disabled={deleteLoading}
+              className="px-4 py-2 text-white bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              {deleteLoading ? 'Deleting...' : 'Delete User'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-red-50 border border-red-200 rounded">
+            <p className="text-red-800 font-medium">⚠️ Warning: This action cannot be undone</p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-gray-700">
+              Are you sure you want to permanently delete the following user?
+            </p>
+            <div className="p-3 bg-gray-50 rounded border border-gray-200">
+              <p className="font-semibold text-gray-900">{deleteConfirmation.userName}</p>
+            </div>
+            <p className="text-sm text-gray-600">
+              This user's account and all associated data will be permanently removed from the system. This action cannot be reversed.
+            </p>
+          </div>
         </div>
       </Modal>
     </div>

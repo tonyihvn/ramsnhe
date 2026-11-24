@@ -50,6 +50,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         }
     });
     const [isAdmin, setIsAdmin] = useState(false);
+    const [isInitialized, setIsInitialized] = useState(false);
     const saveTimer = React.useRef<number | null>(null);
 
     useEffect(() => {
@@ -76,19 +77,31 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         (async () => {
             try {
                 const r = await fetch('/api/current_user', { credentials: 'include' });
-                if (!r.ok) { setIsAdmin(false); return; }
+                if (!r.ok) { setIsAdmin(false); setIsInitialized(true); return; }
                 const j = await r.json();
                 const role = (j && (j.role || '')).toString().toLowerCase();
                 const isAdminUser = role === 'admin' || role === 'super-admin' || role === 'super_admin';
                 setIsAdmin(isAdminUser);
                 
-                // If admin, load persisted settings from server
+                // First priority: Check if user has theme settings in their profile
+                try {
+                    if (j && j.theme_settings) {
+                        const userTheme = typeof j.theme_settings === 'string' ? JSON.parse(j.theme_settings) : j.theme_settings;
+                        if (userTheme && typeof userTheme === 'object') {
+                            setSettingsState(prev => ({ ...prev, ...userTheme }));
+                            setIsInitialized(true);
+                            return;
+                        }
+                    }
+                } catch (e) { /* ignore user theme parse error */ }
+                
+                // Second priority: If admin, load persisted settings from server
                 if (isAdminUser) {
                     try {
                         const settingsRes = await fetch('/api/admin/settings', { credentials: 'include' });
-                        if (!settingsRes.ok) return;
+                        if (!settingsRes.ok) { setIsInitialized(true); return; }
                         const payload = await settingsRes.json();
-                        if (!payload) return;
+                        if (!payload) { setIsInitialized(true); return; }
                         // payload is { key: value } mapping; merge keys that match ThemeSettings
                         const merge: Partial<ThemeSettings> = {};
                         // common theme keys live at top-level in the settings object; if server saved the whole theme object, it may be returned directly
@@ -110,7 +123,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
                         if (Object.keys(merge).length) setSettingsState(prev => ({ ...prev, ...merge }));
                     } catch (e) { /* ignore settings fetch */ }
                 }
-            } catch (e) { setIsAdmin(false); }
+                setIsInitialized(true);
+            } catch (e) { setIsAdmin(false); setIsInitialized(true); }
         })();
     }, []);
 

@@ -16,6 +16,47 @@ import { initializeStartup, logStartupInfo } from './initializeSetup.js';
 import { registerSuperAdminRoutes } from './superAdminRoutes.js';
 import { tables } from './tablePrefix.js';
 
+// ==================== ROLE UTILITIES ====================
+// Centralized role checking functions to ensure consistent role handling across the app
+// Handles roles stored in database: super-admin, Admin, Form Builder, Data Collector, Reviewer, Viewer
+function isAdminRole(role) {
+    if (!role) return false;
+    const normalized = String(role).toLowerCase().trim();
+    // Matches: admin, Admin, super-admin, Super Admin, super_admin, etc.
+    return normalized === 'admin' || normalized === 'super-admin' || normalized === 'super_admin' || normalized === 'super admin';
+}
+
+function isSuperAdminRole(role) {
+    if (!role) return false;
+    const normalized = String(role).toLowerCase().trim();
+    // Matches: super-admin, Super Admin, super_admin, superadmin, etc.
+    return normalized === 'super-admin' || normalized === 'super_admin' || normalized === 'super admin' || normalized === 'superadmin';
+}
+
+function isFormBuilderRole(role) {
+    if (!role) return false;
+    const normalized = String(role).toLowerCase().trim();
+    return normalized === 'form builder' || normalized === 'form-builder' || normalized === 'form_builder';
+}
+
+function isDataCollectorRole(role) {
+    if (!role) return false;
+    const normalized = String(role).toLowerCase().trim();
+    return normalized === 'data collector' || normalized === 'data-collector' || normalized === 'data_collector';
+}
+
+function getHumanReadableRole(role) {
+    if (!role) return role;
+    const normalized = String(role).toLowerCase().trim();
+    if (normalized === 'admin') return 'Admin';
+    if (normalized === 'super-admin' || normalized === 'super_admin' || normalized === 'super admin') return 'super-admin';
+    if (normalized === 'form builder' || normalized === 'form_builder' || normalized === 'form-builder') return 'Form Builder';
+    if (normalized === 'data collector' || normalized === 'data_collector' || normalized === 'data-collector') return 'Data Collector';
+    if (normalized === 'reviewer') return 'Reviewer';
+    if (normalized === 'viewer') return 'Viewer';
+    return role;
+}
+// ==================== END ROLE UTILITIES ====================
 
 // Helper: update/insert/delete answers for a report while respecting permissions and ownership
 async function upsertReportAnswers(client, reportId, payload, existingRow, req) {
@@ -66,8 +107,8 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
 
     const canCheck = async (pageKey, sectionKey, want) => {
         try {
-            const adminRole = currentRole && String(currentRole).toLowerCase();
-            if (adminRole === 'admin' || adminRole === 'super-admin' || adminRole === 'super_admin') return true;
+            // Use centralized role checking function
+            if (isAdminRole(currentRole)) return true;
             const permRes = await client.query(`SELECT can_create, can_edit, can_delete FROM ${tables.PAGE_PERMISSIONS} WHERE page_key = $1 AND ((section_key IS NULL AND $2 IS NULL) OR section_key = $2) AND role_name = $3 LIMIT 1`, [pageKey, sectionKey, currentRole]);
             const perm = permRes.rows && permRes.rows[0] ? permRes.rows[0] : null;
             if (!perm) return false;
@@ -162,7 +203,7 @@ async function upsertReportAnswers(client, reportId, payload, existingRow, req) 
         const sectionKey = qi.section || null;
         const canDelete = await canCheck(pageKey, sectionKey, 'delete');
         const adminRole = currentRole && String(currentRole).toLowerCase();
-        if (canDelete || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId)) || (adminRole === 'admin' || adminRole === 'super-admin' || adminRole === 'super_admin')) {
+        if (canDelete || (rowObj.recorded_by && currentUserId && Number(rowObj.recorded_by) === Number(currentUserId)) || isAdminRole(adminRole)) {
             try { await client.query(`DELETE FROM ${tables.ANSWERS} WHERE id = $1`, [rowObj.id]); } catch (de) { console.error('Failed to delete stale answer row', rowObj.id, de); }
         }
     }
@@ -224,6 +265,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Simple Session Setup (No Passport needed for dev mode)
+// In development allow cross-origin cookie sharing for localhost:9090 <-> localhost:5000
 app.use(
     cookieSession({
         name: 'session',
@@ -231,6 +273,18 @@ app.use(
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     })
 );
+
+// Ensure session object exists on every request
+app.use((req, res, next) => {
+    if (!req.session) {
+        req.session = {};
+    }
+    // Debug: log session info for auth endpoints
+    if (req.path.startsWith('/auth/login') || req.path.startsWith('/api/admin/') || req.path.startsWith('/api/super-admin/')) {
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - Session userId: ${req.session?.userId || 'NOT SET'}`);
+    }
+    next();
+});
 
 // Serve uploaded files (images/videos) from /uploads
 const uploadsRoot = path.join(process.cwd(), 'uploads');
@@ -1973,6 +2027,10 @@ async function initDb() {
         await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS account_activated_at TIMESTAMP`);
         // Add deactivated_at for tracking when accounts were deactivated
         await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP`);
+        // Add email_verified for email verification workflow
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`);
+        // Add approval_status for admin approval workflow (approved, pending, rejected, null)
+        await pool.query(`ALTER TABLE ${tables.USERS} ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'pending'`);
         // Add cell_formulas to uploaded_docs to support formula tracking
         await pool.query(`ALTER TABLE ${tables.UPLOADED_DOCS} ADD COLUMN IF NOT EXISTS cell_formulas JSONB`);
         // Add column_data_types to uploaded_docs to support per-column type configuration
@@ -2899,9 +2957,9 @@ async function generateRagFromTarget(cfg, prefix = 'dqai_') {
 function normalizeAdminRole(role) {
     if (!role) return role;
     const normalized = String(role).toLowerCase();
-    if (normalized === 'admin' || normalized === 'super-admin' || normalized === 'super_admin') {
+    if (normalized === 'admin' || normalized === 'super-admin' || normalized === 'super_admin' || normalized === 'super admin') {
         if (normalized === 'admin') return 'Admin';
-        if (normalized === 'super-admin' || normalized === 'super_admin') return 'super-admin';
+        return 'super-admin';
     }
     return role;
 }
@@ -2912,8 +2970,8 @@ async function requireAdmin(req, res, next) {
         if (!req.session || !req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
         const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
         if (r.rows.length === 0) return res.status(401).json({ error: 'Unauthorized' });
-        const roleFromUser = (r.rows[0].role || '').toString().toLowerCase();
-        if (roleFromUser === 'admin' || roleFromUser === 'super-admin' || roleFromUser === 'super_admin') return next();
+        // Use centralized role checking function
+        if (isAdminRole(r.rows[0].role)) return next();
         // Also allow admin if the user has an Admin role assignment in user_roles -> roles
         try {
             const rr = await pool.query(`SELECT r.name FROM ${tables.USER_ROLES} ur JOIN ${tables.ROLES} r ON ur.role_id = r.id WHERE ur.user_id = $1`, [req.session.userId]);
@@ -2934,8 +2992,16 @@ async function isSuperAdmin(req) {
         if (!req.session || !req.session.userId) return false;
         const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
         if (r.rows.length === 0) return false;
-        const roleFromUser = (r.rows[0].role || '').toString().toLowerCase();
-        return roleFromUser === 'super-admin' || roleFromUser === 'superadmin' || roleFromUser === 'super admin';
+        return isSuperAdminRole(r.rows[0].role);
+    } catch (e) { return false; }
+}
+
+async function isAdmin(req) {
+    try {
+        if (!req.session || !req.session.userId) return false;
+        const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+        if (r.rows.length === 0) return false;
+        return isAdminRole(r.rows[0].role);
     } catch (e) { return false; }
 }
 
@@ -3943,11 +4009,20 @@ app.get('/api/datasets', async (req, res) => {
         }
 
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
-        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        const r = isSuperAdmin && !businessId
-            ? await pool.query(`SELECT * FROM ${tables.DATASETS} ORDER BY id DESC`)
-            : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC`, [businessId]);
+        const userIsSuperAdmin = await isSuperAdmin(req);
+        
+        let q = `SELECT * FROM ${tables.DATASETS}`;
+        const params = [];
+        
+        if (!userIsSuperAdmin && businessId) {
+            q += ` WHERE business_id = $1 OR business_id IS NULL`;
+            params.push(businessId);
+        } else if (!userIsSuperAdmin) {
+            q += ` WHERE business_id IS NULL`;
+        }
+        
+        q += ` ORDER BY id DESC`;
+        const r = await pool.query(q, params);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list datasets', e); res.status(500).json({ error: 'Failed to list datasets' }); }
 });
@@ -3955,11 +4030,20 @@ app.get('/api/datasets', async (req, res) => {
 app.get('/api/admin/datasets', requireAdmin, async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
-        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        const r = isSuperAdmin && !businessId
-            ? await pool.query(`SELECT * FROM ${tables.DATASETS} ORDER BY id DESC`)
-            : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE business_id = $1 OR business_id IS NULL ORDER BY id DESC`, [businessId]);
+        const userIsSuperAdmin = await isSuperAdmin(req);
+        
+        let q = `SELECT * FROM ${tables.DATASETS}`;
+        const params = [];
+        
+        if (!userIsSuperAdmin && businessId) {
+            q += ` WHERE business_id = $1 OR business_id IS NULL`;
+            params.push(businessId);
+        } else if (!userIsSuperAdmin) {
+            q += ` WHERE business_id IS NULL`;
+        }
+        
+        q += ` ORDER BY id DESC`;
+        const r = await pool.query(q, params);
         res.json(r.rows);
     } catch (e) { console.error('Failed to list datasets', e); res.status(500).json({ error: 'Failed to list datasets' }); }
 });
@@ -3968,11 +4052,19 @@ app.get('/api/admin/datasets/:id', requireAdmin, async (req, res) => {
     try {
         const id = Number(req.params.id);
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
-        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
-        const r = isSuperAdmin && !businessId
-            ? await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE id = $1`, [id])
-            : await pool.query(`SELECT * FROM ${tables.DATASETS} WHERE id = $1 AND (business_id = $2 OR business_id IS NULL)`, [id, businessId]);
+        const userIsSuperAdmin = await isSuperAdmin(req);
+        
+        let q = `SELECT * FROM ${tables.DATASETS} WHERE id = $1`;
+        const params = [id];
+        
+        if (!userIsSuperAdmin && businessId) {
+            q += ` AND (business_id = $2 OR business_id IS NULL)`;
+            params.push(businessId);
+        } else if (!userIsSuperAdmin) {
+            q += ` AND business_id IS NULL`;
+        }
+        
+        const r = await pool.query(q, params);
         if (r.rows.length === 0) return res.status(404).json({ error: 'Not found' });
         res.json(r.rows[0]);
     } catch (e) { console.error('Failed to get dataset', e); res.status(500).json({ error: 'Failed to get dataset' }); }
@@ -4671,23 +4763,94 @@ app.post('/auth/login', async (req, res) => {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
 
-            // If email verification is enabled, prevent login until user is verified/active
-            try {
-                const verifyToggle = (process.env.ENABLE_EMAIL_VERIFICATION || '').toString().toLowerCase();
-                if (verifyToggle === 'true' || verifyToggle === '1') {
-                    if (!user.status || String(user.status).toLowerCase() !== 'active') {
-                        return res.status(403).json({ error: 'Email not verified. Check your email for a verification link.' });
-                    }
-                }
-            } catch (e) { /* ignore */ }
+            // Use email_verified and approval_status columns directly
+            const emailVerified = user.email_verified === true;
+            const approvalStatus = user.approval_status || 'pending';
 
+            // Check if user is Super Admin or Admin (exempt from email verification and approval checks)
+            // Use centralized role checking function for consistency
+            const isAdminOrSuperAdmin = isAdminRole(user.role);
+
+            // Check if verification/approval requirements block login
+            const verifyToggle = (process.env.ENABLE_EMAIL_VERIFICATION || '').toString().toLowerCase();
+            const requireVerify = (verifyToggle === 'true' || verifyToggle === '1');
+            
+            if (requireVerify && !isAdminOrSuperAdmin) {
+                // Skip email verification and approval checks for Admin and Super-Admin users
+                // If email is not verified, return that specific error
+                if (emailVerified === false) {
+                    return res.status(200).json({
+                        error: 'email_not_verified',
+                        message: 'Email not verified. Check your email for a verification link.',
+                        id: user.id,
+                        email: user.email,
+                        firstName: user.first_name,
+                        lastName: user.last_name,
+                        role: user.role,
+                        email_verified: false,
+                        approval_status: approvalStatus,
+                        businessId: user.business_id || null
+                    });
+                }
+                
+                // If approval is pending, return that specific error
+                if (approvalStatus === 'pending') {
+                    return res.status(200).json({
+                        error: 'account_pending_approval',
+                        message: 'Your account is pending admin approval.',
+                        id: user.id,
+                        email: user.email,
+                        firstName: user.first_name,
+                        lastName: user.last_name,
+                        role: user.role,
+                        email_verified: true,
+                        approval_status: 'pending',
+                        businessId: user.business_id || null
+                    });
+                }
+                
+                // If account is rejected
+                if (approvalStatus === 'rejected') {
+                    return res.status(200).json({
+                        error: 'account_rejected',
+                        message: 'Your account has been rejected. Please contact the administrator.',
+                        id: user.id,
+                        email: user.email,
+                        firstName: user.first_name,
+                        lastName: user.last_name,
+                        role: user.role,
+                        email_verified: emailVerified,
+                        approval_status: 'rejected',
+                        businessId: user.business_id || null
+                    });
+                }
+            }
+
+            // Set session (create new object to ensure cookie-session detects changes)
             req.session.userId = user.id;
-            // set business id in session for scoping
-            try { req.session.businessId = user.business_id || null; } catch (e) { req.session.businessId = null; }
+            req.session.businessId = user.business_id || null;
+            req.session.role = user.role;
+            // Force session to be recognized as modified by cookie-session
             // Update last_login_at timestamp
             try {
                 await pool.query(`UPDATE ${tables.USERS} SET last_login_at = NOW() WHERE id = $1`, [user.id]);
             } catch (e) { console.warn('Failed to update last_login_at', e); }
+            
+            // Fetch assigned activities for the user (for data collectors)
+            let assignedActivityIds = [];
+            try {
+                const activitiesRes = await pool.query(
+                    `SELECT DISTINCT a.id FROM ${tables.ACTIVITIES} a
+                     INNER JOIN ${tables.USER_ACTIVITY_ASSIGNMENTS} uaa ON a.id = uaa.activity_id
+                     WHERE uaa.user_id = $1 AND (uaa.status IS NULL OR uaa.status = 'active')`,
+                    [user.id]
+                );
+                assignedActivityIds = activitiesRes.rows.map(r => String(r.id));
+            } catch (e) {
+                console.warn('Failed to fetch assigned activities for user:', e);
+                assignedActivityIds = [];
+            }
+            
             // Return sanitized user object (omit password)
             const safeUser = {
                 id: user.id,
@@ -4696,8 +4859,12 @@ app.post('/auth/login', async (req, res) => {
                 email: user.email,
                 role: user.role,
                 status: user.status,
+                email_verified: emailVerified,
+                approval_status: approvalStatus,
+                facilityId: user.facility_id || null,
                 businessId: user.business_id || null,
-                profileImage: user.profile_image || null
+                profileImage: user.profile_image || null,
+                assignedActivityIds
             };
             // Record login in audit_batches for server-side traceability
             try {
@@ -4744,12 +4911,12 @@ app.post('/auth/login', async (req, res) => {
     }
 });
 
-// Public registration endpoint: allows self-registration for non-admin roles (public/controller/validator)
+// Public registration endpoint: allows self-registration for non-admin roles (Data Collector)
 app.post('/auth/register', async (req, res) => {
     try {
-        const { firstName, lastName, email, password, organizationName, phoneNumber } = req.body || {};
+        const { firstName, lastName, email, password, organizationName, phoneNumber, facilityId } = req.body || {};
         if (!email) return res.status(400).json({ error: 'Missing email' });
-        // Force self-registered users to be 'public' role only. All other roles must be created by an admin.
+        // Self-registered users are assigned 'public' role (unverified). Only admins can assign Data Collector role.
         const requested = 'public';
 
         // check existing
@@ -4786,7 +4953,7 @@ app.post('/auth/register', async (req, res) => {
             }
         } catch (e) { console.error('Failed to create business during registration', e); }
 
-        const r = await pool.query(`INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, role, status, business_id`, [firstName || null, lastName || null, email, hashed || null, requested, initialStatus, businessId]);
+        const r = await pool.query(`INSERT INTO ${tables.USERS} (first_name, last_name, email, password, role, status, business_id, facility_id, email_verified, approval_status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, first_name, last_name, email, role, status, business_id, facility_id, email_verified, approval_status`, [firstName || null, lastName || null, email, hashed || null, requested, initialStatus, businessId, facilityId ? Number(facilityId) : null, false, 'pending']);
         const u = r.rows[0];
 
         // If verification is required, create token and send email
@@ -4796,20 +4963,97 @@ app.post('/auth/register', async (req, res) => {
                 const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
                 await pool.query(`INSERT INTO ${tables.EMAIL_VERIFICATIONS} (user_id, token, expires_at) VALUES ($1,$2,$3)`, [u.id, token, expires]);
 
-                // load smtp
-                const sres = await pool.query(`SELECT value FROM ${tables.SETTINGS} WHERE key = 'smtp' AND business_id = $1`, [businessId]);
-                const smtp = sres.rows[0] ? sres.rows[0].value : null;
-                const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
-                const verifyUrl = `${frontend.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
-                if (smtp) {
+                // Use environment SMTP configuration
+                const smtpConfig = {
+                    host: process.env.SMTP_HOST,
+                    port: parseInt(process.env.SMTP_PORT || '587'),
+                    secure: (process.env.SMTP_PORT || '587') === '465', // true for 465, false for other ports
+                    auth: {
+                        user: process.env.SMTP_USER,
+                        pass: process.env.SMTP_PASSWORD
+                    }
+                };
+
+                if (smtpConfig.host && smtpConfig.auth.user && smtpConfig.auth.pass) {
                     try {
                         const nm = await import('nodemailer');
-                        const transporter = nm.createTransport(smtp);
-                        const text = `Hello ${u.first_name || ''},\n\nThank you for registering. Please verify your email by clicking the link below:\n\n${verifyUrl}\n\nThis link will expire in 24 hours.`;
-                        await transporter.sendMail({ from: smtp.from || smtp.user || 'no-reply@example.com', to: u.email, subject: 'Verify your email', text });
+                        const transporter = nm.createTransport(smtpConfig);
+                        
+                        // Build backend verification URL for email (direct backend endpoint, not frontend hash route)
+                        const backendPort = process.env.SERVER_PORT || 5000;
+                        const backendProtocol = process.env.NODE_ENV === 'production' && process.env.SSL_ENABLED === 'true' ? 'https' : 'http';
+                        const backendHost = process.env.BACKEND_HOST || 'localhost';
+                        const verifyUrl = `${backendProtocol}://${backendHost}:${backendPort}/auth/verify-email?token=${encodeURIComponent(token)}`;
+                        
+                        // Frontend redirect URL for after verification
+                        const frontend = process.env.FRONTEND_HOST || 'http://localhost:9090';
+                        const frontendVerifyPage = `${frontend.replace(/\/$/, '')}/#/login?verified=1`;
+                        
+                        const emailContent = `
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <style>
+                                body { font-family: Arial, sans-serif; color: #333; }
+                                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                                .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                                .content { background-color: #f5f5f5; padding: 20px; border: 1px solid #ddd; }
+                                .button { display: inline-block; background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 15px 0; }
+                                .footer { background-color: #34495e; color: white; padding: 15px; text-align: center; border-radius: 0 0 5px 5px; font-size: 12px; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container">
+                                <div class="header">
+                                    <h1>Email Verification Required</h1>
+                                </div>
+                                <div class="content">
+                                    <p>Hello <strong>${u.first_name || lastName || 'User'}</strong>,</p>
+                                    
+                                    <p>Thank you for registering on the <strong>DQAi Data Collection Platform</strong>!</p>
+                                    
+                                    <p>To complete your registration, please verify your email address by clicking the button below:</p>
+                                    
+                                    <p style="text-align: center;">
+                                        <a href="${verifyUrl}" class="button">Verify Email</a>
+                                    </p>
+                                    
+                                    <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                                        If the button above doesn't work, copy and paste this link into your browser:<br>
+                                        <code>${verifyUrl}</code>
+                                    </p>
+                                    
+                                    <p style="color: #666; font-size: 12px;">
+                                        <strong>Note:</strong> This verification link will expire in 24 hours for security purposes.
+                                    </p>
+                                    
+                                    <p style="color: #666; font-size: 12px;">
+                                        After verifying your email, your account will need admin approval before you can log in.
+                                    </p>
+                                </div>
+                                <div class="footer">
+                                    <p><strong>DQAi Platform</strong></p>
+                                    <p>Data Quality Assessment Initiative - Data Collection Platform</p>
+                                    <p style="margin-top: 10px; color: #bbb;">This is an automated email from the DQAi Platform. Please do not reply directly to this email.</p>
+                                </div>
+                            </div>
+                        </body>
+                        </html>
+                        `;
+
+                        const plainText = `Hello ${u.first_name || lastName || 'User'},\n\nThank you for registering on the DQAi Data Collection Platform!\n\nPlease verify your email by clicking the link below:\n\n${verifyUrl}\n\nThis link will expire in 24 hours.\n\nAfter verifying your email, your account will need admin approval before you can log in.\n\nBest regards,\nDQAi Platform Team`;
+
+                        await transporter.sendMail({
+                            from: `${process.env.SMTP_FROM_NAME || 'DQAi'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+                            to: u.email,
+                            subject: 'Verify Your Email - DQAi Platform',
+                            html: emailContent,
+                            text: plainText
+                        });
+                        console.log('Verification email sent successfully to', u.email);
                     } catch (e) { console.error('Failed to send verification email', e); }
                 } else {
-                    console.warn('SMTP not configured; cannot send verification email');
+                    console.warn('SMTP not configured in environment; cannot send verification email');
                 }
             } catch (e) {
                 console.error('Failed to create/send email verification token', e);
@@ -4893,7 +5137,7 @@ app.post('/auth/register', async (req, res) => {
                     const plainText = `Hello ${firstName || lastName || 'User'},\n\nWelcome to DQAi Platform!\n\nYour account has been created with the following credentials:\nEmail: ${email}\nPassword: ${password}\n\nPlease log in at: ${process.env.FRONTEND_HOST || 'https://app.dqai.org'}/login\n\nFor security, please keep your password confidential.\n\nBest regards,\nDQAi Platform Team`;
 
                     await transporter.sendMail({
-                        from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER,
+                        from: `${process.env.SMTP_FROM_NAME || 'DQAi'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
                         to: email,
                         subject: 'Welcome to DQAi Platform - Your Account Credentials',
                         html: emailContent,
@@ -4931,13 +5175,13 @@ app.get('/auth/verify-email', async (req, res) => {
             try { await pool.query(`DELETE FROM ${tables.EMAIL_VERIFICATIONS} WHERE token = $1`, [token]); } catch (e) { /* ignore */ }
             return res.status(400).send('Token expired');
         }
-        // activate user
-        await pool.query(`UPDATE ${tables.USERS} SET status = $1 WHERE id = $2`, ['Active', row.user_id]);
+        // activate user email
+        await pool.query(`UPDATE ${tables.USERS} SET email_verified = $1, status = $2 WHERE id = $3`, [true, 'Active', row.user_id]);
         // remove token record
         await pool.query(`DELETE FROM ${tables.EMAIL_VERIFICATIONS} WHERE token = $1`, [token]);
-        // Redirect to frontend success page if FRONTEND_URL available
-        const frontend = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
-        return res.redirect(`${frontend.replace(/\/$/, '')}/login?verified=1`);
+        // Redirect to frontend success page
+        const frontend = process.env.FRONTEND_HOST || 'http://localhost:9090';
+        return res.redirect(`${frontend.replace(/\/$/, '')}/#/login?verified=1`);
     } catch (e) {
         console.error('verify-email error', e);
         res.status(500).send('Verification failed');
@@ -4983,18 +5227,17 @@ app.get('/api/logout', (req, res) => {
 // Programs
 app.get('/api/programs', async (req, res) => {
     try {
-        // Scope programs to the user's business unless super-admin
+        const userIsSuperAdmin = await isSuperAdmin(req);
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
-        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
 
         let q = `SELECT * FROM ${tables.PROGRAMS}`;
         const params = [];
 
-        // Super-admin without business context sees all, otherwise filter by business_id
-        if (!isSuperAdmin || businessId) {
+        if (!userIsSuperAdmin && businessId) {
             q += ' WHERE business_id = $1 OR business_id IS NULL';
             params.push(businessId);
+        } else if (!userIsSuperAdmin) {
+            q += ' WHERE business_id IS NULL';
         }
 
         q += ' ORDER BY created_at DESC';
@@ -5089,18 +5332,17 @@ app.delete('/api/programs/:id', async (req, res) => {
 // Activities
 app.get('/api/activities', async (req, res) => {
     try {
-        // Scope activities to business
+        const userIsSuperAdmin = await isSuperAdmin(req);
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
-        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
 
         let q = `SELECT * FROM ${tables.ACTIVITIES}`;
         const params = [];
 
-        // Super-admin without business context sees all, otherwise filter by business_id
-        if (!isSuperAdmin || businessId) {
+        if (!userIsSuperAdmin && businessId) {
             q += ' WHERE business_id = $1 OR business_id IS NULL';
             params.push(businessId);
+        } else if (!userIsSuperAdmin) {
+            q += ' WHERE business_id IS NULL';
         }
 
         q += ' ORDER BY created_at DESC';
@@ -5245,21 +5487,20 @@ app.delete('/api/activities/:id', requireAdmin, async (req, res) => {
 app.get('/api/facilities', async (req, res) => {
     try {
         const businessId = req.session?.businessId || null;
-        const userCheck = req.session?.userId ? (await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId])).rows[0] : null;
-        const isSuperAdmin = userCheck && String(userCheck.role || '').toLowerCase().includes('super');
+        const userIsSuperAdmin = await isSuperAdmin(req);
 
         let q = `SELECT * FROM ${tables.FACILITIES}`;
         const params = [];
 
-        // Super-admin without business context sees all, otherwise filter by business_id
-        if (!isSuperAdmin || businessId) {
+        if (!userIsSuperAdmin && businessId) {
             q += ' WHERE business_id = $1 OR business_id IS NULL';
             params.push(businessId);
+        } else if (!userIsSuperAdmin) {
+            q += ' WHERE business_id IS NULL';
         }
 
         q += ' ORDER BY name ASC';
         const result = await pool.query(q, params);
-        // Parse custom_fields JSONB and merge into each facility object
         const facilities = result.rows.map(f => {
             const customFields = f.custom_fields ? (typeof f.custom_fields === 'string' ? JSON.parse(f.custom_fields) : f.custom_fields) : null;
             return {
@@ -5536,13 +5777,17 @@ app.delete('/api/facilities/:id', requireAdmin, async (req, res) => {
 // Users
 app.get('/api/users', async (req, res) => {
     try {
-        // Scope users to business for non-super-admins
         let q = `SELECT * FROM ${tables.USERS}`;
         const params = [];
-        if (req.session && req.session.userId && !(await isSuperAdmin(req))) {
+        const userIsSuperAdmin = await isSuperAdmin(req);
+        
+        if (!userIsSuperAdmin && req.session?.userId && req.session?.businessId) {
             q += ' WHERE business_id = $1';
-            params.push(req.session.businessId || null);
+            params.push(req.session.businessId);
+        } else if (!userIsSuperAdmin && req.session?.userId && !req.session?.businessId) {
+            q += ' WHERE business_id IS NULL';
         }
+        
         q += ' ORDER BY created_at DESC';
         const result = await pool.query(q, params);
         const mapped = result.rows.map(r => {
@@ -5590,8 +5835,8 @@ app.post('/api/users', async (req, res) => {
             try {
                 const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [actorId]);
                 if (r.rows.length > 0) {
-                    const role = (r.rows[0].role || '').toString().toLowerCase();
-                    if (role === 'admin' || role === 'super-admin' || role === 'super_admin') return true;
+                    // Use centralized role checking function
+                    if (isAdminRole(r.rows[0].role)) return true;
                 }
                 const rr = await pool.query(`SELECT r.name FROM ${tables.USER_ROLES} ur JOIN ${tables.ROLES} r ON ur.role_id = r.id WHERE ur.user_id = $1`, [actorId]);
                 for (const row of rr.rows) { if (row && row.name && row.name.toString().toLowerCase() === 'admin') return true; }
@@ -5777,6 +6022,298 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
         res.json({ ok: true });
     } catch (e) { console.error('Failed to delete user', e); res.status(500).json({ error: 'Failed to delete user' }); }
 });
+
+// Approve or reject user account
+app.post('/api/admin/users/:userId/approval', requireAdmin, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { action, notes } = req.body;
+
+        if (!action || !['approve', 'reject'].includes(action)) {
+            return res.status(400).json({ error: 'Invalid action. Must be "approve" or "reject".' });
+        }
+
+        // Get user for email
+        const userRes = await pool.query(`SELECT * FROM ${tables.USERS} WHERE id = $1`, [userId]);
+        if (userRes.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = userRes.rows[0];
+        const approvalStatus = action === 'approve' ? 'approved' : 'rejected';
+
+        // Update approval status
+        await pool.query(
+            `UPDATE ${tables.USERS} SET approval_status = $1, status = $2 WHERE id = $3`,
+            [approvalStatus, 'Active', userId]
+        );
+
+        // Send notification email
+        try {
+            const smtpConfig = {
+                host: process.env.SMTP_HOST,
+                port: parseInt(process.env.SMTP_PORT || '587'),
+                secure: (process.env.SMTP_PORT || '587') === '465',
+                auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASSWORD
+                }
+            };
+
+            if (smtpConfig.host && smtpConfig.auth.user && smtpConfig.auth.pass) {
+                const nm = await import('nodemailer');
+                const transporter = nm.createTransport(smtpConfig);
+
+                const emailSubject = action === 'approve' 
+                    ? 'Your Account Has Been Approved'
+                    : 'Your Account Registration Was Rejected';
+
+                const emailContent = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; color: #333; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                        .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                        .content { background-color: #f5f5f5; padding: 20px; border: 1px solid #ddd; }
+                        .status { padding: 15px; margin: 15px 0; border-left: 4px solid ${action === 'approve' ? '#27ae60' : '#e74c3c'}; background-color: white; }
+                        .button { display: inline-block; background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 15px 0; }
+                        .footer { background-color: #34495e; color: white; padding: 15px; text-align: center; border-radius: 0 0 5px 5px; font-size: 12px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>${action === 'approve' ? 'Account Approved' : 'Registration Update'}</h1>
+                        </div>
+                        <div class="content">
+                            <p>Dear <strong>${user.first_name || user.last_name || 'User'}</strong>,</p>
+                            
+                            ${action === 'approve' ? `
+                            <div class="status" style="border-left-color: #27ae60;">
+                                <p style="color: #27ae60; font-weight: bold; margin: 0;">✓ Your account has been approved!</p>
+                            </div>
+                            
+                            <p>Congratulations! Your account on the <strong>DQAi Data Collection Platform</strong> has been approved by an administrator. You can now log in and start using the platform.</p>
+                            
+                            <p><strong>Next Steps:</strong></p>
+                            <ol>
+                                <li>Visit the platform login page</li>
+                                <li>Enter your registered email and password</li>
+                                <li>Start collecting and managing data</li>
+                            </ol>
+                            
+                            <p style="text-align: center;">
+                                <a href="${process.env.FRONTEND_HOST || 'http://localhost:9090'}/#/login" class="button">Log In Now</a>
+                            </p>
+                            ` : `
+                            <div class="status" style="border-left-color: #e74c3c;">
+                                <p style="color: #e74c3c; font-weight: bold; margin: 0;">✕ Your account registration was rejected</p>
+                            </div>
+                            
+                            <p>Unfortunately, your account registration on the <strong>DQAi Data Collection Platform</strong> has not been approved at this time.</p>
+                            
+                            ${notes ? `<p><strong>Reason:</strong> ${notes}</p>` : ''}
+                            
+                            <p>If you believe this is a mistake or have questions, please contact the platform administrator.</p>
+                            `}
+                            
+                        </div>
+                        <div class="footer">
+                            <p><strong>DQAi Platform</strong></p>
+                            <p>Data Quality Assessment Initiative - Data Collection Platform</p>
+                            <p style="margin-top: 10px; color: #bbb;">This is an automated email from the DQAi Platform. Please do not reply directly to this email.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                `;
+
+                const plainText = action === 'approve'
+                    ? `Hello ${user.first_name || user.last_name || 'User'},\n\nCongratulations! Your account has been approved!\n\nYou can now log in to the DQAi Platform at: ${process.env.FRONTEND_HOST || 'http://localhost:9090'}/#/login\n\nBest regards,\nDQAi Platform Team`
+                    : `Hello ${user.first_name || user.last_name || 'User'},\n\nYour account registration was rejected.\n\n${notes ? `Reason: ${notes}\n\n` : ''}If you have questions, please contact the administrator.\n\nBest regards,\nDQAi Platform Team`;
+
+                await transporter.sendMail({
+                    from: `${process.env.SMTP_FROM_NAME || 'DQAi'} <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+                    to: user.email,
+                    subject: emailSubject,
+                    html: emailContent,
+                    text: plainText
+                });
+                console.log(`Approval email (${action}) sent to ${user.email}`);
+            }
+        } catch (emailError) {
+            console.error('Failed to send approval notification email:', emailError);
+            // Continue - don't fail the request if email fails
+        }
+
+        res.json({
+            message: `User ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+            user: {
+                id: user.id,
+                email: user.email,
+                approval_status: approvalStatus,
+                email_verified: user.email_verified
+            }
+        });
+    } catch (e) {
+        console.error('Failed to process user approval', e);
+        res.status(500).json({ error: 'Failed to process approval' });
+    }
+});
+
+// ==================== ACTIVITY ASSIGNMENT ENDPOINTS ====================
+// Get assigned activities for a user
+app.get('/api/users/:userId/assigned-activities', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+
+        // Authorization: user can see their own assignments, admins can see all
+        const isOwnRequest = String(req.session?.userId) === String(userId);
+        let userIsAdmin = false;
+        if (!isOwnRequest && req.session?.userId) {
+            const r = await pool.query(`SELECT role FROM ${tables.USERS} WHERE id = $1`, [req.session.userId]);
+            if (r.rows.length > 0) {
+                userIsAdmin = isAdminRole(r.rows[0].role) || isSuperAdminRole(r.rows[0].role);
+            }
+        }
+        
+        if (!isOwnRequest && !userIsAdmin) {
+            return res.status(403).json({ error: 'Forbidden - cannot view other user assignments' });
+        }
+
+        // Query assigned activities from user_activity_assignments table
+        const result = await pool.query(
+            `SELECT DISTINCT a.* FROM ${tables.ACTIVITIES} a
+             INNER JOIN ${tables.USER_ACTIVITY_ASSIGNMENTS} uaa ON a.id = uaa.activity_id
+             WHERE uaa.user_id = $1 AND (uaa.status IS NULL OR uaa.status = 'active')
+             ORDER BY a.created_at DESC`,
+            [userId]
+        );
+
+        const activities = result.rows.map(a => ({
+            id: a.id,
+            title: a.title,
+            name: a.title,
+            status: a.status,
+            description: a.description,
+            created_at: a.created_at,
+            business_id: a.business_id
+        }));
+
+        res.json(activities);
+    } catch (e) {
+        console.error('Failed to get assigned activities:', e);
+        res.status(500).json({ error: 'Failed to get assigned activities' });
+    }
+});
+
+// Assign activity to user (admin only)
+app.post('/api/users/:userId/assign-activity', requireAdmin, async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        const { activityId } = req.body;
+
+        if (!userId || !activityId) {
+            return res.status(400).json({ error: 'User ID and Activity ID required' });
+        }
+
+        const currentUserId = req.session?.userId;
+
+        // Ensure table exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${tables.USER_ACTIVITY_ASSIGNMENTS} (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                activity_id INTEGER NOT NULL,
+                assigned_by INTEGER,
+                status VARCHAR(50) DEFAULT 'active',
+                assigned_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(user_id, activity_id)
+            )
+        `);
+
+        // Check if assignment already exists
+        const checkResult = await pool.query(
+            `SELECT id FROM ${tables.USER_ACTIVITY_ASSIGNMENTS} WHERE user_id = $1 AND activity_id = $2`,
+            [userId, activityId]
+        );
+
+        if (checkResult.rows.length > 0) {
+            return res.status(409).json({ error: 'Activity already assigned to this user' });
+        }
+
+        // Insert new assignment
+        const assignResult = await pool.query(
+            `INSERT INTO ${tables.USER_ACTIVITY_ASSIGNMENTS} (user_id, activity_id, assigned_by, status)
+             VALUES ($1, $2, $3, 'active')
+             RETURNING *`,
+            [userId, activityId, currentUserId]
+        );
+
+        // Fetch updated assignments list for the user
+        const activitiesResult = await pool.query(
+            `SELECT DISTINCT a.id FROM ${tables.ACTIVITIES} a
+             INNER JOIN ${tables.USER_ACTIVITY_ASSIGNMENTS} uaa ON a.id = uaa.activity_id
+             WHERE uaa.user_id = $1 AND (uaa.status IS NULL OR uaa.status = 'active')`,
+            [userId]
+        );
+
+        const assignedActivityIds = activitiesResult.rows.map(r => String(r.id));
+
+        res.json({
+            message: 'Activity assigned successfully',
+            assignment: assignResult.rows[0],
+            assignedActivityIds
+        });
+    } catch (e) {
+        console.error('Failed to assign activity:', e);
+        res.status(500).json({ error: 'Failed to assign activity' });
+    }
+});
+
+// Unassign activity from user (admin only)
+app.post('/api/users/:userId/unassign-activity', requireAdmin, async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        const { activityId } = req.body;
+
+        if (!userId || !activityId) {
+            return res.status(400).json({ error: 'User ID and Activity ID required' });
+        }
+
+        // Delete assignment
+        const result = await pool.query(
+            `DELETE FROM ${tables.USER_ACTIVITY_ASSIGNMENTS} WHERE user_id = $1 AND activity_id = $2 RETURNING *`,
+            [userId, activityId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Assignment not found' });
+        }
+
+        // Fetch updated assignments list for the user
+        const activitiesResult = await pool.query(
+            `SELECT DISTINCT a.id FROM ${tables.ACTIVITIES} a
+             INNER JOIN ${tables.USER_ACTIVITY_ASSIGNMENTS} uaa ON a.id = uaa.activity_id
+             WHERE uaa.user_id = $1 AND (uaa.status IS NULL OR uaa.status = 'active')`,
+            [userId]
+        );
+
+        const assignedActivityIds = activitiesResult.rows.map(r => String(r.id));
+
+        res.json({
+            message: 'Activity unassigned successfully',
+            assignedActivityIds
+        });
+    } catch (e) {
+        console.error('Failed to unassign activity:', e);
+        res.status(500).json({ error: 'Failed to unassign activity' });
+    }
+});
+// ==================== END ACTIVITY ASSIGNMENT ENDPOINTS ====================
 
 // Reports
 app.get('/api/reports', async (req, res) => {
@@ -7327,6 +7864,15 @@ app.get('/api/activity_dashboard/:activityId', async (req, res) => {
         const activityRes = await pool.query(`SELECT * FROM ${tables.ACTIVITIES} WHERE id = $1`, [activityId]);
         if (activityRes.rowCount === 0) return res.status(404).send('Activity not found');
         const activity = activityRes.rows[0];
+        
+        // Business scoping: super-admin can see all, others only see their business
+        const userIsSuperAdmin = await isSuperAdmin(req);
+        if (!userIsSuperAdmin && req.session?.userId) {
+            const businessId = req.session.businessId || null;
+            if (String(activity.business_id || '') !== String(businessId || '')) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+        }
 
         const questionsRes = await pool.query(`SELECT * FROM ${tables.QUESTIONS} WHERE activity_id = $1 ORDER BY created_at ASC`, [activityId]);
         const questions = questionsRes.rows;

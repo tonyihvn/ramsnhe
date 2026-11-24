@@ -800,7 +800,11 @@ const RolesList: React.FC = () => {
 
 const UsersList: React.FC = () => {
     const { currentUser } = useMockData();
-    const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
+    // Accept both exact match and lowercase comparisons for admin roles
+    const userRole = (currentUser?.role || '').toString();
+    const userRoleLower = userRole.toLowerCase();
+    const isAdmin = userRole === 'Admin' || userRole === 'Super Admin' || 
+                   userRoleLower === 'admin' || userRoleLower === 'super-admin' || userRoleLower === 'super_admin';
     const [users, setUsers] = useState<any[]>([]);
     const [roles, setRoles] = useState<any[]>([]);
     const [editing, setEditing] = useState<any | null>(null);
@@ -852,6 +856,10 @@ const UsersList: React.FC = () => {
     const saveUser = async (u?: any) => {
         try {
             const payload = { ...(u || editing) };
+            // Only send password if it's not empty (preserve existing password if untouched)
+            if (!payload.password) {
+                delete payload.password;
+            }
             const r = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             if (r.ok) { fetchUsers(); setEditing(null); alert('User saved'); }
             else alert('Failed to save user: ' + await r.text());
@@ -988,8 +996,16 @@ const SettingsPage: React.FC = () => {
                 const r = await fetch('/api/current_user', { credentials: 'include' });
                 if (r.ok) {
                     const j = await r.json();
-                    const role = j && (j.role || '').toString().toLowerCase();
-                    setIsAdmin(role === 'admin' || role === 'super-admin' || role === 'super_admin');
+                    if (!j) {
+                        setIsAdmin(false);
+                        return;
+                    }
+                    // Accept both exact match and lowercase comparisons for admin roles
+                    const role = j.role;
+                    const roleLower = (role || '').toString().toLowerCase();
+                    const isAdminRole = role === 'Admin' || role === 'Super Admin' || 
+                                       roleLower === 'admin' || roleLower === 'super-admin' || roleLower === 'super_admin';
+                    setIsAdmin(isAdminRole);
                 } else setIsAdmin(false);
             } catch (e) { setIsAdmin(false); }
         })();

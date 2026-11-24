@@ -378,51 +378,6 @@ export const MapView = ({ fullScreen = false, filters = {} }: { fullScreen?: boo
       <div style={{ display: 'flex', gap: 12 }}>
         {/* Main content area (map/form) */}
         <div style={{ flex: 1, position: 'relative' }}>
-            <FloatingCard storageKey="floating_card_mapview" defaultLeft={32} defaultTop={48} defaultWidth={420} defaultHeight={520}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                <div style={{ fontWeight: 700 }}>Controls</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>Drag / Resize card</div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 140 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>Tier</div>
-                  <select value={filterTier} onChange={e => setFilterTier(e.target.value)} style={{ width: '100%', padding: 6, borderRadius: 6 }}>
-                    <option value="all">All</option>
-                    {meta.care_levels.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-
-                <div style={{ minWidth: 140 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>Primary Indicator</div>
-                  <div style={{ fontWeight: 700 }}>{primaryIndicatorId || '—'}</div>
-                </div>
-
-                <div style={{ minWidth: 160 }}>
-                  <div style={{ fontSize: 12, color: '#666' }}>Avg Telemetry</div>
-                  <div style={{ fontWeight: 700 }}>{avgTelemetry !== null ? `${avgTelemetry}%` : '—'}</div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: 8 }}>
-                <svg width={280} height={40} viewBox="0 0 220 40" preserveAspectRatio="none">
-                  <polyline fill="none" stroke="#0ea5a4" strokeWidth={2} points={sparklinePoints} />
-                </svg>
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                <MapControls
-                  onChange={(e) => { setEnabledIndicators(e); }}
-                  onToggleOverlays={(o) => setOverlays(o)}
-                  onFilterChange={(f) => { setSelectedPrograms(f.selectedPrograms || []); setSelectedActivities(f.selectedActivities || []); }}
-                />
-              </div>
-
-              {/* Indicator summary: fetch server-provided summaries if available */}
-              <div style={{ marginTop: 12 }}>
-                <IndicatorSummary />
-              </div>
-            </FloatingCard>
-
             <div className="nherams-map" style={{ height: '100vh' }}>
               <MapContainer
                 center={filtered.length ? [filtered[0].lat, filtered[0].lng] : [9.0820, 8.6753]}

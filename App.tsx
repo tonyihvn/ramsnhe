@@ -23,6 +23,7 @@ import ProgramsPage from './pages/ProgramsPage';
 import IndicatorsPage from './pages/IndicatorsPage';
 import RolePermissionsPage from './pages/RolePermissionsPage';
 import LoginPage from './pages/LoginPage';
+import EmailVerificationPage from './pages/EmailVerificationPage';
 import LandingPage from './pages/LandingPage';
 import CustomPage from './pages/CustomPage';
 import SettingsPage from './pages/SettingsPage';
@@ -80,6 +81,7 @@ const AppRoutes = () => {
       <Route path="/map-dashboard" element={<ProtectedRoute><Layout><MapDashboard /></Layout></ProtectedRoute>} />
 
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/verify-email" element={<EmailVerificationPage />} />
       <Route path="/request-reset" element={<RequestPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
 
@@ -139,14 +141,17 @@ const AppRoutes = () => {
 }
 
 const AppContent = () => {
-  const { isDataLoading, loadingProgress, currentUser } = useMockData();
-  
   return (
     <>
-      <LoadingOverlay isVisible={isDataLoading} progress={loadingProgress} />
+      <LoadingOverlayWrapper />
       <AppRoutes />
     </>
   );
+};
+
+const LoadingOverlayWrapper = () => {
+  const { isDataLoading, loadingProgress } = useMockData();
+  return <LoadingOverlay isVisible={isDataLoading} progress={loadingProgress} />;
 };
 
 const App: React.FC = () => {

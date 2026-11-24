@@ -152,6 +152,7 @@ export interface User {
   show_on_map?: boolean;
   business_id?: string; // Business/Organization ID for multi-tenancy
   canSwitchBusiness?: boolean; // Super admin flag for switching businesses
+  assignedActivityIds?: string[]; // Activities assigned to data collectors
 }
 
 export interface Plan {

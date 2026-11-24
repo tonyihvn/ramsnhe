@@ -2,6 +2,7 @@
 import React from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import Button from './Button';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
   isOpen: boolean;
@@ -16,7 +17,7 @@ interface ModalProps {
 const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'lg' }) => {
   if (!isOpen) return null;
 
-  return (
+  const modalContent = (
     <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
       <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         {/* Background overlay */}
@@ -56,6 +57,9 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
       </div>
     </div>
   );
+
+  // Render modal at the document root level using Portal
+  return createPortal(modalContent, document.body);
 };
 
 export default Modal;

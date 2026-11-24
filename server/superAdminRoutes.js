@@ -63,17 +63,19 @@ async function createAuditLog(pool, businessId, userId, action, entityType, enti
 }
 
 // Helper: Check if role is super admin (case-insensitive)
+// Handles: super-admin, super_admin, super admin, Super Admin, etc.
 function isSuperAdminRole(role) {
     if (!role) return false;
-    const normalized = String(role).toLowerCase();
-    return normalized === 'super-admin' || normalized === 'super_admin';
+    const normalized = String(role).toLowerCase().trim();
+    return normalized === 'super-admin' || normalized === 'super_admin' || normalized === 'super admin' || normalized === 'superadmin';
 }
 
 // Helper: Check if role is admin (case-insensitive)
+// Handles: admin, Admin, ADMIN, etc.
 function isAdminRole(role) {
     if (!role) return false;
-    const normalized = String(role).toLowerCase();
-    return normalized === 'admin';
+    const normalized = String(role).toLowerCase().trim();
+    return normalized === 'admin' || normalized === 'super-admin' || normalized === 'super_admin' || normalized === 'super admin' || normalized === 'superadmin';
 }
 
 /**

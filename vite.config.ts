@@ -19,11 +19,13 @@ export default defineConfig(({ mode }) => {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
           rewrite: (path) => path,
+          followRedirects: true,
         },
         '/auth': {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
           rewrite: (path) => path,
+          followRedirects: true,
         }
       }
     },

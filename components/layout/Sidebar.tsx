@@ -252,7 +252,17 @@ const Sidebar: React.FC<{ collapsed?: boolean; mobileOpen?: boolean; onClose?: (
                             // Activities with expandable list
                             if (item.key === 'activities') {
                               const isActive = location.pathname.startsWith(item.href);
-                              const published = Array.isArray(activities) ? activities.filter(a => String(a.status || '').toLowerCase() === 'published') : [];
+                              // For data collectors: only show assigned activities
+                              // For admins/super-admins: show all published activities
+                              const userRole = String(currentUser?.role || '').toLowerCase().trim();
+                              const isDataCollector = userRole === 'data collector' || userRole === 'data-collector' || userRole === 'data_collector';
+                              let published = Array.isArray(activities) ? activities.filter(a => String(a.status || '').toLowerCase() === 'published') : [];
+                              
+                              // If data collector, filter to only assigned activities
+                              if (isDataCollector && currentUser?.id) {
+                                const assignedActivityIds: string[] = currentUser.assignedActivityIds || [];
+                                published = published.filter(a => assignedActivityIds.includes(String(a.id)));
+                              }
                               return (
                                 <div key={item.key}>
                                   <div onClick={() => setActivitiesOpen(o => !o)} className={`group flex items-center cursor-pointer ${collapsed ? 'justify-center' : ''} px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-primary-50 text-primary-600' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
