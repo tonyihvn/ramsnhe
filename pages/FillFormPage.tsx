@@ -11,6 +11,7 @@ import { filterOptionsByCondition } from '../utils/conditionEvaluator';
 import { buildFormulasContext, evaluateFormulaWithContext, evaluateFormulasForForm } from '../utils/formulaEvaluator';
 import VoiceCapturePanel from '../components/VoiceCapturePanel';
 import Modal from '../components/ui/Modal';
+import LoadingModal from '../components/ui/LoadingModal';
 
 import { MapContainer, TileLayer, Marker, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -114,7 +115,7 @@ const SearchableSelect: React.FC<{
     placeholder?: string;
     onChange: (val: any) => void;
     disabled?: boolean;
-}> = ({ options, value, placeholder, onChange, disabled }) => {
+}> = React.memo(({ options, value, placeholder, onChange, disabled }) => {
     const [input, setInput] = React.useState<string>('');
     const [open, setOpen] = React.useState<boolean>(false);
     const ref = React.useRef<HTMLDivElement | null>(null);
@@ -162,9 +163,17 @@ const SearchableSelect: React.FC<{
             )}
         </div>
     );
-};
+}, (prevProps, nextProps) => {
+    // Custom comparison: re-render only if critical props change
+    return (
+        prevProps.value === nextProps.value &&
+        prevProps.disabled === nextProps.disabled &&
+        prevProps.placeholder === nextProps.placeholder &&
+        JSON.stringify(prevProps.options) === JSON.stringify(nextProps.options)
+    );
+});
 
-const RenderQuestion = ({ question, value, onChange, facilities, users, disabled, allAnswers = {}, fieldNameMap = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any>; fieldNameMap?: Record<string, any> }) => {
+const RenderQuestion = React.memo(({ question, value, onChange, facilities, users, disabled, allAnswers = {}, fieldNameMap = {} }: { question: Question, value: any, onChange: (value: any) => void, facilities: Facility[]; users: User[]; disabled?: boolean; allAnswers?: Record<string, any>; fieldNameMap?: Record<string, any> }) => {
     // Local state/hooks used by some input types (e.g. location picker)
     const [showLocationMap, setShowLocationMap] = useState(false);
     const handleLocationClick = () => setShowLocationMap(s => !s);
@@ -415,7 +424,15 @@ const RenderQuestion = ({ question, value, onChange, facilities, users, disabled
         default:
             return <p className="text-sm text-gray-500">Not supported</p>;
     }
-};
+}, (prevProps, nextProps) => {
+    // Re-render only if question or value changes
+    return (
+        prevProps.question.id === nextProps.question.id &&
+        prevProps.value === nextProps.value &&
+        prevProps.disabled === nextProps.disabled &&
+        JSON.stringify(prevProps.allAnswers) === JSON.stringify(nextProps.allAnswers)
+    );
+});
 import DataTable from '../components/ui/DataTable';
 
 const EditableTable = ({ file, onUpdate }: { file: UploadedFile; onUpdate: (updatedFile: UploadedFile) => void }) => {
@@ -468,6 +485,7 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const [activity, setActivity] = useState<Activity | undefined>(undefined);
     const [activityLoading, setActivityLoading] = useState(true);
     const [activityError, setActivityError] = useState<string | null>(null);
+    const [loadingProgress, setLoadingProgress] = useState(0);
     
     const formDef: FormDefinition | undefined = activity?.formDefinition;
 
@@ -552,11 +570,12 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const search = new URLSearchParams(location.search);
     const qReportId = search.get('reportId');
 
-    // Fetch activity from cache or backend
+    // Fetch activity from cache or backend with loading progress
     React.useEffect(() => {
         if (!activityId) {
             setActivityError('No activity ID provided');
             setActivityLoading(false);
+            setLoadingProgress(0);
             return;
         }
 
@@ -566,31 +585,54 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
             setActivity(cachedActivity);
             setActivityLoading(false);
             setActivityError(null);
+            setLoadingProgress(0);
             return;
         }
 
-        // If not in cache, fetch from API
+        // If not in cache, fetch from API with progress simulation
         setActivityLoading(true);
         setActivityError(null);
+        setLoadingProgress(10);
+
+        // Simulate progress while loading
+        const progressInterval = setInterval(() => {
+            setLoadingProgress(prev => {
+                if (prev < 90) return prev + Math.random() * 20;
+                return prev;
+            });
+        }, 300);
+
         (async () => {
             try {
+                setLoadingProgress(20);
                 const res = await fetch(`/api/activities/${activityId}`, { credentials: 'include' });
+                setLoadingProgress(50);
+
                 if (res.ok) {
                     const fetchedActivity = await res.json();
+                    setLoadingProgress(80);
                     setActivity(fetchedActivity);
+                    setLoadingProgress(100);
                     setActivityError(null);
                 } else if (res.status === 404) {
                     setActivityError('Activity not found');
+                    setLoadingProgress(0);
                 } else {
                     setActivityError(`Failed to load activity: ${res.statusText}`);
+                    setLoadingProgress(0);
                 }
             } catch (e) {
                 console.error('Failed to fetch activity:', e);
                 setActivityError('Failed to load activity');
+                setLoadingProgress(0);
             } finally {
+                clearInterval(progressInterval);
                 setActivityLoading(false);
+                setLoadingProgress(0);
             }
         })();
+
+        return () => clearInterval(progressInterval);
     }, [activityId]);
 
     // Also refetch if activity appears in cache later
@@ -1519,7 +1561,14 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
     const globalFieldMap = buildGlobalFieldMap();
 
     return (
-        <div className="space-y-6">
+        <>
+            <LoadingModal
+                isOpen={activityLoading}
+                title="Loading Form"
+                message="Please wait while we load your activity form..."
+                progress={loadingProgress}
+            />
+            <div className="space-y-6">
             {!standaloneMode && (
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center space-x-4">
@@ -1975,7 +2024,8 @@ const FillFormPage: React.FC<FillFormPageProps> = ({ activityIdOverride, standal
                     </div>
                 )}
             </Modal>
-        </div>
+            </div>
+        </>
     );
 };
 
