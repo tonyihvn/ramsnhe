@@ -74,6 +74,14 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
 
   const widthStorageKey = `${computedKey}_widths`;
 
+  // Calculate default width based on label length to ensure headers fit in one line
+  const getDefaultWidth = (label: string): number => {
+    // Base: 60px minimum for content, plus padding
+    // Approximately 8px per character for default font
+    const textWidth = Math.max(80, Math.min(300, label.length * 8 + 40));
+    return Math.min(400, Math.max(100, textWidth));
+  };
+
   const startResize = (event: React.MouseEvent<HTMLDivElement>, key: string) => {
     event.preventDefault();
     event.stopPropagation();
@@ -86,7 +94,8 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
     const startWidth = header?.offsetWidth || 150;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      const nextWidth = Math.max(60, Math.min(800, startWidth + moveEvent.clientX - startX));
+      // Allow resize up to 400px maximum
+      const nextWidth = Math.max(80, Math.min(400, startWidth + moveEvent.clientX - startX));
       setColumnWidths(prev => {
         const next = { ...prev, [key]: nextWidth };
         try { localStorage.setItem(widthStorageKey, JSON.stringify(next)); } catch (e) { /* ignore */ }
@@ -193,80 +202,88 @@ export default function DataTable<T extends Record<string, any>>({ columns, data
         <table className="min-w-full divide-y divide-gray-200 table-fixed">
           <thead className="bg-gray-50">
             <tr>
-              {visibleColumns.map(col => (
-                <th
-                  key={col.key}
-                  data-column-key={col.key}
-                  draggable
-                  onDragStart={() => handleDragStart(col.key)}
-                  onDragOver={handleDragOver}
-                  onDrop={() => handleDrop(col.key)}
-                  style={{
-                    width: columnWidths[col.key] ? `${columnWidths[col.key]}px` : col.width,
-                    minWidth: columnWidths[col.key] ? `${columnWidths[col.key]}px` : undefined,
-                    maxWidth: columnWidths[col.key] ? `${columnWidths[col.key]}px` : undefined,
-                    cursor: resizingCol === col.key ? 'col-resize' : 'move',
-                    opacity: draggedCol === col.key ? 0.5 : 1,
-                    position: 'relative',
-                    whiteSpace: 'normal',
-                    overflowWrap: 'anywhere',
-                    wordBreak: 'break-word',
-                    verticalAlign: 'top',
-                  }}
-                  className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}
-                >
-                  <div className="flex flex-col pr-2">
-                    <span className="whitespace-normal break-words leading-4" style={{ overflowWrap: 'anywhere' }}>{col.label}</span>
-                    <input
-                      placeholder="Search"
-                      value={filters[col.key] || ''}
-                      onChange={e => handleChange(col.key, e.target.value)}
-                      className="mt-1 block w-full border-gray-200 rounded text-xs px-2 py-1"
+              {visibleColumns.map(col => {
+                const defaultWidth = getDefaultWidth(col.label);
+                const finalWidth = columnWidths[col.key] || defaultWidth;
+                return (
+                  <th
+                    key={col.key}
+                    data-column-key={col.key}
+                    draggable
+                    onDragStart={() => handleDragStart(col.key)}
+                    onDragOver={handleDragOver}
+                    onDrop={() => handleDrop(col.key)}
+                    style={{
+                      width: `${finalWidth}px`,
+                      minWidth: `${finalWidth}px`,
+                      maxWidth: `${finalWidth}px`,
+                      cursor: resizingCol === col.key ? 'col-resize' : 'move',
+                      opacity: draggedCol === col.key ? 0.5 : 1,
+                      position: 'relative',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      verticalAlign: 'top',
+                    }}
+                    className={`px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase ${stickyHeader ? 'sticky top-0 z-10 bg-gray-50' : ''}`}
+                  >
+                    <div className="flex flex-col pr-2">
+                      <span className="whitespace-normal break-words leading-5" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{col.label}</span>
+                      <input
+                        placeholder="Search"
+                        value={filters[col.key] || ''}
+                        onChange={e => handleChange(col.key, e.target.value)}
+                        className="mt-1 block w-full border-gray-200 rounded text-xs px-2 py-1"
+                      />
+                    </div>
+                    <div
+                      draggable={false}
+                      onDragStart={(event) => event.preventDefault()}
+                      onMouseDown={(event) => startResize(event, col.key)}
+                      className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-gray-300 hover:bg-blue-500"
+                      title="Drag to resize column (max 400px)"
                     />
-                  </div>
-                  <div
-                    draggable={false}
-                    onDragStart={(event) => event.preventDefault()}
-                    onMouseDown={(event) => startResize(event, col.key)}
-                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize bg-gray-300 hover:bg-blue-500"
-                    title="Drag to resize column"
-                  />
-                </th>
-              ))}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {paged.map((row, rIdx) => (
               <tr key={rIdx} data-row-index={rIdx}>
-                {visibleColumns.map(col => (
-                  <td
-                    key={col.key}
-                    style={columnWidths[col.key] ? {
-                      width: `${columnWidths[col.key]}px`,
-                      minWidth: `${columnWidths[col.key]}px`,
-                      maxWidth: `${columnWidths[col.key]}px`,
-                      overflow: 'hidden',
-                      textOverflow: 'clip',
-                      whiteSpace: 'normal',
-                      overflowWrap: 'anywhere',
-                      wordBreak: 'break-word',
-                      verticalAlign: 'top',
-                    } : undefined}
-                    className="px-2 py-2 align-top text-sm whitespace-normal break-words"
-                  >
-                    {col.editable && onCellEdit ? (
-                      <input
-                        value={row[col.key] ?? ''}
-                        onChange={e => onCellEdit?.((page - 1) * localPageSize + rIdx, col.key, e.target.value)}
-                        className="w-full border-gray-200 rounded text-sm px-2 py-1"
-                      />
-                    ) : col.render ? (
-                      col.render(row)
-                    ) : (
-                      String(row[col.key] ?? '')
-                    )}
-                  </td>
-                ))}
+                {visibleColumns.map(col => {
+                  const defaultWidth = getDefaultWidth(col.label);
+                  const finalWidth = columnWidths[col.key] || defaultWidth;
+                  return (
+                    <td
+                      key={col.key}
+                      style={{
+                        width: `${finalWidth}px`,
+                        minWidth: `${finalWidth}px`,
+                        maxWidth: `${finalWidth}px`,
+                        overflow: 'hidden',
+                        textOverflow: 'clip',
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                        verticalAlign: 'top',
+                      }}
+                      className="px-2 py-2 align-top text-sm whitespace-normal break-words"
+                    >
+                      {col.editable && onCellEdit ? (
+                        <input
+                          value={row[col.key] ?? ''}
+                          onChange={e => onCellEdit?.((page - 1) * localPageSize + rIdx, col.key, e.target.value)}
+                          className="w-full border-gray-200 rounded text-sm px-2 py-1"
+                        />
+                      ) : col.render ? (
+                        col.render(row)
+                      ) : (
+                        String(row[col.key] ?? '')
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
