@@ -850,24 +850,6 @@ const ReportViewPage: React.FC = () => {
   const userLabel = report.reported_by_name || report.reportedByName || report.reported_by || report.reportedBy || report.user_name || report.userName || (report.reported_by ? `User ${report.reported_by}` : null);
   const subjectLabel = activityResponseType === 'user' ? (userLabel || facilityName || facilityLabelFallback) : (facilityName || facilityLabelFallback);
 
-  const normalizeAnswerValue = (value: any): string => {
-    if (value === null || typeof value === 'undefined') return '';
-    if (typeof value === 'object') {
-      if (!Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, 'value')) {
-        return String(value.value ?? '');
-      }
-      if (Array.isArray(value)) {
-        return value.map(item => normalizeAnswerValue(item)).filter(Boolean).join(', ');
-      }
-      try {
-        return JSON.stringify(value);
-      } catch (e) {
-        return String(value);
-      }
-    }
-    return String(value).trim();
-  };
-
   const scoreStatsMap: Record<string, { score: number; total: number; count: number; answers: Set<string> }> = {};
   answers.forEach((answer: any) => {
     if (answer.score === null || typeof answer.score === 'undefined' || String(answer.score).trim() === '') return;
