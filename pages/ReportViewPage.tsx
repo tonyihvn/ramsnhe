@@ -368,18 +368,44 @@ const ReportViewPage: React.FC = () => {
     return String(v).trim();
   };
 
-  const calculateStat = (answers: any[], aggregateType: string): number | string => {
-    if (aggregateType === 'count') return answers.length;
+  const calculateStat = (answers: any[], aggregateType: string, questionId: string = ''): number | string => {
+    // Determine which field to aggregate on
+    const isScoreField = questionId === '__score__';
+    const isAllQuestions = questionId === '__all__';
+    
+    // Filter answers based on question selection
+    let filteredAnswers = answers;
+    if (!isScoreField && !isAllQuestions && questionId) {
+      filteredAnswers = answers.filter((a: any) => String(a.question_id) === String(questionId));
+    }
+    
+    if (aggregateType === 'count') return filteredAnswers.length;
+    
     if (aggregateType === 'count_distinct') {
-      const distinct = new Set(answers.map((a: any) => normalizeAnswerValue(a.answer_value)));
+      const fieldToCount = isScoreField ? 'score' : 'answer_value';
+      const distinct = new Set(filteredAnswers.map((a: any) => {
+        if (isScoreField) {
+          return String(a.score ?? '');
+        }
+        return normalizeAnswerValue(a.answer_value);
+      }));
       return distinct.size;
     }
 
-    const nums = answers
-      .map((a: any) => {
+    // For numeric aggregates, extract values from the appropriate field
+    const fieldExtractor = (a: any) => {
+      if (isScoreField) {
+        const scoreVal = a.score ?? a.answer_value;
+        const n = parseFloat(String(scoreVal));
+        return isNaN(n) ? undefined : n;
+      } else {
         const n = parseFloat(normalizeAnswerValue(a.answer_value));
         return isNaN(n) ? undefined : n;
-      })
+      }
+    };
+
+    const nums = filteredAnswers
+      .map(fieldExtractor)
       .filter((n: any) => n !== undefined);
 
     if (nums.length === 0) return '—';
@@ -409,6 +435,21 @@ const ReportViewPage: React.FC = () => {
   };
 
   const getDistinctResponsesByQuestion = (questionId: string): string[] => {
+    if (questionId === '__score__') {
+      // For score field, get distinct score values
+      const scores = answers
+        .filter((a: any) => a.score !== null && typeof a.score !== 'undefined' && String(a.score).trim() !== '')
+        .map((a: any) => String(a.score))
+        .filter((v: string) => v !== '');
+      const values = Array.from(new Set(scores));
+      return values.sort((a, b) => {
+        const numA = Number(a);
+        const numB = Number(b);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return a.localeCompare(b, undefined, { sensitivity: 'base' });
+      });
+    }
+    
     const rows = answers.filter((a: any) => String(a.question_id) === String(questionId));
     const values = Array.from(new Set(
       rows
@@ -458,7 +499,13 @@ const ReportViewPage: React.FC = () => {
     const matchedAnswerIds = new Set<string>();
     for (const answer of answers || []) {
       const passesAll = completeConditions.every((condition) => {
-        return compareWithOperator(normalizeAnswerValue(answer.answer_value), condition.operator, condition.value);
+        const isScoreField = condition.questionId === '__score__';
+        if (isScoreField) {
+          const scoreValue = String(answer.score ?? '');
+          return compareWithOperator(scoreValue, condition.operator, condition.value);
+        } else {
+          return compareWithOperator(normalizeAnswerValue(answer.answer_value), condition.operator, condition.value);
+        }
       });
       if (passesAll) {
         matchedAnswerIds.add(String(answer.id));
@@ -650,8 +697,16 @@ const ReportViewPage: React.FC = () => {
     normalizedStats.forEach((stat) => {
       const conditionsToApply = stat.aggregateType === 'count' ? (stat.conditions || []) : [];
       const matchingAnswerIds = getMatchingAnswerIds(conditionsToApply);
-      const filteredAnswers = answers.filter((a: any) => matchingAnswerIds.has(String(a.id)) && String(a.question_id) === String(stat.questionId));
-      recalculated[stat.statKey] = calculateStat(filteredAnswers, stat.aggregateType);
+      const isAllQuestions = stat.questionId === '__all__';
+      const isScoreField = stat.questionId === '__score__';
+      
+      let filteredAnswers;
+      if (isAllQuestions || isScoreField) {
+        filteredAnswers = answers.filter((a: any) => matchingAnswerIds.has(String(a.id)));
+      } else {
+        filteredAnswers = answers.filter((a: any) => matchingAnswerIds.has(String(a.id)) && String(a.question_id) === String(stat.questionId));
+      }
+      recalculated[stat.statKey] = calculateStat(filteredAnswers, stat.aggregateType, stat.questionId);
     });
     setStatsResults(recalculated);
   }, [interactiveStats, answers]);
@@ -1476,8 +1531,22 @@ const ReportViewPage: React.FC = () => {
             <div className="mt-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 {interactiveStats.map((stat, idx) => {
-                  const q = questions.find((q: any) => String(q.id) === stat.questionId);
+                  const isAllQuestions = stat.questionId === '__all__';
+                  const isScoreField = stat.questionId === '__score__';
+                  const q = isAllQuestions || isScoreField ? null : questions.find((q: any) => String(q.id) === stat.questionId);
                   const result = statsResults[stat.statKey];
+                  
+                  let displayLabel = '';
+                  if (stat.label) {
+                    displayLabel = stat.label;
+                  } else if (isAllQuestions) {
+                    displayLabel = 'All Questions';
+                  } else if (isScoreField) {
+                    displayLabel = 'Score Field';
+                  } else {
+                    displayLabel = q?.question_text || q?.text || q?.name || `Question ${stat.questionId}`;
+                  }
+                  
                   return (
                     <div key={`${stat.statKey}-${idx}`} className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-4 shadow-sm">
                       <div className="flex justify-between items-start mb-2">
@@ -1500,14 +1569,18 @@ const ReportViewPage: React.FC = () => {
                               <div className="text-xs text-gray-600 font-medium">
                                 {stat.aggregateType.replace('_', ' ').toUpperCase()}
                               </div>
-                              <div className="text-xs text-gray-500 mt-1 line-clamp-2">{q?.question_text || q?.text || q?.name || `Question ${stat.questionId}`}</div>
+                              <div className="text-xs text-gray-500 mt-1 line-clamp-2">
+                                {displayLabel}
+                              </div>
                             </>
                           )}
                           {stat.aggregateType === 'count' && stat.conditions.length > 0 && (
                             <div className="text-xs text-gray-500 mt-2">
                               WHERE {stat.conditions.map((c, cIdx) => {
-                                const cq = questions.find((qq: any) => String(qq.id) === c.questionId);
-                                return `${cIdx > 0 ? ' AND ' : ''}${cq?.question_text || cq?.text || cq?.name || c.questionId} ${c.operator} "${c.value}"`;
+                                const isCScoreField = c.questionId === '__score__';
+                                const cq = isCScoreField ? null : questions.find((qq: any) => String(qq.id) === c.questionId);
+                                const fieldLabel = isCScoreField ? 'Score Field' : (cq?.question_text || cq?.text || cq?.name || c.questionId);
+                                return `${cIdx > 0 ? ' AND ' : ''}${fieldLabel} ${c.operator} "${c.value}"`;
                               }).join('')}
                             </div>
                           )}
@@ -3612,6 +3685,8 @@ const ReportViewPage: React.FC = () => {
                     className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
                   >
                     <option value="">Choose a question...</option>
+                    <option value="__all__">All Questions</option>
+                    <option value="__score__">Score Field</option>
                     {questions.map((q: any) => (
                       <option key={q.id} value={q.id}>{q.question_text || q.text || q.name || `Question ${q.id}`}</option>
                     ))}
@@ -3638,7 +3713,8 @@ const ReportViewPage: React.FC = () => {
                                 onChange={(e) => handleConditionChange(condition.id, { questionId: e.target.value })}
                                 className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
                               >
-                                <option value="">Choose question...</option>
+                                <option value="">Choose field...</option>
+                                <option value="__score__">Score Field</option>
                                 {questions.map((q: any) => (
                                   <option key={q.id} value={q.id}>{q.question_text || q.text || q.name || `Question ${q.id}`}</option>
                                 ))}
