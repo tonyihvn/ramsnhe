@@ -239,6 +239,10 @@ const ActivityDashboardPage: React.FC = () => {
 
   const calculateStat = (answers: any[], aggregateType: string): number | string => {
     if (aggregateType === 'count') return answers.length;
+    if (aggregateType === 'count_distinct') {
+      const distinct = new Set(answers.map((a: any) => normalizeAnswerValue(a.answer_value)));
+      return distinct.size;
+    }
 
     const nums = answers
       .map((a: any) => {
@@ -1085,6 +1089,7 @@ const ActivityDashboardPage: React.FC = () => {
                   >
                     <option value="">Choose aggregate type...</option>
                     <option value="count">Count</option>
+                    <option value="count_distinct">Count Distinct</option>
                     <option value="sum">Sum</option>
                     <option value="average">Average</option>
                     <option value="min">Minimum</option>

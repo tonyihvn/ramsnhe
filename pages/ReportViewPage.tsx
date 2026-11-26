@@ -12,6 +12,22 @@ import { apiFetch, getApiBase } from '../utils/api';
 import { useData } from '../hooks/useData';
 import { resolveCellReferenceFromContext } from '../utils/formulaEvaluator';
 import { startColumnResize, ColumnWidth, INITIAL_COLUMN_WIDTH, loadColumnWidths, saveColumnWidths } from '../utils/columnResizer';
+import { Cog6ToothIcon } from '@heroicons/react/24/outline';
+
+type StatCondition = {
+  id: string;
+  questionId: string;
+  operator: string;
+  value: string;
+  isCustomValue?: boolean;
+};
+
+type InteractiveStatItem = {
+  statKey: string;
+  questionId: string;
+  aggregateType: string;
+  conditions: StatCondition[];
+};
 
 const ReportViewPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>();
@@ -76,6 +92,15 @@ const ReportViewPage: React.FC = () => {
   const tableFormulaInputRef = useRef<HTMLTextAreaElement>(null);
   const tableCellNameInputRef = useRef<HTMLInputElement>(null);
   const tableEditingModeRef = useRef<'cellName' | 'formula' | null>(null);
+
+  // Interactive Stats States
+  const [interactiveStats, setInteractiveStats] = useState<InteractiveStatItem[]>([]);
+  const [statsResults, setStatsResults] = useState<Record<string, number | string>>({});
+  const [selectedStatQuestion, setSelectedStatQuestion] = useState<string>('');
+  const [selectedStatAggregateType, setSelectedStatAggregateType] = useState<string>('');
+  const [selectedStatConditions, setSelectedStatConditions] = useState<StatCondition[]>([]);
+  const [statsSettingsModalOpen, setStatsSettingsModalOpen] = useState(false);
+  const [statsConfigSaving, setStatsConfigSaving] = useState(false);
 
   // Authorization checks
   const isAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin' || currentUser?.role === 'super-admin';
@@ -309,6 +334,225 @@ const ReportViewPage: React.FC = () => {
     return null;
   };
 
+  // Interactive Stats Helper Functions
+  const normalizeAnswerValue = (value: any): string => {
+    let v = value;
+    if (typeof v === 'string') {
+      const trimmed = v.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          v = JSON.parse(trimmed);
+        } catch (e) {
+          v = trimmed;
+        }
+      }
+    }
+    if (v && typeof v === 'object') {
+      if ('value' in v) {
+        v = v.value;
+      } else if ('label' in v) {
+        v = v.label;
+      } else if ('text' in v) {
+        v = v.text;
+      } else if (Array.isArray(v)) {
+        v = v.map(item => normalizeAnswerValue(item)).filter(Boolean).join(', ');
+      } else {
+        v = JSON.stringify(v);
+      }
+    }
+    if (v === undefined || v === null) return '';
+    return String(v).trim();
+  };
+
+  const calculateStat = (answers: any[], aggregateType: string): number | string => {
+    if (aggregateType === 'count') return answers.length;
+    if (aggregateType === 'count_distinct') {
+      const distinct = new Set(answers.map((a: any) => normalizeAnswerValue(a.answer_value)));
+      return distinct.size;
+    }
+
+    const nums = answers
+      .map((a: any) => {
+        const n = parseFloat(normalizeAnswerValue(a.answer_value));
+        return isNaN(n) ? undefined : n;
+      })
+      .filter((n: any) => n !== undefined);
+
+    if (nums.length === 0) return '—';
+
+    switch (aggregateType) {
+      case 'sum':
+        return nums.reduce((a: number, b: number) => a + b, 0);
+      case 'average':
+        return (nums.reduce((a: number, b: number) => a + b, 0) / nums.length).toFixed(2);
+      case 'min':
+        return Math.min(...nums);
+      case 'max':
+        return Math.max(...nums);
+      case 'median': {
+        const sorted = nums.sort((a: number, b: number) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : ((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2);
+      }
+      case 'std_dev': {
+        const avg = nums.reduce((a: number, b: number) => a + b, 0) / nums.length;
+        const variance = nums.reduce((a: number, b: number) => a + Math.pow(b - avg, 2), 0) / nums.length;
+        return Math.sqrt(variance).toFixed(2);
+      }
+      default:
+        return '—';
+    }
+  };
+
+  const getDistinctResponsesByQuestion = (questionId: string): string[] => {
+    const rows = answers.filter((a: any) => String(a.question_id) === String(questionId));
+    const values = Array.from(new Set(
+      rows
+        .map((a: any) => normalizeAnswerValue(a.answer_value))
+        .filter((v: string) => v !== '')
+    ));
+    return values.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+  };
+
+  const compareWithOperator = (leftRaw: string, operator: string, rightRaw: string): boolean => {
+    const left = String(leftRaw ?? '').trim();
+    const right = String(rightRaw ?? '').trim();
+    const leftNum = Number(left);
+    const rightNum = Number(right);
+    const hasNumericPair = left !== '' && right !== '' && !Number.isNaN(leftNum) && !Number.isNaN(rightNum);
+
+    switch (operator) {
+      case '==':
+      case '===':
+        return left.toLowerCase() === right.toLowerCase();
+      case '!=':
+      case '!==':
+        return left.toLowerCase() !== right.toLowerCase();
+      case '>':
+        return hasNumericPair ? leftNum > rightNum : left > right;
+      case '>=':
+        return hasNumericPair ? leftNum >= rightNum : left >= right;
+      case '<':
+        return hasNumericPair ? leftNum < rightNum : left < right;
+      case '<=':
+        return hasNumericPair ? leftNum <= rightNum : left <= right;
+      case 'contains':
+        return left.toLowerCase().includes(right.toLowerCase());
+      case 'not_contains':
+        return !left.toLowerCase().includes(right.toLowerCase());
+      default:
+        return false;
+    }
+  };
+
+  const getMatchingAnswerIds = (conditions: StatCondition[]): Set<string> => {
+    const completeConditions = conditions.filter(c => c.questionId && c.operator && c.value !== '');
+    if (completeConditions.length === 0) {
+      return new Set((answers || []).map((a: any) => String(a.id)));
+    }
+
+    const matchedAnswerIds = new Set<string>();
+    for (const answer of answers || []) {
+      const passesAll = completeConditions.every((condition) => {
+        return compareWithOperator(normalizeAnswerValue(answer.answer_value), condition.operator, condition.value);
+      });
+      if (passesAll) {
+        matchedAnswerIds.add(String(answer.id));
+      }
+    }
+    return matchedAnswerIds;
+  };
+
+  const buildStatKey = (questionId: string, aggregateType: string, conditions: StatCondition[]): string => {
+    const applyWhere = aggregateType === 'count';
+    if (!applyWhere) {
+      return `${questionId}-${aggregateType}-all`;
+    }
+    const completeConditions = conditions
+      .filter(c => c.questionId && c.operator && c.value !== '')
+      .map(c => `${c.questionId}:${c.operator}:${c.value}`);
+    const whereKey = completeConditions.length ? completeConditions.join('|') : 'all';
+    return `${questionId}-${aggregateType}-${whereKey}`;
+  };
+
+  const handleAddCondition = () => {
+    setSelectedStatConditions(prev => [...prev, {
+      id: `cond-${Date.now()}-${Math.random()}`,
+      questionId: '',
+      operator: '==',
+      value: '',
+      isCustomValue: false
+    }]);
+  };
+
+  const handleRemoveCondition = (conditionId: string) => {
+    setSelectedStatConditions(prev => prev.filter(c => c.id !== conditionId));
+  };
+
+  const handleConditionChange = (conditionId: string, patch: Partial<StatCondition>) => {
+    setSelectedStatConditions(prev => prev.map(c => 
+      c.id === conditionId ? { ...c, ...patch } : c
+    ));
+  };
+
+  const handleAddStatClick = () => {
+    if (selectedStatQuestion && selectedStatAggregateType) {
+      const whereApplies = selectedStatAggregateType === 'count';
+      if (whereApplies) {
+        const incomplete = selectedStatConditions.some(c =>
+          (!c.questionId || !c.operator || c.value === '' || c.value === null)
+        );
+        if (incomplete) {
+          swalError('Incomplete filter', 'Please complete every "Where" condition or remove empty ones.');
+          return;
+        }
+      }
+      handleAddStat(selectedStatQuestion, selectedStatAggregateType, selectedStatConditions);
+      setSelectedStatQuestion('');
+      setSelectedStatAggregateType('');
+      setSelectedStatConditions([]);
+    }
+  };
+
+  const handleAddStat = (questionId: string, aggregateType: string, conditions: StatCondition[]) => {
+    if (!aggregateType || !questionId) return;
+    const effectiveConditions = aggregateType === 'count' ? conditions : [];
+    const statKey = buildStatKey(questionId, aggregateType, effectiveConditions);
+    if (interactiveStats.some(s => s.statKey === statKey)) {
+      swalError('Duplicate stat', 'This stat definition already exists.');
+    } else {
+      const completeConditions = effectiveConditions.filter(c => c.questionId && c.operator && c.value !== '');
+      setInteractiveStats(prev => [...prev, { statKey, questionId, aggregateType, conditions: completeConditions }]);
+    }
+  };
+
+  const saveReportStatsConfig = async (statsItems: InteractiveStatItem[]) => {
+    if (!report) return;
+    try {
+      setStatsConfigSaving(true);
+      const payload = {
+        report_stats_config: JSON.stringify({ items: statsItems })
+      };
+      const res = await apiFetch(`/api/reports/${report.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        swalSuccess('Saved', 'Interactive stats configuration saved');
+      } else {
+        const txt = await res.text().catch(() => '');
+        swalError('Save failed', txt || 'Unable to save stats configuration');
+      }
+    } catch (e) {
+      console.error(e);
+      swalError('Save failed', 'Unable to save stats configuration');
+    } finally {
+      setStatsConfigSaving(false);
+    }
+  };
+
   const saveReview = async () => {
     if (!report) return;
     try {
@@ -376,6 +620,35 @@ const ReportViewPage: React.FC = () => {
       reader.readAsDataURL(file);
     });
   };
+
+  // Calculate stats whenever they change
+  useEffect(() => {
+    if (!Array.isArray(interactiveStats) || interactiveStats.length === 0) {
+      setStatsResults({});
+      return;
+    }
+
+    const normalizedStats = interactiveStats.map((stat) => {
+      const conditions = Array.isArray(stat.conditions) ? stat.conditions : [];
+      const statKey = stat.statKey || buildStatKey(stat.questionId, stat.aggregateType, conditions);
+      return { ...stat, statKey };
+    });
+
+    const changedKeys = normalizedStats.some((s, idx) => s.statKey !== interactiveStats[idx]?.statKey);
+    if (changedKeys) {
+      setInteractiveStats(normalizedStats);
+      return;
+    }
+
+    const recalculated: Record<string, number | string> = {};
+    normalizedStats.forEach((stat) => {
+      const conditionsToApply = stat.aggregateType === 'count' ? (stat.conditions || []) : [];
+      const matchingAnswerIds = getMatchingAnswerIds(conditionsToApply);
+      const filteredAnswers = answers.filter((a: any) => matchingAnswerIds.has(String(a.id)) && String(a.question_id) === String(stat.questionId));
+      recalculated[stat.statKey] = calculateStat(filteredAnswers, stat.aggregateType);
+    });
+    setStatsResults(recalculated);
+  }, [interactiveStats, answers]);
 
   useEffect(() => {
     const load = async () => {
@@ -509,6 +782,46 @@ const ReportViewPage: React.FC = () => {
     setReviewScore(report.overallScore ?? report.overall_score ?? null);
     setReviewStatus(report.status || null);
   }, [report]);
+
+  // Load interactive stats configuration when report loads
+  useEffect(() => {
+    if (!report) return;
+    try {
+      const savedStatsConfig = typeof report.report_stats_config === 'string'
+        ? JSON.parse(report.report_stats_config)
+        : report.report_stats_config;
+      
+      if (Array.isArray(savedStatsConfig?.items)) {
+        const restored = savedStatsConfig.items
+          .filter((s: any) => s && s.questionId && s.aggregateType)
+          .map((s: any, idx: number) => {
+            const restoredConditions: StatCondition[] = Array.isArray(s.conditions)
+              ? s.conditions
+                .filter((c: any) => c && c.questionId && c.operator && c.value !== undefined && c.value !== null)
+                .map((c: any, cIdx: number) => ({
+                  id: `restored-cond-${idx}-${cIdx}`,
+                  questionId: String(c.questionId),
+                  operator: String(c.operator),
+                  value: String(c.value),
+                  isCustomValue: c.isCustomValue === true,
+                }))
+              : [];
+            return {
+              questionId: String(s.questionId),
+              aggregateType: String(s.aggregateType),
+              conditions: restoredConditions,
+              statKey: '',
+            };
+          });
+        setInteractiveStats(restored);
+      } else {
+        setInteractiveStats([]);
+      }
+    } catch (e) {
+      console.error('Failed to parse stats config:', e);
+      setInteractiveStats([]);
+    }
+  }, [report?.id]);
 
   // derive facility name by looking up facility_id against /api/facilities
   useEffect(() => {
@@ -1150,6 +1463,68 @@ const ReportViewPage: React.FC = () => {
           </div>
         )}
       </Card>
+
+      {isAdmin && (
+        <Card>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-lg font-semibold">Interactive Stats</h2>
+            <button
+              type="button"
+              className="p-2 rounded-md border border-gray-300 hover:bg-gray-50"
+              onClick={() => setStatsSettingsModalOpen(true)}
+              title="Configure interactive stats"
+            >
+              <Cog6ToothIcon className="h-5 w-5 text-gray-600" />
+            </button>
+          </div>
+          <p className="text-sm text-gray-500">Configured statistics appear below and persist for this report.</p>
+
+          {interactiveStats.length === 0 ? (
+            <div className="mt-4 text-sm text-gray-500">No stats configured. Click the settings cog to add stats.</div>
+          ) : (
+            <div className="mt-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {interactiveStats.map((stat, idx) => {
+                  const q = questions.find((q: any) => String(q.id) === stat.questionId);
+                  const result = statsResults[stat.statKey];
+                  return (
+                    <div key={`${stat.statKey}-${idx}`} className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-4 shadow-sm">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <div className="text-xs text-gray-600 font-medium">
+                            {stat.aggregateType.replace('_', ' ').toUpperCase()}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1 line-clamp-2">{q?.question_text || 'Unknown'}</div>
+                          {stat.aggregateType === 'count' && stat.conditions.length > 0 && (
+                            <div className="text-xs text-gray-500 mt-2">
+                              WHERE {stat.conditions.map((c, cIdx) => {
+                                const cq = questions.find((qq: any) => String(qq.id) === c.questionId);
+                                return `${cIdx > 0 ? ' AND ' : ''}${cq?.question_text || c.questionId} ${c.operator} "${c.value}"`;
+                              }).join('')}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => {
+                            const nextStats = interactiveStats.filter(s => s.statKey !== stat.statKey);
+                            setInteractiveStats(nextStats);
+                            saveReportStatsConfig(nextStats);
+                          }}
+                          className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div className="text-2xl font-bold text-blue-600 mt-3">{result}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card>
         <div className="flex items-center justify-between mb-4">
@@ -3183,6 +3558,188 @@ const ReportViewPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {statsSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white w-11/12 max-w-4xl p-6 rounded shadow-lg max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Interactive Stats Settings</h3>
+              <Button size="sm" variant="secondary" onClick={() => setStatsSettingsModalOpen(false)}>Close</Button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Aggregate Type</label>
+                  <select
+                    value={selectedStatAggregateType}
+                    onChange={(e) => {
+                      setSelectedStatAggregateType(e.target.value);
+                      if (e.target.value !== 'count') setSelectedStatConditions([]);
+                    }}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">Choose aggregate type...</option>
+                    <option value="count">Count</option>
+                    <option value="count_distinct">Count Distinct</option>
+                    <option value="sum">Sum</option>
+                    <option value="average">Average</option>
+                    <option value="min">Minimum</option>
+                    <option value="max">Maximum</option>
+                    <option value="median">Median</option>
+                    <option value="std_dev">Std Dev</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Select Question</label>
+                  <select
+                    value={selectedStatQuestion}
+                    onChange={(e) => setSelectedStatQuestion(e.target.value)}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">Choose a question...</option>
+                    {questions.map((q: any) => (
+                      <option key={q.id} value={q.id}>{q.question_text}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                {selectedStatAggregateType === 'count' && (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Where (optional)</label>
+                    {selectedStatConditions.length === 0 && (
+                      <div className="text-xs text-gray-500 mb-2">No filters. Count will include all responses in this report.</div>
+                    )}
+                    <div className="space-y-2">
+                      {selectedStatConditions.map((condition, idx) => {
+                        const valueOptions = condition.questionId ? getDistinctResponsesByQuestion(condition.questionId) : [];
+                        return (
+                          <div key={condition.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                            <div className="md:col-span-5">
+                              <label className="block text-xs text-gray-500 mb-1">{idx === 0 ? 'Question' : 'And Question'}</label>
+                              <select
+                                value={condition.questionId}
+                                onChange={(e) => handleConditionChange(condition.id, { questionId: e.target.value })}
+                                className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                              >
+                                <option value="">Choose question...</option>
+                                {questions.map((q: any) => (
+                                  <option key={q.id} value={q.id}>{q.question_text}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="block text-xs text-gray-500 mb-1">Operator</label>
+                              <select
+                                value={condition.operator}
+                                onChange={(e) => handleConditionChange(condition.id, { operator: e.target.value })}
+                                className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                              >
+                                <option value="==">==</option>
+                                <option value="===">===</option>
+                                <option value="!=">!=</option>
+                                <option value="!==">!==</option>
+                                <option value=">">{'>'}</option>
+                                <option value=">=">{'>='}</option>
+                                <option value="<">{'<'}</option>
+                                <option value="<=">{'<='}</option>
+                                <option value="contains">contains</option>
+                                <option value="not_contains">not contains</option>
+                              </select>
+                            </div>
+                            <div className="md:col-span-4">
+                              <label className="block text-xs text-gray-500 mb-1">Response Value</label>
+                              {condition.isCustomValue ? (
+                                <input
+                                  type="text"
+                                  value={condition.value}
+                                  onChange={(e) => handleConditionChange(condition.id, { value: e.target.value })}
+                                  placeholder="Enter a custom value..."
+                                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                />
+                              ) : (
+                                <select
+                                  value={condition.value}
+                                  onChange={(e) => {
+                                    if (e.target.value === '__custom__') {
+                                      handleConditionChange(condition.id, { isCustomValue: true, value: '' });
+                                    } else {
+                                      handleConditionChange(condition.id, { isCustomValue: false, value: e.target.value });
+                                    }
+                                  }}
+                                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                  disabled={!condition.questionId}
+                                >
+                                  <option value="__custom__">Custom value</option>
+                                  <option value="">Choose response...</option>
+                                  {valueOptions.map((opt) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                </select>
+                              )}
+                              {condition.isCustomValue && (
+                                <button
+                                  type="button"
+                                  className="mt-1 text-xs text-primary-600 hover:text-primary-800"
+                                  onClick={() => handleConditionChange(condition.id, { isCustomValue: false, value: '' })}
+                                >
+                                  Choose from responses
+                                </button>
+                              )}
+                            </div>
+                            <div className="md:col-span-1">
+                              <button
+                                type="button"
+                                className="w-full px-2 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50"
+                                onClick={() => handleRemoveCondition(condition.id)}
+                                title="Remove condition"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={handleAddCondition}
+                        className="px-3 py-2 border border-primary-300 text-primary-700 rounded hover:bg-primary-50 font-medium text-sm"
+                      >
+                        Add More Conditions
+                      </button>
+                    </div>
+                  </>
+                )}
+                {selectedStatAggregateType && selectedStatAggregateType !== 'count' && (
+                  <div className="text-xs text-gray-500">
+                    WHERE is not used for {selectedStatAggregateType}. The result uses all responses for the selected question from this report.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={handleAddStatClick}
+                  className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 font-medium text-sm"
+                >
+                  Add Stat
+                </button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={statsConfigSaving}
+                  onClick={() => saveReportStatsConfig(interactiveStats)}
+                >
+                  {statsConfigSaving ? 'Saving...' : 'Save Stats Config'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
