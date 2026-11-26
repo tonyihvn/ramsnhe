@@ -663,10 +663,10 @@ const ReportViewPage: React.FC = () => {
         if (!r.ok) { console.error('Failed to load report'); setLoading(false); return; }
         const jr = await r.json();
         setReport(jr);
-        // fetch answers and questions so we can show labels, pages, sections
-        const [aRes, qRes, docs, uRes, actualTablesRes] = await Promise.all([
+        // fetch answers, questions (via activity_dashboard), docs, users, and actual tables
+        const [aRes, actDashRes, docs, uRes, actualTablesRes] = await Promise.all([
           apiFetch(`/api/answers?reportId=${reportId}`, { credentials: 'include' }),
-          apiFetch(`/api/questions?activityId=${jr.activity_id}`, { credentials: 'include' }),
+          apiFetch(`/api/activity_dashboard/${jr.activity_id}`, { credentials: 'include' }),
           apiFetch(`/api/uploaded_docs?reportId=${jr.id}`, { credentials: 'include' }),
           apiFetch(`/api/users`, { credentials: 'include' }),
           apiFetch(`/api/actual_tables?activityId=${jr.activity_id}`, { credentials: 'include' })
@@ -681,13 +681,9 @@ const ReportViewPage: React.FC = () => {
           });
           setAnswers(sortedAnswers);
         }
-        if (qRes.ok) {
-          let questionsData = await qRes.json() || [];
-          // Handle both array response and wrapped response (e.g., { data: [...] })
-          if (questionsData && typeof questionsData === 'object' && !Array.isArray(questionsData)) {
-            questionsData = questionsData.data || questionsData.questions || [];
-          }
-          if (!Array.isArray(questionsData)) questionsData = [];
+        if (actDashRes.ok) {
+          const dashboardData = await actDashRes.json() || {};
+          let questionsData = Array.isArray(dashboardData?.questions) ? dashboardData.questions : [];
           
           if (questionsData.length === 0) {
             console.warn(`⚠️ NO QUESTIONS FOUND for activity_id=${jr.activity_id}. This means either:
@@ -699,7 +695,7 @@ const ReportViewPage: React.FC = () => {
           }
           setQuestions(questionsData);
         } else {
-          console.error('❌ Questions API failed:', qRes.status, await qRes.text());
+          console.error('❌ Activity Dashboard API failed:', actDashRes.status, await actDashRes.text());
         }
         if (docs.ok) {
           const docsData = await docs.json() || [];
