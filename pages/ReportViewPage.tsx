@@ -27,6 +27,8 @@ type InteractiveStatItem = {
   questionId: string;
   aggregateType: string;
   conditions: StatCondition[];
+  label?: string;
+  fontSize?: string;
 };
 
 const ReportViewPage: React.FC = () => {
@@ -99,6 +101,8 @@ const ReportViewPage: React.FC = () => {
   const [selectedStatQuestion, setSelectedStatQuestion] = useState<string>('');
   const [selectedStatAggregateType, setSelectedStatAggregateType] = useState<string>('');
   const [selectedStatConditions, setSelectedStatConditions] = useState<StatCondition[]>([]);
+  const [selectedStatLabel, setSelectedStatLabel] = useState<string>('');
+  const [selectedStatFontSize, setSelectedStatFontSize] = useState<string>('base');
   const [statsSettingsModalOpen, setStatsSettingsModalOpen] = useState(false);
   const [statsConfigSaving, setStatsConfigSaving] = useState(false);
 
@@ -507,14 +511,16 @@ const ReportViewPage: React.FC = () => {
           return;
         }
       }
-      handleAddStat(selectedStatQuestion, selectedStatAggregateType, selectedStatConditions);
+      handleAddStat(selectedStatQuestion, selectedStatAggregateType, selectedStatConditions, selectedStatLabel, selectedStatFontSize);
       setSelectedStatQuestion('');
       setSelectedStatAggregateType('');
       setSelectedStatConditions([]);
+      setSelectedStatLabel('');
+      setSelectedStatFontSize('base');
     }
   };
 
-  const handleAddStat = (questionId: string, aggregateType: string, conditions: StatCondition[]) => {
+  const handleAddStat = (questionId: string, aggregateType: string, conditions: StatCondition[], label: string = '', fontSize: string = 'base') => {
     if (!aggregateType || !questionId) return;
     const effectiveConditions = aggregateType === 'count' ? conditions : [];
     const statKey = buildStatKey(questionId, aggregateType, effectiveConditions);
@@ -522,7 +528,7 @@ const ReportViewPage: React.FC = () => {
       swalError('Duplicate stat', 'This stat definition already exists.');
     } else {
       const completeConditions = effectiveConditions.filter(c => c.questionId && c.operator && c.value !== '');
-      setInteractiveStats(prev => [...prev, { statKey, questionId, aggregateType, conditions: completeConditions }]);
+      setInteractiveStats(prev => [...prev, { statKey, questionId, aggregateType, conditions: completeConditions, label: label || '', fontSize: fontSize || 'base' }]);
     }
   };
 
@@ -676,15 +682,20 @@ const ReportViewPage: React.FC = () => {
           setAnswers(sortedAnswers);
         }
         if (qRes.ok) {
-          const questionsData = await qRes.json() || [];
+          let questionsData = await qRes.json() || [];
+          // Handle both array response and wrapped response (e.g., { data: [...] })
+          if (questionsData && typeof questionsData === 'object' && !Array.isArray(questionsData)) {
+            questionsData = questionsData.data || questionsData.questions || [];
+          }
+          if (!Array.isArray(questionsData)) questionsData = [];
+          
           if (questionsData.length === 0) {
             console.warn(`⚠️ NO QUESTIONS FOUND for activity_id=${jr.activity_id}. This means either:
 1. Questions don't exist in the database for this activity
 2. The activity_id is wrong
 3. Questions were deleted`);
-          }
-          if (questionsData.length > 0) {
-            // Sample question structure noted
+          } else {
+            console.log(`✓ Loaded ${questionsData.length} questions for activity_id=${jr.activity_id}`);
           }
           setQuestions(questionsData);
         } else {
@@ -810,6 +821,8 @@ const ReportViewPage: React.FC = () => {
               questionId: String(s.questionId),
               aggregateType: String(s.aggregateType),
               conditions: restoredConditions,
+              label: s.label || '',
+              fontSize: s.fontSize || 'base',
               statKey: '',
             };
           });
@@ -1472,16 +1485,33 @@ const ReportViewPage: React.FC = () => {
                   return (
                     <div key={`${stat.statKey}-${idx}`} className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-4 shadow-sm">
                       <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <div className="text-xs text-gray-600 font-medium">
-                            {stat.aggregateType.replace('_', ' ').toUpperCase()}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1 line-clamp-2">{q?.question_text || 'Unknown'}</div>
+                        <div className="flex-1">
+                          {stat.label ? (
+                            <>
+                              <div className={`font-semibold text-gray-800 mt-1 line-clamp-2 ${
+                                stat.fontSize === 'sm' ? 'text-sm' :
+                                stat.fontSize === 'base' ? 'text-base' :
+                                stat.fontSize === 'lg' ? 'text-lg' :
+                                stat.fontSize === 'xl' ? 'text-xl' :
+                                stat.fontSize === '2xl' ? 'text-2xl' :
+                                'text-base'
+                              }`}>
+                                {stat.label}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-xs text-gray-600 font-medium">
+                                {stat.aggregateType.replace('_', ' ').toUpperCase()}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-1 line-clamp-2">{q?.question_text || q?.text || q?.name || `Question ${stat.questionId}`}</div>
+                            </>
+                          )}
                           {stat.aggregateType === 'count' && stat.conditions.length > 0 && (
                             <div className="text-xs text-gray-500 mt-2">
                               WHERE {stat.conditions.map((c, cIdx) => {
                                 const cq = questions.find((qq: any) => String(qq.id) === c.questionId);
-                                return `${cIdx > 0 ? ' AND ' : ''}${cq?.question_text || c.questionId} ${c.operator} "${c.value}"`;
+                                return `${cIdx > 0 ? ' AND ' : ''}${cq?.question_text || cq?.text || cq?.name || c.questionId} ${c.operator} "${c.value}"`;
                               }).join('')}
                             </div>
                           )}
@@ -1492,13 +1522,20 @@ const ReportViewPage: React.FC = () => {
                             setInteractiveStats(nextStats);
                             saveReportStatsConfig(nextStats);
                           }}
-                          className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                          className="text-gray-400 hover:text-gray-600 text-lg leading-none flex-shrink-0"
                           title="Remove"
                         >
                           ×
                         </button>
                       </div>
-                      <div className="text-2xl font-bold text-blue-600 mt-3">{result}</div>
+                      <div className={`font-bold text-blue-600 mt-3 ${
+                        stat.fontSize === 'sm' ? 'text-sm' :
+                        stat.fontSize === 'base' ? 'text-2xl' :
+                        stat.fontSize === 'lg' ? 'text-3xl' :
+                        stat.fontSize === 'xl' ? 'text-4xl' :
+                        stat.fontSize === '2xl' ? 'text-5xl' :
+                        'text-2xl'
+                      }`}>{result}</div>
                     </div>
                   );
                 })}
@@ -3580,7 +3617,7 @@ const ReportViewPage: React.FC = () => {
                   >
                     <option value="">Choose a question...</option>
                     {questions.map((q: any) => (
-                      <option key={q.id} value={q.id}>{q.question_text}</option>
+                      <option key={q.id} value={q.id}>{q.question_text || q.text || q.name || `Question ${q.id}`}</option>
                     ))}
                   </select>
                 </div>
@@ -3607,7 +3644,7 @@ const ReportViewPage: React.FC = () => {
                               >
                                 <option value="">Choose question...</option>
                                 {questions.map((q: any) => (
-                                  <option key={q.id} value={q.id}>{q.question_text}</option>
+                                  <option key={q.id} value={q.id}>{q.question_text || q.text || q.name || `Question ${q.id}`}</option>
                                 ))}
                               </select>
                             </div>
@@ -3700,6 +3737,34 @@ const ReportViewPage: React.FC = () => {
                     WHERE is not used for {selectedStatAggregateType}. The result uses all responses for the selected question from this report.
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Label (Optional - Custom Display Text)</label>
+                <input
+                  type="text"
+                  value={selectedStatLabel}
+                  onChange={(e) => setSelectedStatLabel(e.target.value)}
+                  placeholder="e.g., Total Facility Teams"
+                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Leave blank to show aggregate type and question name</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Label Font Size</label>
+                <select
+                  value={selectedStatFontSize}
+                  onChange={(e) => setSelectedStatFontSize(e.target.value)}
+                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="sm">Small (12px)</option>
+                  <option value="base">Base (16px)</option>
+                  <option value="lg">Large (18px)</option>
+                  <option value="xl">Extra Large (20px)</option>
+                  <option value="2xl">2X Large (24px)</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Applies to both label and the stat value</p>
               </div>
 
               <div className="flex items-center justify-between">
